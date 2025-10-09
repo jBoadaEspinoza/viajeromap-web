@@ -4,6 +4,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { getTranslation } from '../utils/translations';
 import { useConfig } from '../context/ConfigContext';
 import { useUrlParams } from '../hooks/useUrlParams';
+import { usePageTitle } from '../hooks/usePageTitle';
 import ActivityGrid from '../components/ActivityGrid';
 import type { ActivityCardData } from '../components/ActivityCard';
 import DestinationGrid from '../components/DestinationGrid';
@@ -32,11 +33,112 @@ const Home: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [showDateTooltip, setShowDateTooltip] = useState(false);
   const [showAllActivities, setShowAllActivities] = useState(false);
+  
+  // Ref para el carrusel de destinos
+  const carouselRef = useRef<HTMLDivElement>(null);
+  const [isDown, setIsDown] = useState(false);
+  const [startX, setStartX] = useState(0);
+  const [scrollLeft, setScrollLeft] = useState(0);
+  const [hasMoved, setHasMoved] = useState(false);
 
-  // Set page title
+  // Set page title dynamically
+  usePageTitle('nav.home', language);
+
+  // Manejadores para arrastre del carrusel con mouse
+  const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!carouselRef.current) return;
+    // Solo iniciar drag si no es un click en un elemento interactivo
+    if ((e.target as HTMLElement).closest('button, a')) return;
+    
+    setIsDown(true);
+    setHasMoved(false);
+    const slider = carouselRef.current;
+    setStartX(e.pageX - slider.offsetLeft);
+    setScrollLeft(slider.scrollLeft);
+  };
+
+  const handleMouseLeave = () => {
+    setIsDown(false);
+    setHasMoved(false);
+  };
+
+  const handleMouseUp = () => {
+    setIsDown(false);
+    // Si no hubo movimiento, es un click
+    if (!hasMoved) {
+      // Permitir que el click llegue al elemento
+    }
+    setHasMoved(false);
+  };
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!isDown || !carouselRef.current) return;
+    e.preventDefault();
+    setHasMoved(true); // Marcar que hubo movimiento
+    const slider = carouselRef.current;
+    const x = e.pageX - slider.offsetLeft;
+    const walk = (x - startX) * 2; // Velocidad del scroll
+    slider.scrollLeft = scrollLeft - walk;
+  };
+
+  // Efecto para carrusel infinito
   useEffect(() => {
-    document.title = config.business.website;
-  }, [config.business.website]);
+    const carousel = carouselRef.current;
+    if (!carousel || destinations.length === 0) return;
+
+    let scrollTimeout: NodeJS.Timeout;
+    let isScrolling = false;
+
+    const handleScroll = () => {
+      if (isScrolling) return;
+      
+      clearTimeout(scrollTimeout);
+      
+      scrollTimeout = setTimeout(() => {
+        const scrollWidth = carousel.scrollWidth;
+        const clientWidth = carousel.clientWidth;
+        const scrollLeft = carousel.scrollLeft;
+        const halfWidth = scrollWidth / 2;
+
+        // Si estamos en el último cuarto del scroll, volver al inicio (sutilmente)
+        if (scrollLeft >= scrollWidth - clientWidth - 50) {
+          isScrolling = true;
+          const offset = scrollLeft - halfWidth;
+          carousel.style.scrollBehavior = 'auto';
+          carousel.scrollLeft = halfWidth + (offset % halfWidth);
+          setTimeout(() => {
+            carousel.style.scrollBehavior = 'smooth';
+            isScrolling = false;
+          }, 50);
+        }
+        
+        // Si estamos muy al inicio, saltar al medio
+        if (scrollLeft <= 50) {
+          isScrolling = true;
+          const offset = halfWidth - scrollLeft;
+          carousel.style.scrollBehavior = 'auto';
+          carousel.scrollLeft = halfWidth - (offset % halfWidth);
+          setTimeout(() => {
+            carousel.style.scrollBehavior = 'smooth';
+            isScrolling = false;
+          }, 50);
+        }
+      }, 150); // Esperar que el usuario termine de scrollear
+    };
+
+    carousel.addEventListener('scroll', handleScroll);
+    
+    // Inicializar en la posición del medio (inicio del segundo set)
+    setTimeout(() => {
+      const halfWidth = carousel.scrollWidth / 2;
+      carousel.scrollLeft = halfWidth;
+    }, 100);
+
+    return () => {
+      carousel.removeEventListener('scroll', handleScroll);
+      clearTimeout(scrollTimeout);
+    };
+  }, [destinations]);
 
   // Fetch activities from API
   useEffect(() => {
@@ -84,10 +186,22 @@ const Home: React.FC = () => {
             return {
               id: activity.id,
               title: activity.title,
+              presentation: activity.presentation,
               description: Array.isArray(activity.description) ? activity.description.join(' ') : activity.description,
-              imageUrl: activity.images?.[0]?.imageUrl || '',
+              imageUrl: activity.images?.find(img => img.isCover)?.imageUrl || activity.images?.[0]?.imageUrl || '',
               price: price,
-              duration: `${bookingOption?.durationHours || 0}h ${bookingOption?.durationMinutes || 0}m`,
+              duration: (() => {
+                const days = bookingOption?.durationDays || 0;
+                const hours = bookingOption?.durationHours || 0;
+                const minutes = bookingOption?.durationMinutes || 0;
+                const parts = [];
+                
+                if (days > 0) parts.push(`${days}d`);
+                if (hours > 0) parts.push(`${hours}h`);
+                if (minutes > 0) parts.push(`${minutes}min`);
+                
+                return parts.length > 0 ? parts.join(' ') : 'N/A';
+              })(),
               rating: activity.rating || 0,
               reviewCount: 0, // No disponible en la interfaz Activity
               location: activity.pointsOfInterest?.[0]?.name || 'N/A',
@@ -95,7 +209,8 @@ const Home: React.FC = () => {
               isActive: activity.isActive || true,
               includes: activity.includes || [],
               currency: currency,
-              isFromPrice: isFrom
+              isFromPrice: isFrom,
+              supplierName: activity.supplier?.name?.split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(' ') || ''
             };
           });
           
@@ -489,13 +604,14 @@ const Home: React.FC = () => {
       </div>
 
       {/* Actividades Disponibles */}
-      <div id="activities" className="container py-5">
-          <div className="text-center mb-5">
-            <h2 className="display-5 fw-bold text-dark mb-3">
-            Actividades Disponibles
+      <div id="activities" className="bg-light py-5">
+        <div className="container">
+        <div className="text-center mb-5">
+          <h2 className="display-5 fw-bold text-dark mb-3">
+            {getTranslation('home.activities.available.title', language)}
           </h2>
           <p className="lead text-muted">
-            Descubre todas las experiencias que tenemos para ti
+            {getTranslation('home.activities.available.subtitle', language)}
           </p>
         </div>
 
@@ -503,9 +619,9 @@ const Home: React.FC = () => {
         {loadingActivities && (
           <div className="text-center py-5">
             <div className="spinner-border text-primary mb-3" role="status">
-              <span className="visually-hidden">Cargando actividades...</span>
+              <span className="visually-hidden">{getTranslation('common.loading', language)}</span>
             </div>
-            <p className="text-muted">Cargando actividades disponibles...</p>
+            <p className="text-muted">{getTranslation('home.activities.loading', language)}</p>
           </div>
         )}
 
@@ -516,7 +632,7 @@ const Home: React.FC = () => {
             <div className="row g-4 d-none d-md-flex">
               {getActivitiesToShow().map((activity, index) => (
                 <div key={activity.id || index} className="col-lg-3 col-md-4">
-                  <div className="card h-100 shadow-sm border-0">
+                    <div className="card h-100 shadow-sm border border-light">
                     <div className="position-relative">
                       <img
                         src={activity.imageUrl || 'https://firebasestorage.googleapis.com/v0/b/gestionafacil-92adb.firebasestorage.app/o/catalogs%2Fservices%2F1753995672651.jpg?alt=media&token=2941bfdb-3723-413b-8c12-6335eb4ece82'}
@@ -531,55 +647,75 @@ const Home: React.FC = () => {
                       </div>
                     </div>
                     <div className="card-body d-flex flex-column">
+                      <div className="mb-2">
+                        <span className="badge bg-secondary text-white mb-2">
+                          {activity.category}
+                        </span>
+                      </div>
                       <h5 className="card-title fw-bold mb-2">
-                        {activity.title}
+                        {activity.title.length > 80 ? `${activity.title.substring(0, 80)}...` : activity.title}
                       </h5>
-                      <p className="card-text text-muted flex-grow-1">
-                        {activity.description?.substring(0, 100)}...
-                      </p>
-                      
+                      {activity.supplierName && (
+                        <p className="small text-muted mb-2 fw-bold" style={{ fontSize: '0.8rem', padding: '0px', margin: '0px' }}>
+                          {getTranslation('home.activities.provider', language)} {activity.supplierName.length > 30 ? `${activity.supplierName.substring(0, 30)}...` : activity.supplierName}
+                        </p>
+                      )}
+                      {activity.presentation && (
+                        <p className="card-text text-muted flex-grow-1" style={{ fontSize: '0.9rem', padding: '0px', margin: '0px' }}>
+                          {activity.presentation && activity.presentation.length > 100 ? `${activity.presentation?.substring(0, 100)}...` : activity.presentation}
+                        </p>
+                      )}                      
                       {/* Información de "Que incluye" */}
                       {activity.includes && activity.includes.length > 0 && (
                         <div className="mb-3">
                           <h6 className="fw-bold text-success mb-2">
                             <i className="fas fa-check-circle me-1"></i>
-                            Incluye:
+                            {getTranslation('home.activities.includes', language)}:
                           </h6>
                           <ul className="list-unstyled small text-muted mb-0">
                             {activity.includes.slice(0, 2).map((item, idx) => (
                               <li key={idx} className="mb-1">
-                                <i className="fas fa-check text-success me-2" style={{ fontSize: '0.7rem' }}></i>
+                                <i className="fas fa-check text-success me-2" style={{ fontSize: '0.9rem', padding: '0px', margin: '0px' }}></i>
                                 {item}
                               </li>
                             ))}
                             {activity.includes.length > 2 && (
                               <li className="text-primary fw-medium">
-                                +{activity.includes.length - 2} más...
+                                +{activity.includes.length - 2} {getTranslation('home.activities.more', language)}...
                               </li>
                             )}
                           </ul>
                         </div>
                       )}
                       
-                      <div className="d-flex justify-content-between align-items-center mt-auto">
-                        <div className="text-primary fw-bold">
-                          {getPriceValue(activity.price) > 0 ? (
-                            <>
-                              <span className="fs-5">
-                                {activity.isFromPrice && 'desde '}
-                                {activity.currency === 'PEN' ? 'S/' : '$'}{Math.ceil(getPriceValue(activity.price))}
-                              </span>
-                              <small className="text-muted ms-1">por persona</small>
-                            </>
-                          ) : (
-                            <span className="text-muted">Precio a consultar</span>
-                          )}
+                      <div className="d-flex justify-content-between align-items-end mt-auto">
+                        <div>
+                          <div className="text-primary">
+                            {getPriceValue(activity.price) > 0 ? (
+                              <>
+                                <span className="text-muted" style={{ fontSize: '0.9rem', marginBottom: '0px' }}>
+                                  {activity.isFromPrice && `${getTranslation('home.activities.priceFrom', language)} `}
+                                </span>
+                                <div style={{ margin: '0px', padding: '0px' }}>
+                                  <span className="fs-5 fw-bold" style={{ fontSize: '1rem', margin: '0px', padding: '0px' }}>
+                                    {activity.currency === 'PEN' ? 'S/' : '$'}{Math.ceil(getPriceValue(activity.price))}
+                                  </span>
+                                   <small className="text-muted" style={{ fontSize: '0.6rem', marginLeft: '0.25rem' , margin: '0px', padding: '0px' }}>
+                                      {getTranslation('home.activities.perPerson', language)}
+                                   </small>
+                                </div>
+                              </>
+                            ) : (
+                              <span className="text-muted">{getTranslation('home.activities.priceOnRequest', language)}</span>
+                            )}
+                          </div>
                         </div>
                         <button 
                           className="btn btn-outline-primary btn-sm"
                           onClick={() => navigate(`/activity/${activity.id}`)}
+                          style={{ whiteSpace: 'normal', lineHeight: '1.2' }}
                         >
-                          Ver detalles
+                          {getTranslation('home.activities.viewDetails', language)}
                         </button>
                       </div>
                     </div>
@@ -593,14 +729,14 @@ const Home: React.FC = () => {
               {getActivitiesToShow().map((activity, index) => (
                 <div key={activity.id || index} className="mb-4">
                   <div className="card border-0 shadow-sm">
-                    <div className="row g-0">
+                    <div className="row g-0" style={{ minHeight: '180px' }}>
                       <div className="col-4">
-                        <div className="position-relative">
+                        <div className="position-relative h-100">
                           <img
                             src={activity.imageUrl || 'https://firebasestorage.googleapis.com/v0/b/gestionafacil-92adb.firebasestorage.app/o/catalogs%2Fservices%2F1753995672651.jpg?alt=media&token=2941bfdb-3723-413b-8c12-6335eb4ece82'}
-                            className="img-fluid rounded-start h-100"
+                            className="rounded-start"
                             alt={activity.title}
-                            style={{ height: '120px', objectFit: 'cover' }}
+                            style={{ width: '100%', height: '100%', objectFit: 'cover', minHeight: '180px' }}
                           />
                           <div className="position-absolute top-0 end-0 m-1">
                             <span className="badge bg-primary" style={{ fontSize: '0.7rem' }}>
@@ -611,11 +747,21 @@ const Home: React.FC = () => {
                       </div>
                       <div className="col-8">
                         <div className="card-body p-3">
+                          <div className="mb-1">
+                            <span className="badge bg-secondary text-white" style={{ fontSize: '0.65rem' }}>
+                              {activity.category}
+                            </span>
+                          </div>
                           <h6 className="card-title fw-bold mb-1" style={{ fontSize: '0.9rem', lineHeight: '1.2' }}>
-                            {activity.title}
+                            {activity.title.length > 80 ? `${activity.title.substring(0, 80)}...` : activity.title}
                           </h6>
-                          <p className="card-text text-muted small mb-2" style={{ fontSize: '0.8rem', lineHeight: '1.3' }}>
-                            {activity.description?.substring(0, 60)}...
+                            {activity.supplierName && (
+                              <p className="small text-muted mb-1 fw-bold" style={{ fontSize: '0.7rem' }}>
+                                {getTranslation('home.activities.provider', language)} {activity.supplierName.length > 30 ? `${activity.supplierName.substring(0, 30)}...` : activity.supplierName}
+                              </p>
+                            )}
+                          <p className="card-text text-muted small mb-2" style={{ fontSize: '0.9rem', lineHeight: '1.3' }}>
+                            {activity.presentation && activity.presentation.length > 100 ? `${activity.presentation?.substring(0, 100)}...` : activity.presentation}
                           </p>
                           
                           {/* Información de "Que incluye" para móvil */}
@@ -623,7 +769,7 @@ const Home: React.FC = () => {
                             <div className="mb-2">
                               <div className="fw-bold text-success mb-1" style={{ fontSize: '0.75rem' }}>
                                 <i className="fas fa-check-circle me-1" style={{ fontSize: '0.7rem' }}></i>
-                                Incluye:
+                                {getTranslation('home.activities.includes', language)}:
                               </div>
                               <div className="small text-muted" style={{ fontSize: '0.7rem', lineHeight: '1.2' }}>
                                 {activity.includes.slice(0, 1).map((item, idx) => (
@@ -634,33 +780,41 @@ const Home: React.FC = () => {
                                 ))}
                                 {activity.includes.length > 1 && (
                                   <div className="text-primary fw-medium">
-                                    +{activity.includes.length - 1} más...
+                                    +{activity.includes.length - 1} {getTranslation('home.activities.more', language)}...
                                   </div>
                                 )}
                               </div>
                             </div>
                           )}
                           
-                          <div className="d-flex justify-content-between align-items-center">
-                            <div className="text-primary fw-bold">
-                              {getPriceValue(activity.price) > 0 ? (
-                                <>
-                                  <span className="fs-6">
-                                    {activity.isFromPrice && 'desde '}
-                                    {activity.currency === 'PEN' ? 'S/' : '$'}{Math.ceil(getPriceValue(activity.price))}
-                                  </span>
-                                  <small className="text-muted ms-1" style={{ fontSize: '0.7rem' }}>por persona</small>
-                                </>
-                              ) : (
-                                <span className="text-muted small">Precio a consultar</span>
-                              )}
+                          <div className="d-flex justify-content-between align-items-end">
+                            <div>
+                              <div className="text-primary">
+                                {getPriceValue(activity.price) > 0 ? (
+                                  <>
+                                    <span className="text-muted" style={{ fontSize: '0.9rem', marginBottom: '0px' }}>
+                                      {activity.isFromPrice && `${getTranslation('home.activities.priceFrom', language)} `}
+                                    </span>
+                                    <div style={{ margin: '0px', padding: '0px' }}> 
+                                      <span className="fs-6 fw-bold" style={{ fontSize: '1rem', margin: '0px', padding: '0px' }}>
+                                        {activity.currency === 'PEN' ? 'S/' : '$'}{Math.ceil(getPriceValue(activity.price))}
+                                      </span>
+                                      <small className="text-muted" style={{ fontSize: '0.55rem', marginLeft: '0.25rem' , margin: '0px', padding: '0px' }}>
+                                        {getTranslation('home.activities.perPerson', language)}
+                                      </small>
+                                    </div>
+                                  </>
+                                ) : (
+                                  <span className="text-muted small">{getTranslation('home.activities.priceOnRequest', language)}</span>
+                                )}
+                              </div>
                             </div>
                             <button 
                               className="btn btn-outline-primary btn-sm"
-                              style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem' }}
+                              style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem', whiteSpace: 'normal', lineHeight: '1.2' }}
                               onClick={() => navigate(`/activity/${activity.id}`)}
                             >
-                              Ver
+                              {getTranslation('common.viewDetails', language)}
                             </button>
                           </div>
                         </div>
@@ -678,7 +832,7 @@ const Home: React.FC = () => {
                   className="btn btn-primary btn-lg px-5"
                   onClick={() => setShowAllActivities(true)}
                 >
-                  Ver más actividades ({activities.length - 10} más)
+                  {getTranslation('home.activities.viewMore', language)} ({activities.length - 10} {getTranslation('home.activities.more', language)})
                 </button>
               </div>
             )}
@@ -690,10 +844,11 @@ const Home: React.FC = () => {
           <div className="text-center py-5">
             <div className="alert alert-info">
               <i className="fas fa-info-circle me-2"></i>
-              No hay actividades disponibles en este momento.
+              {getTranslation('home.activities.noActivities', language)}
             </div>
           </div>
         )}
+        </div>
       </div>
 
       {/* Destinos como Carrusel Horizontal */}
@@ -701,10 +856,10 @@ const Home: React.FC = () => {
         <div className="container">
           <div className="text-center mb-4">
             <h2 className="display-6 fw-bold text-dark mb-3">
-              Destinos Populares
+              {getTranslation('home.destinations.title', language)}
             </h2>
             <p className="lead text-muted">
-              Explora los destinos más visitados
+              {getTranslation('home.destinations.subtitle', language)}
             </p>
           </div>
 
@@ -734,22 +889,83 @@ const Home: React.FC = () => {
 
           {/* Carrusel horizontal de destinos usando DestinationGrid */}
           {!loadingDestinations && destinations.length > 0 && (
-            <div className="position-relative d-flex justify-content-center">
-              <div className="overflow-hidden" style={{ width: '100%', maxWidth: '1200px' }}>
+            <>
+              {/* Estilos para el carrusel */}
+              <style>{`
+                .destination-carousel-container {
+                  overflow-x: auto !important;
+                  overflow-y: hidden !important;
+                  scrollbar-width: none;
+                  -ms-overflow-style: none;
+                  -webkit-overflow-scrolling: touch;
+                  touch-action: pan-x !important;
+                  cursor: grab;
+                  user-select: none;
+                }
+                .destination-carousel-container:active {
+                  cursor: grabbing;
+                  scroll-behavior: auto;
+                }
+                .destination-carousel-container::-webkit-scrollbar {
+                  display: none;
+                }
+                .destination-carousel-item {
+                  pointer-events: auto;
+                }
+                .destination-carousel-item button,
+                .destination-carousel-item a {
+                  pointer-events: auto !important;
+                  cursor: pointer !important;
+                }
+                .destination-carousel-container.dragging .destination-carousel-item {
+                  pointer-events: none;
+                }
+                .destination-carousel-container.dragging .destination-carousel-item button,
+                .destination-carousel-container.dragging .destination-carousel-item a {
+                  pointer-events: none !important;
+                }
+                .destination-carousel-container.dragging .destination-card-hover {
+                  transform: none !important;
+                }
+                /* Móvil: Primera card completa + segunda a la mitad */
+                @media (max-width: 767px) {
+                  .destination-carousel-item {
+                    width: 75vw !important;
+                  }
+                }
+                /* Tablet */
+                @media (min-width: 768px) and (max-width: 991px) {
+                  .destination-carousel-item {
+                    width: 45vw !important;
+                  }
+                }
+                /* Desktop */
+                @media (min-width: 992px) {
+                  .destination-carousel-item {
+                    width: 350px !important;
+                  }
+                }
+              `}</style>
+              
+              <div className="position-relative" style={{ width: '100%', overflowX: 'hidden' }}>
                 <div 
-                  className="d-flex flex-nowrap gap-4 justify-content-center"
+                  ref={carouselRef}
+                  className={`destination-carousel-container d-flex gap-3 px-3 ${isDown ? 'dragging' : ''}`}
                   style={{ 
-                    overflowX: 'auto',
-                    scrollbarWidth: 'none',
-                    msOverflowStyle: 'none',
-                    paddingBottom: '10px'
+                    paddingBottom: '10px',
+                    WebkitOverflowScrolling: 'touch',
+                    scrollBehavior: isDown ? 'auto' : 'smooth'
                   }}
+                  onMouseDown={handleMouseDown}
+                  onMouseLeave={handleMouseLeave}
+                  onMouseUp={handleMouseUp}
+                  onMouseMove={handleMouseMove}
                 >
-                  {destinations.map((destination) => (
+                  {/* Duplicar destinos para efecto infinito */}
+                  {[...destinations, ...destinations].map((destination, index) => (
                     <div 
-                      key={destination.id} 
-                      className="flex-shrink-0"
-                      style={{ width: '350px' }}
+                      key={`${destination.id}-${index}`} 
+                      className="destination-carousel-item flex-shrink-0"
                     >
             <DestinationGrid
                         destinations={[{
@@ -765,14 +981,14 @@ const Home: React.FC = () => {
                         columns={12}
               variant="default"
               showDetailsButton={true}
-                        detailsButtonText="Explorar destino"
+                        detailsButtonText={getTranslation('destination.exploreDestination', language)}
                         className="mb-0"
                       />
                     </div>
                   ))}
                 </div>
               </div>
-            </div>
+            </>
           )}
 
           {/* No destinations message */}
@@ -792,10 +1008,10 @@ const Home: React.FC = () => {
         <div className="container">
           <div className="text-center mb-5">
             <h2 className="display-5 fw-bold text-dark mb-3">
-              ¿Por qué elegirnos?
+              {getTranslation('home.whyChooseUs.title', language)}
             </h2>
             <p className="lead text-muted">
-              Especialistas en la Costa Sur de Perú
+              {getTranslation('home.whyChooseUs.subtitle', language)}
             </p>
           </div>
 
@@ -821,10 +1037,10 @@ const Home: React.FC = () => {
       <div className="bg-primary text-white py-5">
         <div className="container text-center">
           <h2 className="display-5 fw-bold mb-3">
-            ¿Listo para explorar la Costa Sur?
+            {getTranslation('home.readyToExplore.title', language)}
           </h2>
           <p className="lead">
-            Únete a más de 8,000 viajeros que ya han descubierto Paracas, Ica y Nazca
+            {getTranslation('home.readyToExplore.subtitle', language)}
           </p>
         </div>
       </div>

@@ -23,9 +23,8 @@ El archivo principal está en `src/config/appConfig.ts`:
 ```typescript
 export const appConfig: AppConfig = {
   business: {
-    ruc: "10430391564",           // RUC del negocio
-    name: "Peru Trips And Adventures", // Nombre del negocio
-    website: "perutripsadventures.com", // Sitio web
+    name: "ViajeroMap", // Nombre del negocio
+    website: "www.viajeromap.com", // Sitio web
     phone: "+51 1 234 5678",    // Teléfono
     address: "Lima, Perú",       // Dirección
     email: "info@perutripsadventures.com" // Email
@@ -36,7 +35,7 @@ export const appConfig: AppConfig = {
     accent: "#FFC107"           // Color de acento
   },
   api: {
-    baseUrl: "https://tg4jd2gc-8080.brs.devtunnels.ms", // URL de la API
+    baseUrl: "", // URL de la API
     timeout: 10000              // Timeout de las peticiones
   }
 };

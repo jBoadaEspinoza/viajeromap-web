@@ -2,6 +2,18 @@ import { apiGet } from './apiConfig';
 import { apiPost } from './apiConfig';
 
 
+export interface Supplier {
+  ruc: string;
+  name: string;
+  logoUrl: string;
+  address: string;
+  latitude: number;
+  longitude: number;
+  linkReviewGoogleMap: string;
+  whatsappNumber: string;
+  isActive: boolean;
+}
+
 export interface Itinerary {
   id: number;
   title: string;
@@ -146,6 +158,7 @@ export interface Activity {
   bookingOptions: BookingOption[];
   images: ActivityImage[];
   pointsOfInterest: pointOfInterestResponse[];
+  supplier: Supplier;
   createAt: string;
   updatedAt: string;
   isActive: boolean;

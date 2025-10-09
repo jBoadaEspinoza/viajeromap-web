@@ -5,6 +5,7 @@ import type { Activity, SearchParams, Destination } from '../api/activities';
 import { useLanguage } from '../context/LanguageContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { getTranslation, getTranslationWithParams } from '../utils/translations';
+import { usePageTitle } from '../hooks/usePageTitle';
 import ActivityGrid from '../components/ActivityGrid';
 import type { ActivityCardData } from '../components/ActivityCard';
 
@@ -13,6 +14,9 @@ const Search: React.FC = () => {
   const { language } = useLanguage();
   const { currency } = useCurrency();
   const [searchParams] = useSearchParams();
+  
+  // Set page title dynamically
+  usePageTitle('search.title', language);
   const [selectedDestination, setSelectedDestination] = useState('');
   const [selectedDate, setSelectedDate] = useState('');
   const [adults, setAdults] = useState(1);
@@ -64,7 +68,6 @@ const Search: React.FC = () => {
         const apiSearchParams: SearchParams = {
           destinationCity: destination || undefined,
           lang: language,
-          companyId: '10430391564',
           page: currentPage - 1, // API usa 0-based indexing
           size: itemsPerPage,
           currency: currency

@@ -28,6 +28,8 @@ export interface ActivityCardData {
   includes?: string[];
   currency?: string;
   isFromPrice?: boolean; // Indica si el precio debe mostrarse con "desde"
+  supplier?: string; // Nombre del proveedor de la actividad
+  supplierName?: string; // Nombre del proveedor de la actividad (alternativo)
   pricingMode?: 'PER_PERSON' | 'PER_GROUP';
   bookingOptions?: BookingOption[]; // Opciones de booking para calcular precio mínimo
 }
@@ -293,7 +295,7 @@ const ActivityCard: React.FC<ActivityCardProps> = ({
           </div>
         </div>
         {(activity.description || activity.presentation) && (
-          <p className="text-muted small mb-3" style={{ lineHeight: '1.4' }}>
+          <p className="text-muted small mb-3" style={{ lineHeight: '1.2' }}>
             {activity.description || activity.presentation}
           </p>
         )}

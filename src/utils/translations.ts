@@ -97,9 +97,49 @@ export const translations: Translations = {
     es: 'Descubre nuestras experiencias más populares',
     en: 'Discover our most popular experiences'
   },
+  'home.activities.available.title': {
+    es: 'Actividades Disponibles',
+    en: 'Available Activities'
+  },
+  'home.activities.available.subtitle': {
+    es: 'Descubre todas las experiencias que tenemos para ti',
+    en: 'Discover all the experiences we have for you'
+  },
   'home.activities.viewDetails': {
     es: 'Ver Detalles',
     en: 'View Details'
+  },
+  'home.activities.viewMore': {
+    es: 'Ver más actividades',
+    en: 'View more activities'
+  },
+  'home.activities.loading': {
+    es: 'Cargando actividades disponibles...',
+    en: 'Loading available activities...'
+  },
+  'home.activities.noActivities': {
+    es: 'No hay actividades disponibles en este momento.',
+    en: 'No activities available at this time.'
+  },
+  'home.activities.priceFrom': {
+    es: 'desde',
+    en: 'from'
+  },
+  'home.activities.perPerson': {
+    es: 'por persona',
+    en: 'per person'
+  },
+  'home.activities.priceOnRequest': {
+    es: 'Precio a consultar',
+    en: 'Price on request'
+  },
+  'home.activities.more': {
+    es: 'más',
+    en: 'more'
+  },
+  'home.activities.provider': {
+    es: 'Proveedor de actividad:',
+    en: 'Activity Provider:'
   },
 
 
@@ -114,6 +154,22 @@ export const translations: Translations = {
   'home.destinations.viewActivities': {
     es: 'Ver Actividades',
     en: 'View Activities'
+  },
+  'home.whyChooseUs.title': {
+    es: '¿Por qué elegirnos?',
+    en: 'Why choose us?'
+  },
+  'home.whyChooseUs.subtitle': {
+    es: 'Especialistas en la Costa Sur de Perú',
+    en: 'Specialists in the South Coast of Peru'
+  },
+  'home.readyToExplore.title': {
+    es: '¿Listo para explorar la Costa Sur?',
+    en: 'Ready to explore the South Coast?'
+  },
+  'home.readyToExplore.subtitle': {
+    es: 'Únete a más de 8,000 viajeros que ya han descubierto Paracas, Ica y Nazca',
+    en: 'Join over 8,000 travelers who have already discovered Paracas, Ica and Nazca'
   },
 
   // Search page
@@ -655,6 +711,26 @@ export const translations: Translations = {
   'destination.nazca': {
     es: 'Nazca',
     en: 'Nazca'
+  },
+  'destination.activities': {
+    es: 'actividades',
+    en: 'activities'
+  },
+  'destination.currentTemperature': {
+    es: 'Temperatura actual',
+    en: 'Current temperature'
+  },
+  'destination.pointsOfInterest': {
+    es: 'Puntos de interés:',
+    en: 'Points of interest:'
+  },
+  'destination.loadingInfo': {
+    es: 'Cargando información...',
+    en: 'Loading information...'
+  },
+  'destination.exploreDestination': {
+    es: 'Explorar destino',
+    en: 'Explore destination'
   },
 
   // Common
