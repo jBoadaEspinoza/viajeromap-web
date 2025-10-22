@@ -65,13 +65,13 @@ const Footer: React.FC = () => {
             <h6 className="fw-bold mb-3">{getTranslation('footer.destinations', language)}</h6>
             <ul className="list-unstyled">
               <li className="mb-2">
-                <Link to="/search?destination=Paracas" className="text-muted text-decoration-none">{getTranslation('destination.paracas', language)}</Link>
+                <Link to="/?destination=Paracas#activities" className="text-muted text-decoration-none">{getTranslation('destination.paracas', language)}</Link>
               </li>
               <li className="mb-2">
-                <Link to="/search?destination=Ica" className="text-muted text-decoration-none">{getTranslation('destination.ica', language)}</Link>
+                <Link to="/?destination=Ica#activities" className="text-muted text-decoration-none">{getTranslation('destination.ica', language)}</Link>
               </li>
               <li className="mb-2">
-                <Link to="/search?destination=Nazca" className="text-muted text-decoration-none">{getTranslation('destination.nazca', language)}</Link>
+                <Link to="/?destination=Nazca#activities" className="text-muted text-decoration-none">{getTranslation('destination.nazca', language)}</Link>
               </li>
             </ul>
           </div>

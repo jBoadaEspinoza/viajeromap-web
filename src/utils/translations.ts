@@ -27,6 +27,10 @@ export const translations: Translations = {
     es: 'Extranet',
     en: 'Extranet'
   },
+  'nav.search': {
+    es: 'Buscar Actividades',
+    en: 'Search Activities'
+  },
 
   // Language selector
   'lang.spanish': {
@@ -773,6 +777,58 @@ export const translations: Translations = {
   'common.viewDetails': {
     es: 'Ver Detalle',
     en: 'View Details'
+  },
+  'common.clearFilters': {
+    es: 'Limpiar filtros',
+    en: 'Clear filters'
+  },
+  'common.showMore': {
+    es: 'Mostrar más',
+    en: 'Show more'
+  },
+  'common.showLess': {
+    es: 'Mostrar menos',
+    en: 'Show less'
+  },
+  'booking.selectOption': {
+    es: 'Selecciona una opción de reserva',
+    en: 'Select a booking option'
+  },
+  'booking.selectTime': {
+    es: 'Selecciona un horario',
+    en: 'Select a time'
+  },
+  'booking.meetingPoint': {
+    es: 'Punto de Encuentro',
+    en: 'Meeting Point'
+  },
+  'booking.duration': {
+    es: 'Duración',
+    en: 'Duration'
+  },
+  'booking.guide': {
+    es: 'Guía',
+    en: 'Guide'
+  },
+  'booking.cancellationPolicy': {
+    es: 'Cancela antes de las 8:00 AM del día anterior para recibir un reembolso completo',
+    en: 'Cancel before 8:00 AM the day before to receive a full refund'
+  },
+  'booking.oneAdult': {
+    es: '1 Adulto',
+    en: '1 Adult'
+  },
+  'booking.allTaxesIncluded': {
+    es: 'Todas las tasas e impuestos incluidos',
+    en: 'All taxes and fees included'
+  },
+  'booking.reserveNow': {
+    es: 'Reservar ahora',
+    en: 'Reserve now'
+  },
+  'booking.addToCart': {
+    es: 'Añadir al carrito',
+    en: 'Add to cart'
   },
 
   // Login page

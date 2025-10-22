@@ -112,10 +112,12 @@ export interface BookingOption {
   lastMinuteAfterFirst: boolean;
   customCutoffBySchedule: boolean;
   isActive: boolean;
+  availabilityMode?: string; // 'TIME_SLOTS' | 'OPENING_HOURS' | etc
   pickupPoints: PickupPoint[] | null;
   schedules: Schedule[];
   priceTiers: PriceTier[];
   itineraries: Itinerary[];
+  specialOfferPercentage: number | null;
 }
 
 export interface pointOfInterestResponse {
@@ -207,6 +209,7 @@ export interface SearchParams {
   currency?: string;
   includeBookingOptions?: boolean;
   active?: boolean | null;
+  departureDate?: string; // Fecha de salida en formato YYYY-MM-DD
 }
 
 export interface CreateCategoryRequest {
@@ -374,10 +377,22 @@ export const activitiesApi = {
     }
   },
 
-  getById: async (id: string, lang: string = 'es', currency: string = 'PEN'): Promise<Activity> => {
+  getById: async (id: string, lang: string = 'es', currency: string = 'PEN', departureDate?: string): Promise<Activity> => {
     try {
       const url = `/activities/search/${id}`;
-      const params = { lang, currency };
+      const params: any = { lang, currency };
+      
+      // Agregar departureDate si se proporciona
+      if (departureDate) {
+        params.departureDate = departureDate;
+      }
+      
+      console.log('🎯 API getById llamado con:', {
+        id,
+        lang,
+        currency,
+        departureDate: departureDate || 'no enviada'
+      });
       
       const response = await apiGet<any>(url, { params });
       // Handle different response structures

@@ -95,10 +95,16 @@ const DestinationCard: React.FC<DestinationCardProps> = ({
     if (onDetailsClick) {
       onDetailsClick(destination.id);
     } else {
-      // Navegar a la página de búsqueda con el destino seleccionado
-      const params = new URLSearchParams();
-      params.append('destination', destination.cityName);
-      navigate(`/search?${params.toString()}`);
+      // Navegar a Home con el destino seleccionado
+      navigate(`/?destination=${destination.cityName}#activities`);
+      
+      // Hacer scroll a actividades después de un breve delay
+      setTimeout(() => {
+        const activitiesSection = document.getElementById('activities');
+        if (activitiesSection) {
+          activitiesSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }, 100);
     }
   };
 

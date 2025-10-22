@@ -8,7 +8,7 @@ declare global {
 }
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { activitiesApi } from '../api/activities';
-import type { Activity } from '../api/activities';
+import type { Activity, BookingOption, Schedule } from '../api/activities';
 import Itinerary from '../components/Itinerary';
 import Reviews from '../components/Reviews';
 import { useLanguage } from '../context/LanguageContext';
@@ -42,47 +42,307 @@ const ActivityDetail: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [selectedImage, setSelectedImage] = useState<number | null>(null);
   const [showBookingOptions, setShowBookingOptions] = useState(true);
-  const [selectedLanguages, setSelectedLanguages] = useState<string[]>([]);
+  const [selectedLanguage, setSelectedLanguage] = useState<string | null>(null);
   const [selectedSchedule, setSelectedSchedule] = useState<string | null>(null);
   const [selectedMeetingPoints, setSelectedMeetingPoints] = useState<{ [key: string]: string }>({});
   const [hotelSearchResults, setHotelSearchResults] = useState<{ [key: string]: any[] }>({});
+  const [showFullDescription, setShowFullDescription] = useState(false);
+  const [showBookingSection, setShowBookingSection] = useState(false);
+  const [showAvailabilitySection, setShowAvailabilitySection] = useState(true);
+  const [selectedBookingOption, setSelectedBookingOption] = useState<any>(null);
+  const [selectedTimeSlot, setSelectedTimeSlot] = useState<string | null>(null);
+  const [numberOfPeople, setNumberOfPeople] = useState<number>(1); // Cantidad de personas para calcular precio
   
-  // Obtener fecha seleccionada desde la URL
+  // Obtener parámetros desde la URL
   const [searchParams] = useSearchParams();
-  const selectedDate = searchParams.get('date');
+  
+  // Fecha de salida (usar fecha actual si no se proporciona)
+  const selectedDate = searchParams.get('date') || (() => {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  })();
+  
+  // Currency y Lang desde URL (ya están disponibles desde context, pero registramos los de URL)
+  const urlCurrency = searchParams.get('currency');
+  const urlLang = searchParams.get('lang');
+  
+  console.log('📋 Parámetros recibidos en ActivityDetail:', {
+    date: {
+      fromURL: searchParams.get('date'),
+      used: selectedDate,
+      isToday: !searchParams.get('date')
+    },
+    currency: {
+      fromURL: urlCurrency,
+      fromContext: currency,
+      used: currency
+    },
+    lang: {
+      fromURL: urlLang,
+      fromContext: language,
+      used: language
+    },
+    destination: searchParams.get('destination'),
+    adults: searchParams.get('adults'),
+    children: searchParams.get('children')
+  });
 
-  // Función para filtrar horarios por fecha seleccionada
-  const getSchedulesForSelectedDate = (schedules: any[]) => {
-    if (!selectedDate) return schedules; // Si no hay fecha seleccionada, mostrar todos
-    
-    const selectedDayOfWeek = new Date(selectedDate).getDay(); // 0 = Domingo, 1 = Lunes, etc.
-    return schedules.filter(schedule => schedule.dayOfWeek === selectedDayOfWeek);
+
+  // Función para obtener el texto completo de la descripción
+  const getFullDescription = () => {
+    if (!activity?.description) return '';
+    if (Array.isArray(activity.description)) {
+      return activity.description.join(' ');
+    }
+    return activity.description;
   };
 
-  // Función para hacer scroll a la sección de booking options
+  // Función para verificar si la descripción necesita truncamiento
+  const needsTruncate = () => {
+    const fullText = getFullDescription();
+    return fullText.length > 200;
+  };
+
+  // Función para obtener texto truncado
+  const getTruncatedDescription = () => {
+    const fullText = getFullDescription();
+    if (fullText.length <= 200) return fullText;
+    return fullText.substring(0, 200) + '...';
+  };
+
+  // Función para hacer scroll a la sección de reserva
   const scrollToBookingOptions = () => {
-    //De momomento me llevara a whatsapp mediante el numero de telefono de la empresa
-    //Se debe enviar el titulo de la actividad y el precio para q se le pueda brindar mas informacion
-    const message = `Hola, me interesa la actividad ${activity?.title} y el precio es ${getMinPrice().price?.toFixed(2) || '0.00'}`;
-    window.open(`https://wa.me/${appConfig.business.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(message)}`, '_blank');
-    /*const bookingOptionsSection = document.getElementById('booking-options-section');
-    if (bookingOptionsSection) {
-      bookingOptionsSection.scrollIntoView({ 
-        behavior: 'smooth',
-        block: 'start'
-      });
-    }*/
+    // Scroll automático a la sección después de un pequeño delay
+    setTimeout(() => {
+      const bookingSection = document.getElementById('booking-section');
+      if (bookingSection) {
+        bookingSection.scrollIntoView({ behavior: 'smooth' });
+      }
+    }, 100);
   };
 
-  // Función para manejar selección de idiomas (múltiple)
-  const handleLanguageSelection = (lang: string) => {
-    setSelectedLanguages(prev => {
-      if (prev.includes(lang)) {
-        return prev.filter(l => l !== lang);
+  // Función para manejar selección de opción de reserva
+  const handleBookingOptionSelect = (option: any) => {
+    setSelectedBookingOption(option);
+    
+    // Seleccionar automáticamente el primer idioma disponible si hay múltiples idiomas
+    if (option.languages && option.languages.length > 0) {
+      setSelectedLanguage(option.languages[0]);
+    } else {
+      setSelectedLanguage(null);
+    }
+    
+    // Seleccionar automáticamente el primer horario disponible del día específico
+    const availableSchedules = option.schedules?.filter((schedule: Schedule) => {
+      if (!selectedDate) return schedule.isActive;
+      const customDayOfWeek = getCustomDayOfWeekFromDate(selectedDate);
+      return schedule.dayOfWeek === customDayOfWeek && schedule.isActive;
+    }) || [];
+    
+    if (availableSchedules.length > 0) {
+      setSelectedTimeSlot(availableSchedules[0].startTime);
+      console.log('🔄 Nuevo horario seleccionado al cambiar opción:', {
+        selectedDate,
+        dayName: selectedDate ? getDayName(getCustomDayOfWeekFromDate(selectedDate)) : 'No date',
+        selectedTime: availableSchedules[0].startTime
+      });
+    } else {
+      setSelectedTimeSlot(null);
+      console.log('⚠️ No hay horarios disponibles para el día al cambiar opción');
+    }
+  };
+
+  // Función para manejar selección de horario
+  const handleTimeSlotSelect = (timeSlot: string) => {
+    setSelectedTimeSlot(timeSlot);
+  };
+
+  // Función para calcular precio total con descuentos automáticos y priceTiers
+  const calculateTotalPrice = () => {
+    if (!selectedBookingOption || !selectedTimeSlot) {
+      // Si no hay opción seleccionada, usar el precio mínimo de la actividad
+      return getMinPrice().price || 0;
+    }
+    
+    let basePrice = 0;
+    
+    // Si hay priceTiers, buscar el tier que corresponde a la cantidad de personas
+    if (selectedBookingOption.priceTiers && selectedBookingOption.priceTiers.length > 0) {
+      const matchingTier = selectedBookingOption.priceTiers.find((tier: any) => {
+        const min = tier.minParticipants || 1;
+        const max = tier.maxParticipants || Infinity;
+        return numberOfPeople >= min && numberOfPeople <= max;
+      });
+      
+      if (matchingTier) {
+        // Si el tier tiene totalPrice, usarlo; si no, calcular desde pricePerParticipant
+        basePrice = matchingTier.totalPrice || (matchingTier.pricePerParticipant * numberOfPeople);
+        
+        console.log('💰 Precio calculado con priceTiers:', {
+          numberOfPeople,
+          matchingTier,
+          basePrice
+        });
       } else {
-        return [...prev, lang];
+        // Si no hay tier que coincida, usar pricePerPerson
+        basePrice = selectedBookingOption.pricePerPerson * numberOfPeople;
       }
+    } else {
+      // Si no hay priceTiers, usar pricePerPerson
+      basePrice = (selectedBookingOption.pricePerPerson || 0) * numberOfPeople;
+    }
+    
+    const discountPercent = selectedBookingOption.specialOfferPercentage || 0;
+    
+    // Aplicar descuento automáticamente si existe specialOfferPercentage
+    if (discountPercent > 0) {
+      const discountAmount = basePrice * (discountPercent / 100);
+      const finalPrice = Math.round((basePrice - discountAmount) * 100) / 100;
+      
+      console.log('🎁 Descuento aplicado:', {
+        basePrice,
+        discountPercent,
+        discountAmount,
+        finalPrice
+      });
+      
+      return finalPrice;
+    }
+    
+    return Math.round(basePrice * 100) / 100;
+  };
+
+  // Función para obtener precio original (antes de descuento)
+  const getOriginalPrice = () => {
+    if (!selectedBookingOption) {
+      // Si no hay opción seleccionada, usar el precio mínimo de la actividad
+      return getMinPrice().price || 0;
+    }
+    
+    let basePrice = 0;
+    
+    // Si hay priceTiers, buscar el tier que corresponde a la cantidad de personas
+    if (selectedBookingOption.priceTiers && selectedBookingOption.priceTiers.length > 0) {
+      const matchingTier = selectedBookingOption.priceTiers.find((tier: any) => {
+        const min = tier.minParticipants || 1;
+        const max = tier.maxParticipants || Infinity;
+        return numberOfPeople >= min && numberOfPeople <= max;
+      });
+      
+      if (matchingTier) {
+        basePrice = matchingTier.totalPrice || (matchingTier.pricePerParticipant * numberOfPeople);
+      } else {
+        basePrice = selectedBookingOption.pricePerPerson * numberOfPeople;
+      }
+    } else {
+      basePrice = (selectedBookingOption.pricePerPerson || 0) * numberOfPeople;
+    }
+    
+    return Math.round(basePrice * 100) / 100;
+  };
+
+  // Función para verificar si hay descuento activo
+  const hasActiveDiscount = () => {
+    return selectedBookingOption?.specialOfferPercentage && selectedBookingOption.specialOfferPercentage > 0;
+  };
+
+  // Función para obtener el porcentaje de descuento
+  const getDiscountPercentage = () => {
+    return selectedBookingOption?.specialOfferPercentage || 0;
+  };
+
+  // Función para parsear fecha en timezone local (America/Lima)
+  const parseLocalDate = (dateString: string): Date => {
+    // dateString formato: "YYYY-MM-DD"
+    const [year, month, day] = dateString.split('-').map(Number);
+    // Crear fecha en timezone local a las 12:00 PM para evitar cambios de día
+    return new Date(year, month - 1, day, 12, 0, 0, 0);
+  };
+
+  // Función para obtener horarios según el día seleccionado
+  const getSchedulesForSelectedDate = () => {
+    if (!selectedBookingOption?.schedules) {
+      console.log('⚠️ No hay schedules en selectedBookingOption');
+      return [];
+    }
+    
+    if (!selectedDate) {
+      console.log('⚠️ No hay fecha de salida seleccionada, mostrando todos los horarios activos');
+      return selectedBookingOption.schedules.filter((schedule: Schedule) => schedule.isActive);
+    }
+
+    // Obtener el día de la semana de la fecha seleccionada
+    // JavaScript usa: 0=Domingo, 1=Lunes, ..., 6=Sábado
+    // Necesitamos convertir a: 0=Lunes, 1=Martes, ..., 6=Domingo
+    const selectedDateObj = parseLocalDate(selectedDate); // Usar parseLocalDate para evitar problemas de timezone
+    const jsDayOfWeek = selectedDateObj.getDay(); // 0-6 (Domingo-Sábado)
+    const customDayOfWeek = convertToCustomDayOfWeek(jsDayOfWeek); // 0-6 (Lunes-Domingo)
+
+    // Log detallado de todos los schedules disponibles
+    console.log('📅 FILTRADO DE HORARIOS POR DÍA DE SALIDA:', {
+      fechaSalida: selectedDate,
+      jsDayOfWeek: jsDayOfWeek,
+      customDayOfWeek: customDayOfWeek,
+      diaNombre: getDayName(customDayOfWeek),
+      totalSchedules: selectedBookingOption.schedules.length,
+      allSchedules: selectedBookingOption.schedules.map((s: Schedule) => ({
+        id: s.id,
+        dayOfWeek: s.dayOfWeek,
+        dayName: getDayName(s.dayOfWeek),
+        startTime: s.startTime,
+        endTime: s.endTime,
+        isActive: s.isActive,
+        matches: s.dayOfWeek === customDayOfWeek && s.isActive ? '✅' : '❌'
+      }))
     });
+
+    // Filtrar horarios que coincidan con el día de la semana y estén activos
+    const filteredSchedules = selectedBookingOption.schedules.filter((schedule: Schedule) => 
+      schedule.dayOfWeek === customDayOfWeek && schedule.isActive
+    );
+
+    console.log('✅ HORARIOS FILTRADOS:', {
+      cantidad: filteredSchedules.length,
+      horarios: filteredSchedules.map((s: Schedule) => ({
+        startTime: s.startTime,
+        endTime: s.endTime,
+        dayName: getDayName(s.dayOfWeek)
+      }))
+    });
+
+    return filteredSchedules;
+  };
+
+  // Función para convertir día de JavaScript (0=Domingo) a sistema personalizado (0=Lunes)
+  const convertToCustomDayOfWeek = (jsDayOfWeek: number): number => {
+    // JavaScript: 0=Domingo, 1=Lunes, ..., 6=Sábado
+    // Sistema personalizado: 0=Lunes, 1=Martes, ..., 6=Domingo
+    return jsDayOfWeek === 0 ? 6 : jsDayOfWeek - 1;
+  };
+
+  // Función para obtener el nombre del día según el idioma
+  // Mapeo personalizado: Lunes=0, Martes=1, Miércoles=2, Jueves=3, Viernes=4, Sábado=5, Domingo=6
+  const getDayName = (dayOfWeek: number) => {
+    const daysES = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+    const daysEN = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    
+    const days = language === 'es' ? daysES : daysEN;
+    return days[dayOfWeek] || 'Unknown';
+  };
+  
+  // Función helper para obtener el día personalizado desde una fecha
+  const getCustomDayOfWeekFromDate = (dateString: string): number => {
+    const date = parseLocalDate(dateString); // Usar parseLocalDate para evitar problemas de timezone
+    const jsDayOfWeek = date.getDay();
+    return convertToCustomDayOfWeek(jsDayOfWeek);
+  };
+
+  // Función para manejar selección de idioma (único)
+  const handleLanguageSelection = (lang: string) => {
+    setSelectedLanguage(prev => prev === lang ? null : lang);
   };
 
   // Función para manejar selección de horario (único)
@@ -117,16 +377,18 @@ const ActivityDetail: React.FC = () => {
     }));
   };
 
-  // Función para obtener precio mínimo y currency
+  // Función para obtener precio mínimo y currency con descuento aplicado
   const getMinPrice = () => {
-    if (!activity?.bookingOptions || activity.bookingOptions.length === 0) return { price: null, currency: 'USD' };
+    if (!activity?.bookingOptions || activity.bookingOptions.length === 0) return { price: null, currency: 'USD', originalPrice: null, hasDiscount: false, discountPercent: 0 };
     
     const activeOptions = activity.bookingOptions.filter(option => option.isActive);
-    if (activeOptions.length === 0) return { price: null, currency: 'USD' };
+    if (activeOptions.length === 0) return { price: null, currency: 'USD', originalPrice: null, hasDiscount: false, discountPercent: 0 };
     
     let minPrice = Infinity;
     let minCurrency = 'USD';
-    let minOption = null;
+    let minOriginalPrice = Infinity;
+    let hasDiscount = false;
+    let discountPercent = 0;
     
     activeOptions.forEach(option => {
       let optionMinPrice = Infinity;
@@ -139,16 +401,36 @@ const ActivityDetail: React.FC = () => {
         optionMinPrice = option.pricePerPerson;
       }
       
-      if (optionMinPrice < minPrice) {
-        minPrice = optionMinPrice;
-        minCurrency = option.currency;
-        minOption = option;
+      // Aplicar descuento si existe specialOfferPercentage
+      let finalPrice = optionMinPrice;
+      if (option.specialOfferPercentage && option.specialOfferPercentage > 0) {
+        const discount = optionMinPrice * (option.specialOfferPercentage / 100);
+        finalPrice = optionMinPrice - discount;
+        
+        if (finalPrice < minPrice) {
+          minPrice = finalPrice;
+          minOriginalPrice = optionMinPrice;
+          minCurrency = option.currency;
+          hasDiscount = true;
+          discountPercent = option.specialOfferPercentage;
+        }
+      } else {
+        if (optionMinPrice < minPrice) {
+          minPrice = optionMinPrice;
+          minOriginalPrice = optionMinPrice;
+          minCurrency = option.currency;
+          hasDiscount = false;
+          discountPercent = 0;
+        }
       }
     });
     
     return { 
-      price: minPrice === Infinity ? null : minPrice, 
-      currency: minCurrency 
+      price: minPrice === Infinity ? null : Math.round(minPrice * 100) / 100,
+      originalPrice: minOriginalPrice === Infinity ? null : Math.round(minOriginalPrice * 100) / 100,
+      currency: minCurrency,
+      hasDiscount,
+      discountPercent
     };
   };
 
@@ -181,8 +463,68 @@ const ActivityDetail: React.FC = () => {
       try {
         await withLoading(async () => {
           setError(null);
-          const activityData = await activitiesApi.getById(id, language, currency);
+          
+          const activityData = await activitiesApi.getById(id, language, currency, selectedDate);
           setActivity(activityData);
+          
+          // Inicializar automáticamente las opciones de reserva
+          if (activityData?.bookingOptions && activityData.bookingOptions.length > 0) {
+            setShowBookingSection(true);
+            const firstOption = activityData.bookingOptions[0];
+            setSelectedBookingOption(firstOption);
+            
+            // Seleccionar automáticamente el primer idioma disponible
+            if (firstOption.languages && firstOption.languages.length > 0) {
+              setSelectedLanguage(firstOption.languages[0]);
+              console.log('✅ Idioma seleccionado automáticamente:', firstOption.languages[0]);
+            }
+            
+            // Seleccionar automáticamente el primer horario disponible del día específico
+            const availableSchedules = firstOption.schedules?.filter((schedule: Schedule) => {
+              if (!selectedDate) return schedule.isActive;
+              const customDayOfWeek = getCustomDayOfWeekFromDate(selectedDate);
+              return schedule.dayOfWeek === customDayOfWeek && schedule.isActive;
+            }) || [];
+            
+            if (availableSchedules.length > 0) {
+              setSelectedTimeSlot(availableSchedules[0].startTime);
+              console.log('✅ Horario seleccionado automáticamente:', {
+                selectedDate,
+                dayName: selectedDate ? getDayName(getCustomDayOfWeekFromDate(selectedDate)) : 'No date',
+                selectedTime: availableSchedules[0].startTime
+              });
+            } else if (firstOption.schedules && firstOption.schedules.length > 0) {
+              // Si no hay horarios para el día específico, usar el primer horario disponible
+              setSelectedTimeSlot(firstOption.schedules[0].startTime);
+              console.log('⚠️ Usando horario por defecto (no hay horarios para el día específico):', {
+                selectedDate,
+                dayName: selectedDate ? getDayName(getCustomDayOfWeekFromDate(selectedDate)) : 'No date',
+                defaultTime: firstOption.schedules[0].startTime
+              });
+            }
+          }
+          
+          // Log detallado de los bookingOptions y schedules
+          console.log('🎯 ACTIVIDAD CARGADA:', {
+            activityId: activityData.id,
+            activityTitle: activityData.title,
+            totalBookingOptions: activityData.bookingOptions?.length || 0,
+            bookingOptions: activityData.bookingOptions?.map(option => ({
+              id: option.id,
+              title: option.title,
+              pricePerPerson: option.pricePerPerson,
+              specialOfferPercentage: option.specialOfferPercentage,
+              totalSchedules: option.schedules?.length || 0,
+              schedules: option.schedules?.map(s => ({
+                id: s.id,
+                dayOfWeek: s.dayOfWeek,
+                dayName: getDayName(s.dayOfWeek),
+                startTime: s.startTime,
+                endTime: s.endTime,
+                isActive: s.isActive
+              }))
+            }))
+          });
         }, 'activity-detail');
       } catch (err) {
         console.error('Error fetching activity:', err);
@@ -191,9 +533,31 @@ const ActivityDetail: React.FC = () => {
     };
 
     fetchActivity();
-  }, [id, language, currency, withLoading]);
+  }, [id, language, currency, selectedDate, withLoading]);
 
+  // useEffect para detectar scroll y ocultar/mostrar sección de disponibilidad
+  useEffect(() => {
+    const handleScroll = () => {
+      const bookingSection = document.getElementById('booking-section');
+      if (bookingSection) {
+        const rect = bookingSection.getBoundingClientRect();
+        const isInView = rect.top <= 100 && rect.bottom >= 100; // 100px de margen
+        console.log('🔍 Scroll detection:', {
+          rectTop: rect.top,
+          rectBottom: rect.bottom,
+          isInView,
+          showAvailabilitySection: !isInView
+        });
+        setShowAvailabilitySection(!isInView);
+      }
+    };
 
+    // Ejecutar inmediatamente para establecer el estado inicial
+    handleScroll();
+
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, [showBookingSection]); // Dependencia agregada para ejecutar cuando cambie showBookingSection
 
   if (error) {
     return (
@@ -229,7 +593,15 @@ const ActivityDetail: React.FC = () => {
 
   return (
     <div className="min-vh-100 bg-light">
-      <div className="container py-5">
+      {/* Estilos personalizados para la barra flotante móvil */}
+      <style>{`
+        @media (max-width: 767.98px) {
+          .activity-detail-content {
+            padding-bottom: 100px !important;
+          }
+        }
+      `}</style>
+      <div className="container py-5 activity-detail-content">
         {/* Title and Rating Section */}
         <div className="row mb-4">
           <div className="col-lg-12">
@@ -278,13 +650,39 @@ const ActivityDetail: React.FC = () => {
             </div>
          )}
 
+
          {/* Contenido Principal */}
          <div className="row">
-            <div className="col-lg-8">
+            <div className={`${showAvailabilitySection ? 'col-lg-8' : 'col-12'}`}>
               {/* Descripción */}
               <div className="card mb-4">
                 <div className="card-body">
                   <h4 className="fw-bold mb-3">{getTranslation('detail.description', language)}</h4>
+                  
+                  {/* Versión móvil con toggle */}
+                  <div className="d-block d-md-none">
+                    <p className="mb-3">
+                      {showFullDescription || !needsTruncate() 
+                        ? getFullDescription()
+                        : getTruncatedDescription()
+                      }
+                    </p>
+                    {needsTruncate() && (
+                      <button 
+                        className="btn btn-link text-primary p-0 text-decoration-none fw-medium"
+                        onClick={() => setShowFullDescription(!showFullDescription)}
+                      >
+                        {showFullDescription 
+                          ? getTranslation('common.showLess', language) 
+                          : getTranslation('common.showMore', language)
+                        }
+                        <i className={`fas fa-chevron-${showFullDescription ? 'up' : 'down'} ms-1`}></i>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Versión desktop (sin truncamiento) */}
+                  <div className="d-none d-md-block">
                   {Array.isArray(activity.description) ? (
                     activity.description.map((paragraph, index) => (
                       <p key={index} className="mb-3">{paragraph}</p>
@@ -292,6 +690,7 @@ const ActivityDetail: React.FC = () => {
                   ) : (
                     <p className="mb-3">{activity.description}</p>
                   )}
+                  </div>
                 </div>
               </div>
               {/* Incluye */}
@@ -359,50 +758,408 @@ const ActivityDetail: React.FC = () => {
                 </div>
               )}
             </div>
-            <div className="col-lg-4">
-              {/*Sidebar de Precio y Disponibilidad*/}
-              <div className="card">
-               <div className="card-body">
-                {/* Sección de Precio */}
-                <div className="d-flex justify-content-between align-items-center mb-3">
-                  <div>
-                      {getMinPrice().price !== null ? (
-                        <>
-                          <small className="text-muted">{getTranslation('detail.booking.from', language)}</small>
-                          <div className="h4 fw-bold text-dark mb-0">
-                            {currency === 'PEN' ? 'S/ ' : '$ '}{getMinPrice().price?.toFixed(2) || '0.00'}
+            {/* Sidebar Desktop - Oculto en móvil */}
+            {showAvailabilitySection && (
+              <div className="col-lg-4 d-none d-md-block">
+                {/*Sidebar de Precio y Disponibilidad*/}
+                <div className="card">
+                 <div className="card-body">
+                  {/* Sección de Precio */}
+                  <div className="d-flex justify-content-between align-items-center mb-3">
+                    <div>
+                        {getMinPrice().price !== null ? (
+                          <>
+                            <small className="text-muted">{getTranslation('detail.booking.from', language)}</small>
+                            
+                              {getMinPrice().hasDiscount && (
+                               <div className="d-flex flex-start align-items-center">
+                                <span className="badge bg-danger">-{getMinPrice().discountPercent}%</span>
+                                <span className="text-muted text-decoration-line-through m-1" style={{ fontSize: '0.9rem' }}>
+                                  {currency === 'PEN' ? 'S/ ' : '$ '}{getMinPrice().originalPrice?.toFixed(2)}
+                                </span>
+                               </div>
+                              )}
+                               <div className={`h4 fw-bold mb-0 ${getMinPrice().hasDiscount ? 'text-danger' : 'text-dark'}`}>
+                                 {currency === 'PEN' ? 'S/ ' : '$ '}{getMinPrice().price?.toFixed(2) || '0.00'}
+                               </div>
+                             
+                              <small className="text-muted" style={{ marginTop: '-4px' }}>{getTranslation('detail.booking.perPerson', language)}</small>
+                          </>
+                        ) : (
+                          <div className="h3 fw-bold text-dark mb-0">
+                            {getTranslation('detail.booking.contactForPrice', language)}
                           </div>
-                          <small className="text-muted">{getTranslation('detail.booking.perPerson', language)}</small>
-                        </>
-                      ) : (
-                        <div className="h3 fw-bold text-dark mb-0">
-                          {getTranslation('detail.booking.contactForPrice', language)}
+                        )}
+                     </div>
+                      <button 
+                        className="btn btn-primary btn-xs px-4"
+                        onClick={scrollToBookingOptions}
+                      >
+                        {getTranslation('detail.booking.viewAvailability', language)}
+                      </button>
+                  </div>
+
+                  {/* Línea separadora */}
+                  <hr className="my-3" />
+
+                  {/* Política de Reserva */}
+                  <div className="d-flex align-items-start">
+                    <i className="fas fa-wallet text-muted me-2 mt-1"></i>
+                      <div className="small text-muted">
+                       {getTranslation('detail.booking.bookNowPayLater', language)}
+                       <a href="#" className="text-primary text-decoration-underline ms-1">{getTranslation('detail.booking.readMore', language)}</a>
+                     </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Sección de Reserva - Al final del contenido */}
+          {showBookingSection && activity?.bookingOptions && activity.bookingOptions.length > 0 && (
+            <div id="booking-section" className="row mb-5">
+              <div className="col-12">
+                <div className="card" style={{ borderTop: '3px solid #007bff', borderRadius: '8px' }}>
+                  <div className="card-body p-0">
+                    {/* Header con título y chevron */}
+                    <div className="d-flex justify-content-between align-items-center p-3 border-bottom">
+                      <h4 className="mb-0 fw-bold text-dark" style={{ fontSize: '1.25rem' }}>
+                        {getTranslation('booking.meetingPoint', language)}
+                      </h4>
+                      <i className="fas fa-chevron-up text-muted" style={{ fontSize: '0.875rem' }}></i>
+                    </div>
+
+                    {/* Información de la actividad */}
+                    <div className="p-3">
+                      {/* Duración */}
+                      <div className="d-flex align-items-center mb-2">
+                        <i className="fas fa-clock text-primary me-2" style={{ fontSize: '0.875rem' }}></i>
+                        <span className="fw-medium text-dark" style={{ fontSize: '0.875rem' }}>
+                          {selectedBookingOption ? (
+                            <>
+                              {selectedBookingOption.durationDays > 0 ? `${selectedBookingOption.durationDays} ${language === 'es' ? (selectedBookingOption.durationDays === 1 ? 'día' : 'días') : (selectedBookingOption.durationDays === 1 ? 'day' : 'days')}` : ''}
+                              {selectedBookingOption.durationHours > 0 ? `${selectedBookingOption.durationDays > 0 ? ' ' : ''}${selectedBookingOption.durationHours} ${language === 'es' ? (selectedBookingOption.durationHours === 1 ? 'hora' : 'horas') : (selectedBookingOption.durationHours === 1 ? 'hour' : 'hours')}` : ''}
+                              {selectedBookingOption.durationMinutes > 0 ? `${selectedBookingOption.durationHours > 0 || selectedBookingOption.durationDays > 0 ? ' ' : ''}${selectedBookingOption.durationMinutes} ${language === 'es' ? (selectedBookingOption.durationMinutes === 1 ? 'minuto' : 'minutos') : (selectedBookingOption.durationMinutes === 1 ? 'minute' : 'minutes')}` : ''}
+                              {!selectedBookingOption.durationHours && !selectedBookingOption.durationMinutes && !selectedBookingOption.durationDays ? (language === 'es' ? 'Duración no especificada' : 'Duration not specified') : ''}
+                            </>
+                          ) : (
+                            language === 'es' ? '2 horas' : '2 hours'
+                          )}
+                        </span>
+                      </div>
+
+                      {/* Guía */}
+                      <div className="d-flex align-items-center mb-2">
+                        <i className="fas fa-user text-primary me-2" style={{ fontSize: '0.875rem' }}></i>
+                        <span className="fw-medium text-dark" style={{ fontSize: '0.875rem' }}>
+                          {language === 'es' ? 'Guía: ' : 'Guide: '}
+                          {selectedLanguage || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 0 
+                                ? selectedBookingOption.languages[0] 
+                                : (language === 'es' ? 'Inglés' : 'English')
+                              )
+                          }
+                        </span>
+                      </div>
+
+                      {/* Selección de idiomas del guía */}
+                      {selectedBookingOption?.languages && selectedBookingOption.languages.length > 0 && (
+                        <div className="mb-3">
+                          {selectedBookingOption.languages.length === 1 ? (
+                            // Mostrar como texto en negrita cuando hay solo un idioma
+                            <div className="d-flex align-items-center">
+                              <i className="fas fa-language text-primary me-2" style={{ fontSize: '0.875rem' }}></i>
+                              <span className="fw-bold text-dark" style={{ fontSize: '0.875rem' }}>
+                                {language === 'es' ? 'Idioma del guía: ' : 'Guide language: '}
+                                {selectedBookingOption.languages[0]}
+                              </span>
+                            </div>
+                          ) : (
+                            // Mostrar botones cuando hay múltiples idiomas
+                            <>
+                              <h6 className="fw-bold mb-2 text-dark" style={{ fontSize: '0.9rem' }}>
+                                {language === 'es' ? 'Selecciona idiomas del guía' : 'Select guide languages'}
+                              </h6>
+                              <div className="d-flex gap-2 flex-wrap">
+                                {selectedBookingOption.languages.map((lang: string, index: number) => (
+                                  <button 
+                                    key={index}
+                                    className={`btn ${selectedLanguage === lang ? 'btn-primary' : 'btn-outline-primary'}`}
+                                    onClick={() => handleLanguageSelection(lang)}
+                                    style={{ 
+                                      fontSize: '0.8rem',
+                                      padding: '0.4rem 0.8rem',
+                                      borderRadius: '4px',
+                                      border: selectedLanguage === lang ? 'none' : '1px solid #007bff'
+                                    }}
+                                  >
+                                    {lang}
+                                  </button>
+                                ))}
+                              </div>
+                              {!selectedLanguage && (
+                                <small className="text-muted" style={{ fontSize: '0.75rem' }}>
+                                  {language === 'es' 
+                                    ? 'Selecciona un idioma'
+                                    : 'Select a language'
+                                  }
+                                </small>
+                              )}
+                            </>
+                          )}
                         </div>
                       )}
-                   </div>
-                    <button 
-                      className="btn btn-primary btn-xs px-4"
-                      onClick={scrollToBookingOptions}
-                    >
-                      {getTranslation('detail.booking.viewAvailability', language)}
-                  </button>
-                </div>
 
-                {/* Línea separadora */}
-                <hr className="my-3" />
+                      {/* Punto de encuentro / Pickup Locations */}
+                      {selectedBookingOption?.meetingType === 'REFERENCE_CITY_WITH_LIST' ? (
+                        <div className="mb-3">
+                          {/* Pickup Locations */}
+                          <div className="d-flex align-items-center mb-2">
+                            <i className="fas fa-bus text-primary me-2" style={{ fontSize: '0.875rem' }}></i>
+                            <span className="fw-medium text-dark text-decoration-underline" style={{ fontSize: '0.875rem' }}>
+                              {language === 'es' ? 'Ver ' : 'View '}
+                              {selectedBookingOption.pickupPoints?.length || 0}
+                              {language === 'es' ? ' ubicaciones de recogida' : ' pickup locations'}
+                            </span>
+                          </div>
+                          
+                          {/* Descripción explicativa */}
+                          <p className="text-muted mb-0" style={{ fontSize: '0.8rem', lineHeight: '1.3' }}>
+                            {language === 'es' 
+                              ? 'La recogida está disponible desde múltiples ubicaciones. Seleccionarás la tuya al finalizar la compra.'
+                              : 'Pickup is available from multiple locations. You\'ll select yours at checkout.'
+                            }
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="d-flex align-items-start mb-3">
+                          <i className="fas fa-map-marker-alt text-primary me-2 mt-1" style={{ fontSize: '0.875rem' }}></i>
+                          <span className="fw-medium text-dark text-decoration-underline" style={{ fontSize: '0.875rem', lineHeight: '1.3' }}>
+                            {selectedBookingOption?.meetingPointAddress || 
+                             'Meet at Lt 8, Gral. Don José de San Martin, Av. Los Libertadores Mz C, Paracas 11550, Perú'
+                            }
+                          </span>
+                        </div>
+                      )}
+                    </div>
 
-                {/* Política de Reserva */}
-                <div className="d-flex align-items-start">
-                  <i className="fas fa-wallet text-muted me-2 mt-1"></i>
-                    <div className="small text-muted">
-                     {getTranslation('detail.booking.bookNowPayLater', language)}
-                     <a href="#" className="text-primary text-decoration-underline ms-1">{getTranslation('detail.booking.readMore', language)}</a>
-                   </div>
+                    <hr className="my-0" />
+
+                    {/* Selección de horario */}
+                    <div className="p-3" style={{ margin: 0, padding: 0 }}>
+                      <h5 className="fw-bold text-dark" style={{ fontSize: '1rem', margin: 0, padding: 0 }}>
+                        {(() => {
+                          const availableSchedules = getSchedulesForSelectedDate();
+                          if (availableSchedules.length === 1) {
+                            return language === 'es' ? 'Hora de inicio' : 'Start time';
+                          } else {
+                            return language === 'es' ? 'Selecciona un horario de inicio' : 'Select a starting time';
+                          }
+                        })()}
+                      </h5>
+                      
+                      <p className="text-muted" style={{ fontSize: '0.875rem', margin: 0, padding: 0 }}>
+                        {selectedDate ? parseLocalDate(selectedDate).toLocaleDateString(language === 'es' ? 'es-PE' : 'en-US', {
+                          weekday: 'long',
+                          year: 'numeric',
+                          month: 'long',
+                          day: 'numeric',
+                          timeZone: 'America/Lima'
+                        }) : (language === 'es' ? 'Jueves, 23 de octubre de 2025' : 'Thursday, October 23, 2025')}
+                      </p>
+                      
+                      {/* Mensaje si no hay horarios para el día seleccionado */}
+                      {selectedDate && getSchedulesForSelectedDate().length === 0 && (
+                        <div className="alert alert-warning" style={{ fontSize: '0.875rem', padding: '0.5rem 0.75rem', margin: 0 }}>
+                          <i className="fas fa-exclamation-triangle me-2"></i>
+                          {language === 'es' 
+                            ? `No hay horarios disponibles para ${getDayName(getCustomDayOfWeekFromDate(selectedDate))} (${selectedDate}).`
+                            : `No schedules available for ${getDayName(getCustomDayOfWeekFromDate(selectedDate))} (${selectedDate}).`
+                          }
+                        </div>
+                      )}
+                      
+                      {(() => {
+                        const availableSchedules = getSchedulesForSelectedDate();
+                        
+                        if (availableSchedules.length === 0) {
+                          // No mostrar nada si no hay horarios disponibles
+                          return (
+                            <div className="text-muted" style={{ fontSize: '0.875rem' }}>
+                              {language === 'es' 
+                                ? 'No hay horarios disponibles para esta fecha.'
+                                : 'No schedules available for this date.'
+                              }
+                            </div>
+                          );
+                        } else if (availableSchedules.length === 1) {
+                          // Mostrar como texto en negrita cuando hay solo un horario
+                          return (
+                            <div className="d-flex align-items-center">
+                              <span className="fw-bold text-muted" style={{ fontSize: '1rem',margin:0,padding:0 }}>
+                                {availableSchedules[0].startTime}
+                              </span>
+                            </div>
+                          );
+                        } else {
+                          // Mostrar botones cuando hay múltiples horarios
+                          return (
+                            <div className="d-flex gap-2">
+                              {availableSchedules.map((schedule: Schedule, index: number) => (
+                                <button 
+                                  key={index}
+                                  className={`btn ${selectedTimeSlot === schedule.startTime ? 'btn-primary' : 'btn-outline-primary'}`}
+                                  onClick={() => handleTimeSlotSelect(schedule.startTime)}
+                                  style={{ 
+                                    fontSize: '0.875rem',
+                                    padding: '0.5rem 1rem',
+                                    borderRadius: '4px',
+                                    border: selectedTimeSlot === schedule.startTime ? 'none' : '1px solid #007bff'
+                                  }}
+                                >
+                                  {schedule.startTime}
+                                </button>
+                              ))}
+                            </div>
+                          );
+                        }
+                      })()}
+                    </div>
+
+                    <hr className="my-0" />
+
+                    {/* Política de cancelación */}
+                    <div className="p-3">
+                      <div className="d-flex align-items-start">
+                        <i className="fas fa-calendar-check text-success me-2 mt-1" style={{ fontSize: '0.875rem' }}></i>
+                        <span className="text-muted" style={{ fontSize: '0.875rem' }}>
+                          {language === 'es' 
+                            ? 'Cancela antes de las 8:00 AM del 22 de octubre para un reembolso completo'
+                            : 'Cancel before 8:00 AM on October 22 for a full refund'
+                          }
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Precios y botones */}
+                    <div className="p-3" style={{ backgroundColor: '#f8f9fa' }}>
+                      <div className="row align-items-center">
+                        <div className="col-md-6">
+                          <div className="d-flex flex-column mb-1">
+                            {hasActiveDiscount() && (
+                              <div className="d-flex flex-start align-items-center">
+                                <span className="badge bg-danger" style={{ fontSize: '0.875rem' }}>
+                                  -{getDiscountPercentage()}%
+                                </span>
+                                <span className="text-muted text-decoration-line-through m-1" style={{ fontSize: '0.9rem' }}>
+                                  {currency === 'PEN' ? 'S/ ' : '$ '}{getOriginalPrice().toFixed(2)}
+                                </span>
+                                
+                              </div>
+                            )}
+                            <span className="h4 fw-bold text-danger me-2" style={{ fontSize: '1.5rem' }}>
+                              {currency === 'PEN' ? 'S/ ' : '$ '}{calculateTotalPrice().toFixed(2)}
+                            </span>
+                          </div>
+                          <p className="text-muted mb-1" style={{ fontSize: '0.875rem' }}>
+                            {numberOfPeople} {language === 'es' 
+                              ? (numberOfPeople === 1 ? 'Adulto' : 'Adultos') 
+                              : (numberOfPeople === 1 ? 'Adult' : 'Adults')
+                            } x {currency === 'PEN' ? 'S/ ' : '$ '}{(calculateTotalPrice() / numberOfPeople).toFixed(2)}
+                          </p>
+                          <p className="text-muted small" style={{ fontSize: '0.75rem' }}>
+                            {language === 'es' ? 'Todos los impuestos y tarifas incluidos' : 'All taxes and fees included'}
+                          </p>
+                        </div>
+                        <div className="col-md-6 text-end">
+                          <div className="d-flex gap-2 justify-content-end">
+                            <button 
+                              className="btn btn-outline-primary"
+                              disabled={!selectedTimeSlot || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage)}
+                              style={{ 
+                                fontSize: '0.875rem',
+                                padding: '0.5rem 1rem',
+                                borderRadius: '4px',
+                                border: '1px solid #007bff',
+                                color: (!selectedTimeSlot || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage)) ? '#ccc' : '#007bff',
+                                backgroundColor: 'transparent',
+                                opacity: (!selectedTimeSlot || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage)) ? 0.5 : 1,
+                                cursor: (!selectedTimeSlot || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage)) ? 'not-allowed' : 'pointer'
+                              }}
+                            >
+                              {language === 'es' ? 'Reservar ahora' : 'Book now'}
+                            </button>
+                            <button 
+                              className="btn btn-primary"
+                              disabled={!selectedTimeSlot || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage)}
+                              style={{ 
+                                fontSize: '0.875rem',
+                                padding: '0.5rem 1rem',
+                                borderRadius: '4px',
+                                backgroundColor: (!selectedTimeSlot || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage)) ? '#ccc' : '#007bff',
+                                border: 'none',
+                                color: 'white',
+                                opacity: (!selectedTimeSlot || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage)) ? 0.5 : 1,
+                                cursor: (!selectedTimeSlot || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage)) ? 'not-allowed' : 'pointer'
+                              }}
+                            >
+                              {language === 'es' ? 'Agregar al carrito' : 'Add to cart'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
+          )}
+
+        {/* Barra flotante móvil - Solo visible en móvil */}
+        {showAvailabilitySection && (
+          <div className="d-block d-md-none position-fixed bottom-0 start-0 w-100 bg-white shadow-lg border-top" style={{ zIndex: 1030 }}>
+            <div className="container-fluid p-3">
+              <div className="d-flex justify-content-between align-items-center">
+                <div>
+                  {getMinPrice().price !== null ? (
+                    <>
+                      <small className="text-muted d-block" style={{ fontSize: '0.75rem' }}>
+                        {getTranslation('detail.booking.from', language)}
+                      </small>
+                      <div className="d-flex flex-column gap-2 mb-1">
+                        
+                        {getMinPrice().hasDiscount && (
+                          <div className="d-flex flex-start align-items-center">
+                            <span className="badge bg-danger" style={{ fontSize: '0.65rem' }}>-{getMinPrice().discountPercent}%</span>
+                            <span className="text-muted text-decoration-line-through" style={{ fontSize: '0.75rem' }}>
+                              {currency === 'PEN' ? 'S/ ' : '$ '}{getMinPrice().originalPrice?.toFixed(2)}
+                            </span>
+                          </div>
+                        )}
+                         <div className={`h5 fw-bold mb-0 ${getMinPrice().hasDiscount ? 'text-danger' : 'text-dark'}`} style={{ margin: '0px', padding: '0px' }}>
+                           {currency === 'PEN' ? 'S/ ' : '$ '}{getMinPrice().price?.toFixed(2) || '0.00'}
+                         </div>
+                        </div>
+                        <small className="text-muted" style={{ fontSize: '0.7rem', marginTop: '-14px' }}>
+                          {getTranslation('detail.booking.perPerson', language)}
+                        </small>
+                    </>
+                  ) : (
+                    <div className="h6 fw-bold text-dark mb-0">
+                      {getTranslation('detail.booking.contactForPrice', language)}
+                    </div>
+                  )}
+                </div>
+                <button 
+                  className="btn btn-primary px-4 py-2"
+                  onClick={scrollToBookingOptions}
+                >
+                  {getTranslation('detail.booking.viewAvailability', language)}
+                </button>
+              </div>
+            </div>
           </div>
+        )}
       </div>
     </div>
   );

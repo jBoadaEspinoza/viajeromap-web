@@ -32,6 +32,9 @@ export interface ActivityCardData {
   supplierName?: string; // Nombre del proveedor de la actividad (alternativo)
   pricingMode?: 'PER_PERSON' | 'PER_GROUP';
   bookingOptions?: BookingOption[]; // Opciones de booking para calcular precio mínimo
+  hasActiveOffer?: boolean; // Indica si tiene una oferta activa válida
+  originalPrice?: number; // Precio original antes del descuento
+  discountPercent?: number; // Porcentaje de descuento aplicado
 }
 
 export interface ActivityCardProps {
@@ -217,15 +220,40 @@ const ActivityCard: React.FC<ActivityCardProps> = ({
       const params = new URLSearchParams();
       
       // Agregar parámetros de búsqueda si existen
-      const date = searchParams.get('date');
+      let date = searchParams.get('date');
+      
+      // Si no hay fecha seleccionada, usar la fecha actual
+      if (!date) {
+        const today = new Date();
+        const year = today.getFullYear();
+        const month = String(today.getMonth() + 1).padStart(2, '0');
+        const day = String(today.getDate()).padStart(2, '0');
+        date = `${year}-${month}-${day}`;
+      }
+      
       const destination = searchParams.get('destination');
       const adults = searchParams.get('adults');
       const children = searchParams.get('children');
       
-      if (date) params.append('date', date);
+      // Siempre enviar fecha, currency y lang
+      params.append('date', date);
+      params.append('currency', currency.toUpperCase());
+      params.append('lang', language);
+      
+      // Agregar otros parámetros opcionales
       if (destination) params.append('destination', destination);
       if (adults) params.append('adults', adults);
       if (children) params.append('children', children);
+      
+      console.log('🔗 Navegando a detalle con parámetros:', {
+        activityId: activity.id,
+        date,
+        currency: currency.toUpperCase(),
+        lang: language,
+        destination,
+        adults,
+        children
+      });
       
       const queryString = params.toString();
       const url = `/activity/${activity.id}${queryString ? `?${queryString}` : ''}`;
@@ -355,9 +383,23 @@ const ActivityCard: React.FC<ActivityCardProps> = ({
              <div>
                  {getFormattedPrice() && (
                    <>
-                     <span className="h4 fw-bold text-primary mb-0">
-                       {getFormattedPrice()}
-                     </span>
+                     {activity.hasActiveOffer && activity.originalPrice && activity.discountPercent ? (
+                       <div>
+                         <div className="d-flex align-items-center gap-2 mb-1">
+                           <span className="badge bg-danger">-{activity.discountPercent}%</span>
+                           <span className="text-muted strikethrough-price" style={{ fontSize: '0.9rem' }}>
+                             {getCurrencySymbol()}{Math.ceil(activity.originalPrice)}
+                           </span>
+                         </div>
+                         <span className="h4 fw-bold text-danger mb-0">
+                           {getFormattedPrice()}
+                         </span>
+                       </div>
+                     ) : (
+                       <span className="h4 fw-bold text-primary mb-0">
+                         {getFormattedPrice()}
+                       </span>
+                     )}
                      <div className="small text-muted">
                        {activity.pricingMode === 'PER_PERSON' 
                          ? getTranslation('activity.pricePerPerson', language)
@@ -421,9 +463,23 @@ const ActivityCard: React.FC<ActivityCardProps> = ({
                <div>
                   {getFormattedPrice() && (
                     <>
-                      <span className="h5 fw-bold text-primary mb-0">
-                        {getFormattedPrice()}
-                      </span>
+                      {activity.hasActiveOffer && activity.originalPrice && activity.discountPercent ? (
+                        <div>
+                          <div className="d-flex align-items-center gap-2 mb-1">
+                            <span className="badge bg-danger">-{activity.discountPercent}%</span>
+                            <span className="text-muted strikethrough-price" style={{ fontSize: '0.85rem' }}>
+                              {getCurrencySymbol()}{Math.ceil(activity.originalPrice)}
+                            </span>
+                          </div>
+                          <span className="h5 fw-bold text-danger mb-0">
+                            {getFormattedPrice()}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="h5 fw-bold text-primary mb-0">
+                          {getFormattedPrice()}
+                        </span>
+                      )}
                       <div className="small text-muted">
                         {activity.pricingMode === 'PER_PERSON' 
                           ? getTranslation('activity.pricePerPerson', language)
@@ -463,9 +519,16 @@ const ActivityCard: React.FC<ActivityCardProps> = ({
         />
                  <div className="position-absolute top-0 end-0 m-2">
                       {getFormattedPrice() && (
-                        <span className="badge bg-white text-dark shadow-sm fw-bold px-2 py-1">
-                          {getFormattedPrice()}
-                        </span>
+                        <div className="d-flex flex-column align-items-end gap-1">
+                          {activity.hasActiveOffer && activity.discountPercent && (
+                            <span className="badge bg-danger fw-bold px-2 py-1">
+                              -{activity.discountPercent}%
+                            </span>
+                          )}
+                          <span className="badge bg-white text-dark shadow-sm fw-bold px-2 py-1">
+                            {getFormattedPrice()}
+                          </span>
+                        </div>
                       )}
          </div>
       </div>
@@ -502,11 +565,28 @@ const ActivityCard: React.FC<ActivityCardProps> = ({
   );
 
   return (
-    <div className={getColumnClass()}>
-      {variant === 'horizontal' && renderHorizontalCard()}
-      {variant === 'compact' && renderCompactCard()}
-      {variant === 'default' && renderDefaultCard()}
-    </div>
+    <>
+      <style>{`
+        .strikethrough-price {
+          position: relative;
+          display: inline-block;
+        }
+        .strikethrough-price::after {
+          content: '';
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: 45%;
+          height: 0.5px;
+          background-color: currentColor;
+        }
+      `}</style>
+      <div className={getColumnClass()}>
+        {variant === 'horizontal' && renderHorizontalCard()}
+        {variant === 'compact' && renderCompactCard()}
+        {variant === 'default' && renderDefaultCard()}
+      </div>
+    </>
   );
 };
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useLanguage } from '../context/LanguageContext';
 import { getTranslation } from '../utils/translations';
 import { useConfig } from '../context/ConfigContext';
@@ -16,15 +16,23 @@ import type { Destination } from '../api/activities';
 
 const Home: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { language } = useLanguage();
   const { config } = useConfig();
   const { currency } = useUrlParams();
 
+  // Estados del formulario (lo que el usuario está escribiendo)
   const [destination, setDestination] = useState('');
   const [dates, setDates] = useState('');
   const [adults, setAdults] = useState(1);
   const [children, setChildren] = useState(0);
   const [isTravelersDropdownOpen, setIsTravelersDropdownOpen] = useState(false);
+  
+  // Estados de búsqueda activa (lo que se está filtrando actualmente)
+  const [activeDestination, setActiveDestination] = useState(searchParams.get('destination') || '');
+  const [activeDates, setActiveDates] = useState(searchParams.get('date') || '');
+  const [activeAdults, setActiveAdults] = useState(parseInt(searchParams.get('adults') || '1'));
+  const [activeChildren, setActiveChildren] = useState(parseInt(searchParams.get('children') || '0'));
   const travelersDropdownRef = useRef<HTMLDivElement>(null);
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [loadingDestinations, setLoadingDestinations] = useState(true);
@@ -43,6 +51,26 @@ const Home: React.FC = () => {
 
   // Set page title dynamically
   usePageTitle('nav.home', language);
+
+  // Helper function to parse date in local timezone (America/Lima)
+  const parseLocalDate = (dateString: string): Date => {
+    // dateString formato: "YYYY-MM-DD"
+    const [year, month, day] = dateString.split('-').map(Number);
+    // Crear fecha en timezone local (mes es 0-indexed)
+    return new Date(year, month - 1, day, 12, 0, 0, 0);
+  };
+
+  // Helper function to format date for display
+  const formatDateForDisplay = (dateString: string): string => {
+    if (!dateString) return '';
+    const date = parseLocalDate(dateString);
+    return date.toLocaleDateString('es-PE', { 
+      timeZone: 'America/Lima',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    });
+  };
 
   // Manejadores para arrastre del carrusel con mouse
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -145,25 +173,59 @@ const Home: React.FC = () => {
     const fetchActivities = async () => {
       try {
         setLoadingActivities(true);
-        console.log('Fetching activities with params:', { language, currency });
+        
+        console.log('🚀 Enviando búsqueda al API (Home):');
+        console.log('   📅 departureDate:', activeDates || 'sin fecha');
+        console.log('   📍 destinationCity:', activeDestination || 'sin destino');
+        console.log('   💱 currency:', currency.toUpperCase());
+        console.log('   🌐 lang:', language);
+        
         const response = await activitiesApi.search({
           lang: language,
           currency: currency.toUpperCase(),
+          departureDate: activeDates || undefined, // Fecha de salida activa
+          destinationCity: activeDestination || undefined, // Filtrar por destino activo
           page: 0,
           size: 50, // Obtener más actividades para mostrar
           active: true
         });
         
+        // LOG 1: Verificar datos crudos del API
         if (response.success && response.data && response.data.length > 0) {
+          console.log('\n🔍 ========================================');
+          console.log('📡 DATOS DESDE API (Home):');
+          console.log('========================================');
+          console.log(`📦 Total actividades recibidas: ${response.data.length}`);
+          
+          const activitiesWithOfferFromAPI = response.data.filter(activity => {
+            const bookingOption = activity.bookingOptions?.[0];
+            return bookingOption?.specialOfferPercentage && bookingOption.specialOfferPercentage > 0;
+          });
+          
+          console.log(`🎁 Actividades con descuento desde API: ${activitiesWithOfferFromAPI.length}`);
+          console.log(`📊 Porcentaje con descuento: ${((activitiesWithOfferFromAPI.length / response.data.length) * 100).toFixed(1)}%`);
+          
+          if (activitiesWithOfferFromAPI.length > 0) {
+            console.log('\n📋 Lista de actividades con descuento desde API:');
+            activitiesWithOfferFromAPI.forEach(activity => {
+              const bookingOption = activity.bookingOptions?.[0];
+              console.log(`   ✅ ${activity.title} → ${bookingOption?.specialOfferPercentage}% OFF`);
+            });
+          }
+          console.log('========================================\n');
           // Mapear Activity a ActivityCardData
           const mappedActivities = response.data.map(activity => {
             const bookingOption = activity.bookingOptions?.[0];
             let price = 0;
+            let originalPrice = 0;
             let currency = 'PEN';
             let isFrom = false;
+            let hasActiveOffer = false;
+            let discountPercent = 0;
 
             // Aplicar la lógica de precios
             if (bookingOption) {
+              // Obtener el precio base (el API ya devuelve precios en la moneda solicitada)
               if (bookingOption.pricingMode === 'PER_PERSON' && bookingOption.priceTiers && bookingOption.priceTiers.length > 0) {
                 // Usar la moneda del priceTier (asumiendo que todos tienen la misma moneda)
                 currency = bookingOption.priceTiers[0].currency || 'PEN';
@@ -180,6 +242,28 @@ const Home: React.FC = () => {
                 currency = bookingOption.currency || 'PEN';
                 price = bookingOption.pricePerPerson || 0;
                 isFrom = false;
+              }
+
+              // Verificar specialOfferPercentage
+              console.log(`📊 Actividad: "${activity.title}"`);
+              console.log(`   💰 Precio base: ${currency} ${price}`);
+              console.log(`   🎁 specialOfferPercentage: ${bookingOption.specialOfferPercentage ?? 'null/undefined'}`);
+
+              // Aplicar descuento si existe specialOfferPercentage
+              if (bookingOption.specialOfferPercentage && bookingOption.specialOfferPercentage > 0) {
+                hasActiveOffer = true;
+                originalPrice = price; // Guardar precio original
+                discountPercent = bookingOption.specialOfferPercentage;
+                
+                // Calcular precio con descuento
+                const discountAmount = price * (bookingOption.specialOfferPercentage / 100);
+                price = price - discountAmount;
+                
+                console.log(`   ✅ Descuento aplicado: ${discountPercent}%`);
+                console.log(`   💵 Precio original: ${currency} ${originalPrice}`);
+                console.log(`   💲 Precio final: ${currency} ${price}`);
+              } else {
+                console.log(`   ❌ Sin descuento`);
               }
             }
 
@@ -210,17 +294,52 @@ const Home: React.FC = () => {
               includes: activity.includes || [],
               currency: currency,
               isFromPrice: isFrom,
-              supplierName: activity.supplier?.name?.split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(' ') || ''
+              supplierName: activity.supplier?.name?.split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(' ') || '',
+              hasActiveOffer: hasActiveOffer,
+              originalPrice: originalPrice > 0 ? originalPrice : undefined,
+              discountPercent: discountPercent > 0 ? discountPercent : undefined
             };
           });
           
-          // Debug: Verificar que los precios se mapeen correctamente
-          console.log('Actividades mapeadas con precios:', mappedActivities.map(a => ({
-            title: a.title,
-            price: a.price,
-            currency: a.currency,
-            isFromPrice: a.isFromPrice
-          })));
+          // Resumen de descuentos después de filtros
+          console.log('\n🔍 ========================================');
+          console.log('📋 RESUMEN DESPUÉS DE FILTROS (Home):');
+          console.log('========================================');
+          
+          // Información de filtros aplicados
+          console.log('🔧 Filtros aplicados:');
+          if (activeDestination) {
+            console.log(`   📍 Destino: ${activeDestination}`);
+          } else {
+            console.log(`   📍 Destino: Todos`);
+          }
+          if (activeDates) {
+            console.log(`   📅 Fecha: ${activeDates}`);
+          }
+          if (activeAdults > 1 || activeChildren > 0) {
+            console.log(`   👥 Viajeros: ${activeAdults} adultos, ${activeChildren} niños`);
+          }
+          
+          console.log('\n📊 Resultados:');
+          const withDiscount = mappedActivities.filter(a => a.hasActiveOffer);
+          const withoutDiscount = mappedActivities.filter(a => !a.hasActiveOffer);
+          console.log(`   📦 Total actividades después de filtros: ${mappedActivities.length}`);
+          console.log(`   ✅ Con descuento: ${withDiscount.length}`);
+          console.log(`   ❌ Sin descuento: ${withoutDiscount.length}`);
+          console.log(`   📈 Porcentaje con descuento: ${mappedActivities.length > 0 ? ((withDiscount.length / mappedActivities.length) * 100).toFixed(1) : 0}%`);
+          
+          // Comparación con datos del API
+          console.log('\n🔄 Comparación:');
+          console.log(`   Desde API: ${activitiesWithOfferFromAPI.length} con descuento de ${response.data.length} totales`);
+          console.log(`   Después filtros: ${withDiscount.length} con descuento de ${mappedActivities.length} totales`);
+          
+          if (withDiscount.length > 0) {
+            console.log('\n🎁 Actividades con descuento (final):');
+            withDiscount.forEach(a => {
+              console.log(`   - ${a.title}: ${a.discountPercent}% OFF`);
+            });
+          }
+          console.log('========================================\n');
           
           setActivities(mappedActivities);
         } else {
@@ -235,7 +354,7 @@ const Home: React.FC = () => {
     };
 
     fetchActivities();
-  }, [language, currency]);
+  }, [language, currency, activeDestination, activeDates]); // Depende de los filtros ACTIVOS, no del formulario
 
   // Fetch destinations from API
   useEffect(() => {
@@ -261,6 +380,32 @@ const Home: React.FC = () => {
     };
 
     fetchDestinations();
+  }, []);
+
+  // Inicializar formulario con valores de URL si existen
+  useEffect(() => {
+    const urlDestination = searchParams.get('destination');
+    const urlDate = searchParams.get('date');
+    const urlAdults = searchParams.get('adults');
+    const urlChildren = searchParams.get('children');
+    
+    if (urlDestination) setDestination(urlDestination);
+    if (urlDate) setDates(urlDate);
+    if (urlAdults) setAdults(parseInt(urlAdults));
+    if (urlChildren) setChildren(parseInt(urlChildren));
+  }, []); // Solo al montar el componente
+
+  // Hacer scroll a actividades si hay filtros en la URL (viene desde enlace externo)
+  useEffect(() => {
+    const hasFilters = searchParams.get('destination') || searchParams.get('date');
+    if (hasFilters && window.location.hash === '#activities') {
+      setTimeout(() => {
+        const activitiesSection = document.getElementById('activities');
+        if (activitiesSection) {
+          activitiesSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }, 500);
+    }
   }, []);
 
   // Cerrar dropdown cuando se hace clic fuera
@@ -302,12 +447,14 @@ const Home: React.FC = () => {
       return;
     }
 
+    // Navegar a la página de búsqueda con los parámetros
     const params = new URLSearchParams();
-    if (destination) params.append('destination', destination);
-    if (dates) params.append('date', dates);
-    params.append('adults', adults.toString());
-    params.append('children', children.toString());
+    if (destination) params.set('destination', destination);
+    if (dates) params.set('date', dates);
+    if (adults > 1) params.set('adults', adults.toString());
+    if (children > 0) params.set('children', children.toString());
     
+    // Navegar a /search con los parámetros
     navigate(`/search?${params.toString()}`);
   };
 
@@ -378,6 +525,22 @@ const Home: React.FC = () => {
 
   return (
     <div className="min-vh-100 bg-white">
+      {/* CSS personalizado para mejorar la línea tachada */}
+      <style>{`
+        .strikethrough-price {
+          position: relative;
+          display: inline-block;
+        }
+        .strikethrough-price::after {
+          content: '';
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: 40%;
+          height: 0.3px;
+          background-color: currentColor;
+        }
+      `}</style>
       {/* Hero Section con Buscador */}
       <div 
         className="position-relative text-white py-5"
@@ -613,6 +776,59 @@ const Home: React.FC = () => {
           <p className="lead text-muted">
             {getTranslation('home.activities.available.subtitle', language)}
           </p>
+          
+          {/* Mostrar filtros aplicados (ACTIVOS) */}
+          {(activeDestination || activeDates) && (
+            <div className="d-flex justify-content-center gap-2 flex-wrap mt-3">
+              {activeDestination && (
+                <span className="badge bg-primary px-3 py-2">
+                  <svg className="me-1" width="14" height="14" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
+                  </svg>
+                  {getTranslation(`destination.${activeDestination}`, language)}
+                </span>
+              )}
+              {activeDates && (
+                <span className="badge bg-info px-3 py-2">
+                  <svg className="me-1" width="14" height="14" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clipRule="evenodd" />
+                  </svg>
+                  {formatDateForDisplay(activeDates)}
+                </span>
+              )}
+              {(activeAdults > 1 || activeChildren > 0) && (
+                <span className="badge bg-secondary px-3 py-2">
+                  <svg className="me-1" width="14" height="14" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3z" />
+                  </svg>
+                  {activeAdults} {getTranslation('home.search.adults', language)}, {activeChildren} {getTranslation('home.search.children', language)}
+                </span>
+              )}
+              <button 
+                className="badge bg-danger px-3 py-2 border-0" 
+                style={{ cursor: 'pointer' }}
+                onClick={() => {
+                  // Limpiar formulario
+                  setDestination('');
+                  setDates('');
+                  setAdults(1);
+                  setChildren(0);
+                  // Limpiar búsqueda activa
+                  setActiveDestination('');
+                  setActiveDates('');
+                  setActiveAdults(1);
+                  setActiveChildren(0);
+                  // Limpiar URL
+                  navigate('/');
+                }}
+              >
+                <svg className="me-1" width="14" height="14" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                </svg>
+                {getTranslation('common.clearFilters', language) || 'Limpiar filtros'}
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Loading state para actividades */}
@@ -690,9 +906,17 @@ const Home: React.FC = () => {
                       
                       <div className="d-flex justify-content-between align-items-end mt-auto">
                         <div>
-                          <div className="text-primary">
+                          <div className={activity.hasActiveOffer ? "text-danger" : "text-primary"}>
                             {getPriceValue(activity.price) > 0 ? (
                               <>
+                                {activity.hasActiveOffer && activity.originalPrice && activity.discountPercent && (
+                                  <div className="d-flex align-items-center gap-2 mb-1">
+                                    <span className="badge bg-danger" style={{ fontSize: '0.65rem' }}>-{activity.discountPercent}%</span>
+                                    <span className="text-muted strikethrough-price" style={{ fontSize: '0.75rem' }}>
+                                      {activity.currency === 'PEN' ? 'S/' : '$'}{Math.ceil(activity.originalPrice)}
+                                    </span>
+                                  </div>
+                                )}
                                 <span className="text-muted" style={{ fontSize: '0.9rem', marginBottom: '0px' }}>
                                   {activity.isFromPrice && `${getTranslation('home.activities.priceFrom', language)} `}
                                 </span>
@@ -712,7 +936,19 @@ const Home: React.FC = () => {
                         </div>
                         <button 
                           className="btn btn-outline-primary btn-sm"
-                          onClick={() => navigate(`/activity/${activity.id}`)}
+                          onClick={() => {
+                            const params = new URLSearchParams();
+                            params.append('date', activeDates || (() => {
+                              const today = new Date();
+                              return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+                            })());
+                            params.append('currency', currency.toUpperCase());
+                            params.append('lang', language);
+                            if (activeDestination) params.append('destination', activeDestination);
+                            if (activeAdults) params.append('adults', String(activeAdults));
+                            if (activeChildren) params.append('children', String(activeChildren));
+                            navigate(`/activity/${activity.id}?${params.toString()}`);
+                          }}
                           style={{ whiteSpace: 'normal', lineHeight: '1.2' }}
                         >
                           {getTranslation('home.activities.viewDetails', language)}
@@ -789,9 +1025,17 @@ const Home: React.FC = () => {
                           
                           <div className="d-flex justify-content-between align-items-end">
                             <div>
-                              <div className="text-primary">
+                              <div className={activity.hasActiveOffer ? "text-danger" : "text-primary"}>
                                 {getPriceValue(activity.price) > 0 ? (
                                   <>
+                                    {activity.hasActiveOffer && activity.originalPrice && activity.discountPercent && (
+                                      <div className="d-flex align-items-center gap-1 mb-1">
+                                        <span className="badge bg-danger" style={{ fontSize: '0.6rem' }}>-{activity.discountPercent}%</span>
+                                        <span className="text-muted strikethrough-price" style={{ fontSize: '0.7rem' }}>
+                                          {activity.currency === 'PEN' ? 'S/' : '$'}{Math.ceil(activity.originalPrice)}
+                                        </span>
+                                      </div>
+                                    )}
                                     <span className="text-muted" style={{ fontSize: '0.9rem', marginBottom: '0px' }}>
                                       {activity.isFromPrice && `${getTranslation('home.activities.priceFrom', language)} `}
                                     </span>
@@ -812,7 +1056,19 @@ const Home: React.FC = () => {
                             <button 
                               className="btn btn-outline-primary btn-sm"
                               style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem', whiteSpace: 'normal', lineHeight: '1.2' }}
-                              onClick={() => navigate(`/activity/${activity.id}`)}
+                              onClick={() => {
+                                const params = new URLSearchParams();
+                                params.append('date', activeDates || (() => {
+                                  const today = new Date();
+                                  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+                                })());
+                                params.append('currency', currency.toUpperCase());
+                                params.append('lang', language);
+                                if (activeDestination) params.append('destination', activeDestination);
+                                if (activeAdults) params.append('adults', String(activeAdults));
+                                if (activeChildren) params.append('children', String(activeChildren));
+                                navigate(`/activity/${activity.id}?${params.toString()}`);
+                              }}
                             >
                               {getTranslation('common.viewDetails', language)}
                             </button>
