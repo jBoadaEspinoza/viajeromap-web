@@ -4,7 +4,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { useConfig } from '../context/ConfigContext';
 import { useAuth } from '../context/AuthContext';
-import { getTranslation } from '../utils/translations';
+import { getTranslation, getLanguageName } from '../utils/translations';
 
 interface BookingDetails {
   activityId: string;
@@ -25,6 +25,11 @@ interface BookingDetails {
   discountPercentage: number;
   originalPrice: number;
   finalPrice: number;
+  pickupPoint?: {
+    name: string;
+    address: string;
+  };
+  comment?: string;
 }
 
 const Checkout: React.FC = () => {
@@ -34,6 +39,11 @@ const Checkout: React.FC = () => {
   const { currency } = useCurrency();
   const { config } = useConfig();
   const { user, isAuthenticated } = useAuth();
+  
+  // Función para navegar a home
+  const handleLogoClick = () => {
+    navigate('/');
+  };
   
   const [bookingDetails, setBookingDetails] = useState<BookingDetails | null>(null);
   const [timeLeft, setTimeLeft] = useState(() => {
@@ -239,12 +249,23 @@ const Checkout: React.FC = () => {
             {/* Desktop Layout */}
             <div className="d-none d-lg-flex align-items-center justify-content-between w-100">
               {/* Logo */}
-              <div className="d-flex align-items-center">
+              <div 
+                className="d-flex align-items-center" 
+                style={{ cursor: 'pointer' }}
+                onClick={handleLogoClick}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.opacity = '0.7';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.opacity = '1';
+                }}
+              >
                 <img
                   src={config.business.urlLogo}
                   alt="Viajero Map Logo"
                   height="50"
                   className="d-inline-block align-text-top me-3"
+                  style={{ pointerEvents: 'none' }}
                 />
                 <span className="fw-bold fs-3 text-primary">{config.business.name}</span>
               </div>
@@ -278,12 +299,23 @@ const Checkout: React.FC = () => {
             {/* Mobile Layout */}
             <div className="d-lg-none">
               {/* Logo y nombre centrados */}
-              <div className="d-flex align-items-center justify-content-center mb-3">
+              <div 
+                className="d-flex align-items-center justify-content-center mb-3"
+                style={{ cursor: 'pointer' }}
+                onClick={handleLogoClick}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.opacity = '0.7';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.opacity = '1';
+                }}
+              >
                 <img
                   src={config.business.urlLogo}
                   alt="Viajero Map Logo"
                   height="45"
                   className="d-inline-block align-text-top me-3"
+                  style={{ pointerEvents: 'none' }}
                 />
                 <span className="fw-bold fs-4 text-primary">{config.business.name}</span>
               </div>
@@ -464,12 +496,23 @@ const Checkout: React.FC = () => {
           {/* Desktop Layout */}
           <div className="d-none d-lg-flex align-items-center justify-content-between w-100">
             {/* Logo */}
-            <div className="d-flex align-items-center">
+            <div 
+              className="d-flex align-items-center" 
+              style={{ cursor: 'pointer' }}
+              onClick={handleLogoClick}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.opacity = '0.7';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.opacity = '1';
+              }}
+            >
               <img
                 src={config.business.urlLogo}
                 alt="Viajero Map Logo"
                 height="50"
                 className="d-inline-block align-text-top me-3"
+                style={{ pointerEvents: 'none' }}
               />
               <span className="fw-bold fs-3 text-primary">{config.business.name}</span>
             </div>
@@ -503,12 +546,23 @@ const Checkout: React.FC = () => {
           {/* Mobile Layout */}
           <div className="d-lg-none">
             {/* Logo y nombre centrados */}
-            <div className="d-flex align-items-center justify-content-center mb-3">
+            <div 
+              className="d-flex align-items-center justify-content-center mb-3"
+              style={{ cursor: 'pointer' }}
+              onClick={handleLogoClick}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.opacity = '0.7';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.opacity = '1';
+              }}
+            >
               <img
                 src={config.business.urlLogo}
                 alt="Viajero Map Logo"
                 height="45"
                 className="d-inline-block align-text-top me-3"
+                style={{ pointerEvents: 'none' }}
               />
               <span className="fw-bold fs-4 text-primary">{config.business.name}</span>
             </div>
@@ -686,12 +740,54 @@ const Checkout: React.FC = () => {
 
                 {/* Booking Details */}
                 <div className="mb-4">
+                  {/* Idioma del guía */}
                   <div className="d-flex align-items-center mb-2">
-                    <i className="fas fa-map-marker-alt text-primary me-2"></i>
+                    <i className="fas fa-language text-primary me-2"></i>
                     <span className="small">
-                      {getTranslation('checkout.meetingPoint', language)} • {getTranslation('checkout.language', language)}: {bookingDetails.guideLanguage}
+                      {getTranslation('checkout.language', language)}: {bookingDetails.guideLanguage}
                     </span>
                   </div>
+                  
+                  {/* Punto de encuentro o recogida */}
+                  <div className="d-flex align-items-start mb-2">
+                    <i className="fas fa-map-marker-alt text-primary me-2 mt-1"></i>
+                    <div className="flex-grow-1">
+                      <span className="small fw-medium d-block">
+                        {getTranslation('checkout.meetingPoint', language)}:
+                      </span>
+                      <span className="small">
+                        {bookingDetails.pickupPoint ? (
+                          <>
+                            {bookingDetails.pickupPoint.name}
+                            {bookingDetails.pickupPoint.address && (
+                              <span className="text-muted d-block mt-1">
+                                {bookingDetails.pickupPoint.address}
+                              </span>
+                            )}
+                          </>
+                        ) : (
+                          bookingDetails.meetingPoint
+                        )}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  {/* Comentario si existe */}
+                  {bookingDetails.comment && (
+                    <div className="d-flex align-items-start mb-2">
+                      <i className="fas fa-comment text-primary me-2 mt-1"></i>
+                      <div className="flex-grow-1">
+                        <span className="small fw-medium d-block">
+                          {language === 'es' ? 'Comentario' : 'Comment'}:
+                        </span>
+                        <span className="small text-muted">
+                          {bookingDetails.comment}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Fecha y hora */}
                   <div className="d-flex align-items-center mb-2">
                     <i className="fas fa-clock text-primary me-2"></i>
                     <span className="small">
@@ -703,12 +799,19 @@ const Checkout: React.FC = () => {
                       })}, {bookingDetails.time}
                     </span>
                   </div>
+                  
+                  {/* Viajeros */}
                   <div className="d-flex align-items-center mb-2">
                     <i className="fas fa-user text-primary me-2"></i>
                     <span className="small">
-                      {bookingDetails.travelers.adults} adulto (Edad: de 0 a 99)
+                      {bookingDetails.travelers.adults} {language === 'es' ? 'adulto' : 'adult'} {bookingDetails.travelers.adults > 1 ? (language === 'es' ? 'adultos' : 'adults') : ''}
+                      {bookingDetails.travelers.children > 0 && (
+                        <> • {bookingDetails.travelers.children} {language === 'es' ? 'niño' : 'child'} {bookingDetails.travelers.children > 1 ? (language === 'es' ? 'niños' : 'children') : ''}</>
+                      )}
                     </span>
                   </div>
+                  
+                  {/* Opción de cambio */}
                   <div className="d-flex align-items-center mb-2">
                     <i className="fas fa-pencil-alt text-primary me-2"></i>
                     <a href="#" className="text-primary text-decoration-none small">

@@ -10,7 +10,7 @@
 
 /* Custom styles */
 body {
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  font-family: 'Inter', sans-serif;
 }
 
 .navbar-brand {
@@ -112,8 +112,8 @@ body {
   border: 1px solid #212529 !important;
 }
 
-.font-montserrat {
-  font-family: 'Montserrat', sans-serif !important;
+.font-inter {
+  font-family: 'Inter', sans-serif !important;
 }
 
 .text-midnightblue {

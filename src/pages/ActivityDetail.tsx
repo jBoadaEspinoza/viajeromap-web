@@ -15,7 +15,7 @@ import Reviews from '../components/Reviews';
 import { useLanguage } from '../context/LanguageContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { useCart } from '../context/CartContext';
-import { getTranslation } from '../utils/translations';
+import { getTranslation, getLanguageName } from '../utils/translations';
 import { useGlobalLoading } from '../hooks/useGlobalLoading';
 import { appConfig } from '../config/appConfig';
 
@@ -63,6 +63,10 @@ const ActivityDetail: React.FC = () => {
   const [specialOffers, setSpecialOffers] = useState<any[]>([]); // Ofertas especiales
   const [isAddingToCart, setIsAddingToCart] = useState(false); // Estado para loading del carrito
   const [isBooking, setIsBooking] = useState(false); // Estado para loading del botón reservar
+  const [showPickupPointsModal, setShowPickupPointsModal] = useState(false); // Estado para modal de pickup points
+  const [showPickupPointsPageView, setShowPickupPointsPageView] = useState(false); // Estado para pageview de pickup points (mobile)
+  const [selectedPickupPoint, setSelectedPickupPoint] = useState<any | null>(null); // Punto de recogida seleccionado (objeto con name y address)
+  const [pickupComment, setPickupComment] = useState<string>(''); // Comentario para el punto de recogida
   
   // Obtener parámetros desde la URL
   const [searchParams] = useSearchParams();
@@ -141,6 +145,10 @@ const ActivityDetail: React.FC = () => {
   // Función para manejar selección de opción de reserva
   const handleBookingOptionSelect = (option: any) => {
     setSelectedBookingOption(option);
+    
+    // Resetear punto de recogida y comentario al cambiar de opción
+    setSelectedPickupPoint(null);
+    setPickupComment('');
     
     // Seleccionar automáticamente el primer idioma disponible si hay múltiples idiomas
     if (option.languages && option.languages.length > 0) {
@@ -293,13 +301,24 @@ const ActivityDetail: React.FC = () => {
 
     try {
       // Obtener el punto de encuentro seleccionado
-      const meetingPoint = selectedBookingOption?.meetingPointAddress || 
+      let meetingPoint = selectedBookingOption?.meetingPointAddress || 
                           'Punto de encuentro por confirmar';
+      
+      // Si hay un punto de recogida seleccionado, usarlo
+      let pickupPointInfo = undefined;
+      if (selectedPickupPoint) {
+        meetingPoint = selectedPickupPoint.name || selectedPickupPoint.address;
+        pickupPointInfo = {
+          name: selectedPickupPoint.name || '',
+          address: selectedPickupPoint.address || ''
+        };
+      }
 
-      // Obtener el idioma del guía
-      const guideLanguage = selectedLanguage || 
+      // Obtener el idioma del guía (traducido a nombre completo)
+      const languageCode = selectedLanguage || 
                            (selectedBookingOption.languages && selectedBookingOption.languages.length === 1 ? 
                             selectedBookingOption.languages[0] : 'Español');
+      const guideLanguage = getLanguageName(languageCode, language);
 
       // Obtener la hora de salida
       const departureTime = selectedTimeSlot;
@@ -331,18 +350,23 @@ const ActivityDetail: React.FC = () => {
           hasDiscount: hasActiveDiscount(),
           discountPercentage: getDiscountPercentage(),
           originalPrice: getOriginalPrice(),
-          finalPrice: calculateTotalPrice()
+          finalPrice: calculateTotalPrice(),
+          pickupPoint: pickupPointInfo,
+          comment: pickupComment || undefined
         }
       };
 
       // Simular delay para mostrar loading
       await new Promise(resolve => setTimeout(resolve, 1000));
 
+      // Debug: mostrar el item que se va a agregar
+      console.log('✅ Item que se va a agregar al carrito:', cartItem);
+
       // Agregar al carrito
       addItem(cartItem);
 
-      // Mostrar mensaje de éxito (opcional)
-      console.log('✅ Actividad agregada al carrito:', cartItem);
+      // Navegar a la página del carrito
+      navigate('/cart');
 
     } catch (error) {
       console.error('❌ Error al agregar al carrito:', error);
@@ -364,13 +388,24 @@ const ActivityDetail: React.FC = () => {
       await new Promise(resolve => setTimeout(resolve, 1000));
 
       // Obtener el punto de encuentro seleccionado
-      const meetingPoint = selectedBookingOption?.meetingPointAddress || 
+      let meetingPoint = selectedBookingOption?.meetingPointAddress || 
                           'Punto de encuentro por confirmar';
+      
+      // Si hay un punto de recogida seleccionado, usarlo
+      let pickupPointInfo = undefined;
+      if (selectedPickupPoint) {
+        meetingPoint = selectedPickupPoint.name || selectedPickupPoint.address;
+        pickupPointInfo = {
+          name: selectedPickupPoint.name || '',
+          address: selectedPickupPoint.address || ''
+        };
+      }
 
-      // Obtener el idioma del guía
-      const guideLanguage = selectedLanguage || 
+      // Obtener el idioma del guía (traducido a nombre completo)
+      const languageCode = selectedLanguage || 
                            (selectedBookingOption.languages && selectedBookingOption.languages.length === 1 ? 
                             selectedBookingOption.languages[0] : 'Español');
+      const guideLanguage = getLanguageName(languageCode, language);
 
       // Obtener la hora de salida
       const departureTime = selectedTimeSlot;
@@ -397,7 +432,9 @@ const ActivityDetail: React.FC = () => {
         hasDiscount: hasActiveDiscount(),
         discountPercentage: getDiscountPercentage(),
         originalPrice: getOriginalPrice(),
-        finalPrice: calculateTotalPrice()
+        finalPrice: calculateTotalPrice(),
+        pickupPoint: pickupPointInfo,
+        comment: pickupComment || undefined
       };
 
       // Guardar detalles en sessionStorage para persistencia durante la sesión
@@ -1239,33 +1276,119 @@ const ActivityDetail: React.FC = () => {
                       {/* Punto de encuentro / Pickup Locations */}
                       {selectedBookingOption?.meetingType === 'REFERENCE_CITY_WITH_LIST' ? (
                         <div className="mb-3">
-                          {/* Pickup Locations */}
-                          <div className="d-flex align-items-center mb-2">
-                            <i className="fas fa-bus text-primary me-2" style={{ fontSize: '0.875rem' }}></i>
-                            <span className="fw-medium text-dark text-decoration-underline" style={{ fontSize: '0.875rem' }}>
-                              {language === 'es' ? 'Ver ' : 'View '}
-                              {selectedBookingOption.pickupPoints?.length || 0}
-                              {language === 'es' ? ' ubicaciones de recogida' : ' pickup locations'}
-                            </span>
-                          </div>
-                          
-                          {/* Descripción explicativa */}
-                          <p className="text-muted mb-0" style={{ fontSize: '0.8rem', lineHeight: '1.3' }}>
-                            {language === 'es' 
-                              ? 'La recogida está disponible desde múltiples ubicaciones. Seleccionarás la tuya al finalizar la compra.'
-                              : 'Pickup is available from multiple locations. You\'ll select yours at checkout.'
-                            }
-                          </p>
+                          {selectedPickupPoint ? (
+                            <>
+                              {/* Mostrar punto seleccionado con opción de editar */}
+                              <div className="d-flex align-items-start justify-content-between">
+                                <div className="flex-grow-1">
+                                  <div className="d-flex align-items-center mb-1">
+                                    <i className="fas fa-map-marker-alt text-primary me-2" style={{ fontSize: '0.875rem' }}></i>
+                                    <span className="fw-medium text-dark" style={{ fontSize: '0.875rem' }}>
+                                      {language === 'es' ? 'Ubicación seleccionada:' : 'Selected location:'}
+                                    </span>
+                                  </div>
+                                  <div style={{ marginLeft: '1.5rem' }}>
+                                    <p className="fw-medium mb-0" style={{ fontSize: '0.875rem', lineHeight: '1.3' }}>
+                                      {selectedPickupPoint.name || selectedPickupPoint.address}
+                                    </p>
+                                    {selectedPickupPoint.address && selectedPickupPoint.name && (
+                                      <p className="text-muted mb-0" style={{ fontSize: '0.8rem', lineHeight: '1.3' }}>
+                                        {selectedPickupPoint.address}
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+                                <button 
+                                  className="btn btn-link p-0 text-primary fw-medium"
+                                  style={{ fontSize: '0.875rem' }}
+                                  onClick={() => {
+                                    const isMobile = window.innerWidth < 768;
+                                    if (isMobile) {
+                                      setShowPickupPointsPageView(true);
+                                    } else {
+                                      setShowPickupPointsModal(true);
+                                    }
+                                  }}
+                                >
+                                  {language === 'es' ? 'Editar' : 'Edit'}
+                                </button>
+                              </div>
+                              
+                              {/* Campo de comentario */}
+                              <div className="mt-2">
+                                <label className="form-label mb-1" style={{ fontSize: '0.8rem' }}>
+                                  {language === 'es' ? 'Comentario (opcional)' : 'Comment (optional)'}
+                                </label>
+                                <textarea
+                                  className="form-control form-control-sm"
+                                  rows={2}
+                                  placeholder={language === 'es' ? 'Ej: Soy el segundo piso del hotel' : "E.g.: I'm on the second floor of the hotel"}
+                                  value={pickupComment}
+                                  onChange={(e) => setPickupComment(e.target.value)}
+                                  style={{ fontSize: '0.8rem' }}
+                                />
+                              </div>
+                            </>
+                          ) : (
+                            /* Mostrar botón para seleccionar punto */
+                            <>
+                              <div className="d-flex align-items-center mb-2">
+                                <i className="fas fa-bus text-primary me-2" style={{ fontSize: '0.875rem' }}></i>
+                                <button 
+                                  className="btn btn-link p-0 fw-medium text-dark text-decoration-underline"
+                                  style={{ fontSize: '0.875rem' }}
+                                  onClick={() => {
+                                    const isMobile = window.innerWidth < 768;
+                                    if (isMobile) {
+                                      setShowPickupPointsPageView(true);
+                                    } else {
+                                      setShowPickupPointsModal(true);
+                                    }
+                                  }}
+                                >
+                                  {language === 'es' ? 'Ver ' : 'View '}
+                                  {selectedBookingOption.pickupPoints?.length || 0}
+                                  {language === 'es' ? ' ubicaciones de recogida' : ' pickup locations'}
+                                </button>
+                              </div>
+                              
+                              {/* Descripción explicativa */}
+                              <p className="text-muted mb-0" style={{ fontSize: '0.8rem', lineHeight: '1.3' }}>
+                                {language === 'es' 
+                                  ? 'La recogida está disponible desde múltiples ubicaciones. Selecciona tu ubicación preferida.'
+                                  : 'Pickup is available from multiple locations. Select your preferred location.'
+                                }
+                              </p>
+                            </>
+                          )}
                         </div>
                       ) : (
-                        <div className="d-flex align-items-start mb-3">
-                          <i className="fas fa-map-marker-alt text-primary me-2 mt-1" style={{ fontSize: '0.875rem' }}></i>
-                          <span className="fw-medium text-dark text-decoration-underline" style={{ fontSize: '0.875rem', lineHeight: '1.3' }}>
-                            {selectedBookingOption?.meetingPointAddress || 
-                             'Meet at Lt 8, Gral. Don José de San Martin, Av. Los Libertadores Mz C, Paracas 11550, Perú'
-                            }
-                          </span>
-                        </div>
+                        <>
+                          <div className="d-flex align-items-start mb-3">
+                            <i className="fas fa-map-marker-alt text-primary me-2 mt-1" style={{ fontSize: '0.875rem' }}></i>
+                            <span className="fw-medium text-dark text-decoration-underline" style={{ fontSize: '0.875rem', lineHeight: '1.3' }}>
+                              {selectedBookingOption?.meetingPointAddress || 
+                               'Meet at Lt 8, Gral. Don José de San Martin, Av. Los Libertadores Mz C, Paracas 11550, Perú'
+                              }
+                            </span>
+                          </div>
+                          {/* Campo de comentario para MEETING_POINT */}
+                          {selectedBookingOption?.meetingType === 'MEETING_POINT' && (
+                            <div className="mb-3">
+                              <label className="form-label mb-1" style={{ fontSize: '0.8rem' }}>
+                                {language === 'es' ? 'Comentario (opcional)' : 'Comment (optional)'}
+                              </label>
+                              <textarea
+                                className="form-control form-control-sm"
+                                rows={2}
+                                placeholder={language === 'es' ? 'Ej: Soy el segundo piso del hotel' : "E.g.: I'm on the second floor of the hotel"}
+                                value={pickupComment}
+                                onChange={(e) => setPickupComment(e.target.value)}
+                                style={{ fontSize: '0.8rem' }}
+                              />
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
 
@@ -1407,17 +1530,41 @@ const ActivityDetail: React.FC = () => {
                           <div className="d-flex gap-2 justify-content-end">
                             <button 
                               className="btn btn-outline-primary"
-                              disabled={!selectedTimeSlot || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage) || isBooking}
+                              disabled={(() => {
+                                // Verificar si se necesita seleccionar punto de encuentro
+                                const needsMeetingPoint = selectedBookingOption?.meetingType === 'REFERENCE_CITY_WITH_LIST' && !selectedPickupPoint;
+                                // Verificar si se necesita seleccionar idioma
+                                const needsLanguage = selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage;
+                                // Verificar si se necesita seleccionar horario
+                                const needsTimeSlot = !selectedTimeSlot;
+                                
+                                return needsTimeSlot || needsLanguage || needsMeetingPoint || isBooking;
+                              })()}
                               onClick={handleBookNow}
                               style={{ 
                                 fontSize: '0.875rem',
                                 padding: '0.5rem 1rem',
                                 borderRadius: '4px',
                                 border: '1px solid #007bff',
-                                color: (!selectedTimeSlot || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage) || isBooking) ? '#ccc' : '#007bff',
+                                color: (() => {
+                                  const needsMeetingPoint = selectedBookingOption?.meetingType === 'REFERENCE_CITY_WITH_LIST' && !selectedPickupPoint;
+                                  const needsLanguage = selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage;
+                                  const needsTimeSlot = !selectedTimeSlot;
+                                  return (needsTimeSlot || needsLanguage || needsMeetingPoint || isBooking) ? '#ccc' : '#007bff';
+                                })(),
                                 backgroundColor: 'transparent',
-                                opacity: (!selectedTimeSlot || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage) || isBooking) ? 0.5 : 1,
-                                cursor: (!selectedTimeSlot || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage) || isBooking) ? 'not-allowed' : 'pointer'
+                                opacity: (() => {
+                                  const needsMeetingPoint = selectedBookingOption?.meetingType === 'REFERENCE_CITY_WITH_LIST' && !selectedPickupPoint;
+                                  const needsLanguage = selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage;
+                                  const needsTimeSlot = !selectedTimeSlot;
+                                  return (needsTimeSlot || needsLanguage || needsMeetingPoint || isBooking) ? 0.5 : 1;
+                                })(),
+                                cursor: (() => {
+                                  const needsMeetingPoint = selectedBookingOption?.meetingType === 'REFERENCE_CITY_WITH_LIST' && !selectedPickupPoint;
+                                  const needsLanguage = selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage;
+                                  const needsTimeSlot = !selectedTimeSlot;
+                                  return (needsTimeSlot || needsLanguage || needsMeetingPoint || isBooking) ? 'not-allowed' : 'pointer';
+                                })()
                               }}
                             >
                               {isBooking ? (
@@ -1431,17 +1578,41 @@ const ActivityDetail: React.FC = () => {
                             </button>
                             <button 
                               className="btn btn-primary"
-                              disabled={!selectedTimeSlot || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage) || isAddingToCart}
+                              disabled={(() => {
+                                // Verificar si se necesita seleccionar punto de encuentro
+                                const needsMeetingPoint = selectedBookingOption?.meetingType === 'REFERENCE_CITY_WITH_LIST' && !selectedPickupPoint;
+                                // Verificar si se necesita seleccionar idioma
+                                const needsLanguage = selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage;
+                                // Verificar si se necesita seleccionar horario
+                                const needsTimeSlot = !selectedTimeSlot;
+                                
+                                return needsTimeSlot || needsLanguage || needsMeetingPoint || isAddingToCart;
+                              })()}
                               onClick={handleAddToCart}
                               style={{ 
                                 fontSize: '0.875rem',
                                 padding: '0.5rem 1rem',
                                 borderRadius: '4px',
-                                backgroundColor: (!selectedTimeSlot || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage) || isAddingToCart) ? '#ccc' : '#007bff',
+                                backgroundColor: (() => {
+                                  const needsMeetingPoint = selectedBookingOption?.meetingType === 'REFERENCE_CITY_WITH_LIST' && !selectedPickupPoint;
+                                  const needsLanguage = selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage;
+                                  const needsTimeSlot = !selectedTimeSlot;
+                                  return (needsTimeSlot || needsLanguage || needsMeetingPoint || isAddingToCart) ? '#ccc' : '#007bff';
+                                })(),
                                 border: 'none',
                                 color: 'white',
-                                opacity: (!selectedTimeSlot || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage) || isAddingToCart) ? 0.5 : 1,
-                                cursor: (!selectedTimeSlot || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage) || isAddingToCart) ? 'not-allowed' : 'pointer'
+                                opacity: (() => {
+                                  const needsMeetingPoint = selectedBookingOption?.meetingType === 'REFERENCE_CITY_WITH_LIST' && !selectedPickupPoint;
+                                  const needsLanguage = selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage;
+                                  const needsTimeSlot = !selectedTimeSlot;
+                                  return (needsTimeSlot || needsLanguage || needsMeetingPoint || isAddingToCart) ? 0.5 : 1;
+                                })(),
+                                cursor: (() => {
+                                  const needsMeetingPoint = selectedBookingOption?.meetingType === 'REFERENCE_CITY_WITH_LIST' && !selectedPickupPoint;
+                                  const needsLanguage = selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage;
+                                  const needsTimeSlot = !selectedTimeSlot;
+                                  return (needsTimeSlot || needsLanguage || needsMeetingPoint || isAddingToCart) ? 'not-allowed' : 'pointer';
+                                })()
                               }}
                             >
                               {isAddingToCart ? (
@@ -1509,6 +1680,170 @@ const ActivityDetail: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Pickup Points Modal - Desktop Only */}
+      {showPickupPointsModal && selectedBookingOption?.pickupPoints && (
+        <div 
+          className="modal show d-block modal-fade-in" 
+          style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
+        >
+          <div className="modal-dialog modal-dialog-centered modal-lg">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title fw-bold">
+                  {language === 'es' ? 'Ubicaciones de Recogida' : 'Pickup Locations'}
+                </h5>
+                <button
+                  type="button"
+                  className="btn-close"
+                  onClick={() => setShowPickupPointsModal(false)}
+                ></button>
+              </div>
+              <div className="modal-body">
+                <p className="text-muted mb-3">
+                  {language === 'es' 
+                    ? 'Selecciona tu ubicación de recogida preferida:'
+                    : 'Select your preferred pickup location:'
+                  }
+                </p>
+                <div className="list-group">
+                  {selectedBookingOption.pickupPoints.map((point: any, index: number) => (
+                    <label 
+                      key={index}
+                      className="list-group-item d-flex align-items-center"
+                      style={{ cursor: 'pointer' }}
+                    >
+                      <input
+                        type="radio"
+                        name="pickupPoint"
+                        checked={selectedPickupPoint?.name === point.name || selectedPickupPoint?.address === point.address}
+                        onChange={() => setSelectedPickupPoint(point)}
+                        className="form-check-input me-3"
+                      />
+                      <div className="flex-grow-1">
+                        <div className="fw-medium">{point.name || point.address}</div>
+                        {point.address && point.name && (
+                          <small className="text-muted">{point.address}</small>
+                        )}
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setShowPickupPointsModal(false)}
+                >
+                  {language === 'es' ? 'Cerrar' : 'Close'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => {
+                    if (selectedPickupPoint) {
+                      setShowPickupPointsModal(false);
+                    }
+                  }}
+                  disabled={!selectedPickupPoint}
+                >
+                  {language === 'es' ? 'Confirmar' : 'Confirm'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pickup Points PageView - Mobile Only */}
+      {showPickupPointsPageView && selectedBookingOption?.pickupPoints && (
+        <div 
+          className="position-fixed top-0 start-0 w-100 h-100 d-md-none"
+          style={{ 
+            zIndex: 10002,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            animation: 'fadeIn 0.3s ease-in-out'
+          }}
+          onClick={() => setShowPickupPointsPageView(false)}
+        >
+          <div 
+            className="position-fixed top-0 start-0 h-100 bg-white"
+            style={{ 
+              width: '100%',
+              zIndex: 10003,
+              animation: 'slideInLeft 0.3s ease-in-out',
+              overflowY: 'auto'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="bg-primary text-white p-3 d-flex justify-content-between align-items-center">
+              <div className="d-flex align-items-center">
+                <button 
+                  className="btn btn-link text-white p-0 me-3"
+                  onClick={() => setShowPickupPointsPageView(false)}
+                  style={{ fontSize: '1.2rem' }}
+                >
+                  <i className="fas fa-arrow-left"></i>
+                </button>
+                <h4 className="mb-0 fw-bold">
+                  {language === 'es' ? 'Ubicaciones de Recogida' : 'Pickup Locations'}
+                </h4>
+              </div>
+            </div>
+
+            {/* Content */}
+            <div className="p-3">
+              <p className="text-muted mb-3">
+                {language === 'es' 
+                  ? 'Selecciona tu ubicación de recogida preferida:'
+                  : 'Select your preferred pickup location:'
+                }
+              </p>
+              <div className="list-group">
+                {selectedBookingOption.pickupPoints.map((point: any, index: number) => (
+                  <label 
+                    key={index}
+                    className="list-group-item d-flex align-items-center"
+                    style={{ cursor: 'pointer' }}
+                  >
+                    <input
+                      type="radio"
+                      name="pickupPoint"
+                      checked={selectedPickupPoint?.name === point.name || selectedPickupPoint?.address === point.address}
+                      onChange={() => setSelectedPickupPoint(point)}
+                      className="form-check-input me-3"
+                    />
+                    <div className="flex-grow-1">
+                      <div className="fw-medium">{point.name || point.address}</div>
+                      {point.address && point.name && (
+                        <small className="text-muted">{point.address}</small>
+                      )}
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="position-fixed bottom-0 start-0 end-0 bg-white border-top p-3 d-md-none">
+              <button
+                type="button"
+                className="btn btn-primary w-100"
+                onClick={() => {
+                  if (selectedPickupPoint) {
+                    setShowPickupPointsPageView(false);
+                  }
+                }}
+                disabled={!selectedPickupPoint}
+              >
+                {language === 'es' ? 'Confirmar' : 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

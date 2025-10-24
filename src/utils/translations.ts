@@ -5,6 +5,32 @@ export interface Translations {
   };
 }
 
+// Language mapping
+export const getLanguageName = (langCode: string, currentLang: 'es' | 'en' = 'es'): string => {
+  const languageMap: { [key: string]: { es: string; en: string } } = {
+    'es': { es: 'Español', en: 'Spanish' },
+    'en': { es: 'Inglés', en: 'English' },
+    'Español': { es: 'Español', en: 'Spanish' },
+    'Spanish': { es: 'Español', en: 'Spanish' },
+    'Inglés': { es: 'Inglés', en: 'English' },
+    'English': { es: 'Inglés', en: 'English' },
+    'Fr': { es: 'Francés', en: 'French' },
+    'French': { es: 'Francés', en: 'French' },
+    'Francés': { es: 'Francés', en: 'French' },
+    'De': { es: 'Alemán', en: 'German' },
+    'German': { es: 'Alemán', en: 'German' },
+    'Alemán': { es: 'Alemán', en: 'German' },
+    'It': { es: 'Italiano', en: 'Italian' },
+    'Italian': { es: 'Italiano', en: 'Italian' },
+    'Italiano': { es: 'Italiano', en: 'Italian' },
+    'Pt': { es: 'Portugués', en: 'Portuguese' },
+    'Portuguese': { es: 'Portugués', en: 'Portuguese' },
+    'Portugués': { es: 'Portugués', en: 'Portuguese' },
+  };
+  
+  return languageMap[langCode]?.[currentLang] || langCode;
+};
+
 export const translations: Translations = {
   // Navigation
   'nav.home': {

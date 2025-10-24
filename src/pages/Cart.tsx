@@ -7,6 +7,46 @@ const Cart: React.FC = () => {
   const { language } = useLanguage();
   const { items, removeItem, updateQuantity, getTotalPrice, updateItemDetails, getTotalTravelers, getItemTotalPrice } = useCart();
   
+  // Debug: mostrar items del carrito
+  useEffect(() => {
+    console.log('🛒 Items en el carrito:', items);
+    items.forEach((item, index) => {
+      console.log(`Item ${index + 1}:`, {
+        title: item.title,
+        meetingPoint: item.activityDetails?.meetingPoint,
+        pickupPoint: item.activityDetails?.pickupPoint,
+        comment: item.activityDetails?.comment,
+        guideLanguage: item.activityDetails?.guideLanguage
+      });
+    });
+  }, [items]);
+  
+  // Calcular ahorro total de todos los items con descuento
+  const getTotalSavings = () => {
+    return items.reduce((total, item) => {
+      if (item.activityDetails?.hasDiscount) {
+        const itemSavings = (item.activityDetails.originalPrice * getTotalTravelers(item)) - (item.activityDetails.finalPrice * getTotalTravelers(item));
+        return total + itemSavings;
+      }
+      return total;
+    }, 0);
+  };
+  
+  // Calcular precio original total
+  const getTotalOriginalPrice = () => {
+    return items.reduce((total, item) => {
+      if (item.activityDetails?.hasDiscount) {
+        return total + (item.activityDetails.originalPrice * getTotalTravelers(item));
+      }
+      return total + getItemTotalPrice(item);
+    }, 0);
+  };
+  
+  // Verificar si hay algún descuento en el carrito
+  const hasAnyDiscount = () => {
+    return items.some(item => item.activityDetails?.hasDiscount);
+  };
+  
   // Referencia al primer item del carrito
   const firstItemRef = useRef<HTMLDivElement>(null);
   
@@ -17,6 +57,8 @@ const Cart: React.FC = () => {
   const [editLanguage, setEditLanguage] = useState('');
   const [editAdults, setEditAdults] = useState(1);
   const [editChildren, setEditChildren] = useState(0);
+  const [editMeetingPoint, setEditMeetingPoint] = useState('');
+  const [editComment, setEditComment] = useState('');
 
   // Funciones para manejar la edición individual
   const startEditingField = (itemId: string, field: string, currentValue: any) => {
@@ -37,6 +79,12 @@ const Cart: React.FC = () => {
         setEditAdults(item?.travelers?.adults || 1);
         setEditChildren(item?.travelers?.children || 0);
         break;
+      case 'meetingPoint':
+        setEditMeetingPoint(currentValue || '');
+        break;
+      case 'comment':
+        setEditComment(currentValue || '');
+        break;
     }
   };
 
@@ -47,6 +95,8 @@ const Cart: React.FC = () => {
     setEditLanguage('');
     setEditAdults(1);
     setEditChildren(0);
+    setEditMeetingPoint('');
+    setEditComment('');
   };
 
   const saveFieldChange = () => {
@@ -73,6 +123,12 @@ const Cart: React.FC = () => {
             children: editChildren
           }
         });
+        break;
+      case 'meetingPoint':
+        updateItemDetails(itemId, { meetingPoint: editMeetingPoint } as any);
+        break;
+      case 'comment':
+        updateItemDetails(itemId, { comment: editComment } as any);
         break;
     }
     
@@ -115,7 +171,7 @@ const Cart: React.FC = () => {
   }, [items.length]);
 
   return (
-    <div className="container py-5" style={{ paddingBottom: items.length > 0 ? '100px' : '40px' }}>
+    <div className="container py-5" style={{ paddingBottom: items.length > 0 ? '120px' : '40px' }}>
       <div className="row justify-content-center">
         <div className="col-lg-8">
           {/* Header */}
@@ -264,14 +320,94 @@ const Cart: React.FC = () => {
                               </div>
                             )}
 
-                            {/* Punto de encuentro */}
+                            {/* Punto de encuentro o recogida */}
                             {item.activityDetails?.meetingPoint && (
-                              <div className="mb-2">
-                                <span className="text-muted small d-flex align-items-center">
-                                  <i className="fas fa-map-marker-alt me-2 text-primary" style={{ fontSize: '0.8rem' }}></i>
-                                  <strong className="me-1">{getTranslation('cart.meetingPoint', language)}:</strong>
-                                  {item.activityDetails.meetingPoint}
+                              <div className="mb-2 d-flex align-items-start justify-content-between">
+                                <span className="text-muted small d-flex align-items-start">
+                                  <i className="fas fa-map-marker-alt me-2 text-primary mt-1" style={{ fontSize: '0.8rem' }}></i>
+                                  <div className="flex-grow-1">
+                                    <strong className="me-1">{getTranslation('cart.meetingPoint', language)}:</strong>
+                                    {editingField?.itemId === item.id && editingField?.field === 'meetingPoint' ? (
+                                      <input
+                                        type="text"
+                                        value={editMeetingPoint}
+                                        onChange={(e) => setEditMeetingPoint(e.target.value)}
+                                        className="form-control form-control-sm mt-1"
+                                        placeholder={language === 'es' ? 'Ingresa el punto de encuentro' : 'Enter meeting point'}
+                                      />
+                                    ) : (
+                                      item.activityDetails.pickupPoint ? (
+                                        <>
+                                          <div>{item.activityDetails.pickupPoint.name}</div>
+                                          {item.activityDetails.pickupPoint.address && (
+                                            <div className="text-muted" style={{ fontSize: '0.75rem' }}>
+                                              {item.activityDetails.pickupPoint.address}
+                                            </div>
+                                          )}
+                                        </>
+                                      ) : (
+                                        item.activityDetails.meetingPoint
+                                      )
+                                    )}
+                                  </div>
                                 </span>
+                                {editingField?.itemId === item.id && editingField?.field === 'meetingPoint' ? (
+                                  <div className="d-flex gap-1 ms-2">
+                                    <button className="btn btn-success btn-sm" onClick={saveFieldChange}>
+                                      <i className="fas fa-check"></i>
+                                    </button>
+                                    <button className="btn btn-outline-secondary btn-sm" onClick={cancelEditing}>
+                                      <i className="fas fa-times"></i>
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button 
+                                    className="btn btn-link btn-sm p-0 ms-2"
+                                    onClick={() => startEditingField(item.id, 'meetingPoint', item.activityDetails?.meetingPoint)}
+                                  >
+                                    Edit
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                            
+                            {/* Comentario */}
+                            {item.activityDetails?.comment && item.activityDetails.comment.trim() !== '' && (
+                              <div className="mb-2 d-flex align-items-start justify-content-between">
+                                <span className="text-muted small d-flex align-items-start">
+                                  <i className="fas fa-comment me-2 text-primary mt-1" style={{ fontSize: '0.8rem' }}></i>
+                                  <div className="flex-grow-1">
+                                    <strong className="me-1">{language === 'es' ? 'Comentario' : 'Comment'}:</strong>
+                                    {editingField?.itemId === item.id && editingField?.field === 'comment' ? (
+                                      <textarea
+                                        value={editComment}
+                                        onChange={(e) => setEditComment(e.target.value)}
+                                        className="form-control form-control-sm mt-1"
+                                        rows={2}
+                                        placeholder={language === 'es' ? 'Ingresa tu comentario' : 'Enter your comment'}
+                                      />
+                                    ) : (
+                                      <div className="text-muted" style={{ wordBreak: 'break-word' }}>{item.activityDetails.comment}</div>
+                                    )}
+                                  </div>
+                                </span>
+                                {editingField?.itemId === item.id && editingField?.field === 'comment' ? (
+                                  <div className="d-flex gap-1 ms-2">
+                                    <button className="btn btn-success btn-sm" onClick={saveFieldChange}>
+                                      <i className="fas fa-check"></i>
+                                    </button>
+                                    <button className="btn btn-outline-secondary btn-sm" onClick={cancelEditing}>
+                                      <i className="fas fa-times"></i>
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button 
+                                    className="btn btn-link btn-sm p-0 ms-2"
+                                    onClick={() => startEditingField(item.id, 'comment', item.activityDetails?.comment)}
+                                  >
+                                    Edit
+                                  </button>
+                                )}
                               </div>
                             )}
 
@@ -400,17 +536,25 @@ const Cart: React.FC = () => {
 
                             {/* Información de precio */}
                             <div className="mb-2">
-                              <span className="text-muted small d-flex align-items-center">
+                              <div className="text-muted small d-flex align-items-center flex-wrap">
                                 <i className="fas fa-tag me-2 text-primary" style={{ fontSize: '0.8rem' }}></i>
                                 <strong className="me-1">{getTranslation('cart.pricePerPerson', language)}:</strong>
-                                {item.currency === 'PEN' ? 'S/' : '$'}{Math.ceil(item.price)}
-                                {item.activityDetails?.hasDiscount && (
-                                  <span className="text-success ms-2">
-                                    <i className="fas fa-percentage me-1"></i>
-                                    {item.activityDetails.discountPercentage}% {getTranslation('cart.discount', language)}
-                                  </span>
+                                {item.activityDetails?.hasDiscount ? (
+                                  <>
+                                    <span className="text-decoration-line-through text-muted me-2">
+                                      {item.currency === 'PEN' ? 'S/' : '$'}{Math.ceil(item.activityDetails.originalPrice)}
+                                    </span>
+                                    <span className="text-danger fw-bold me-2">
+                                      {item.currency === 'PEN' ? 'S/' : '$'}{Math.ceil(item.price)}
+                                    </span>
+                                    <span className="badge bg-danger">
+                                      -{item.activityDetails.discountPercentage}%
+                                    </span>
+                                  </>
+                                ) : (
+                                  <span>{item.currency === 'PEN' ? 'S/' : '$'}{Math.ceil(item.price)}</span>
                                 )}
-                              </span>
+                              </div>
                             </div>
                           </div>
 
@@ -552,6 +696,97 @@ const Cart: React.FC = () => {
                               </div>
                             )}
 
+                            {/* Punto de encuentro o recogida */}
+                            {item.activityDetails?.meetingPoint && (
+                              <div className="mb-2 d-flex align-items-start justify-content-between">
+                                <span className="text-muted small d-flex align-items-start">
+                                  <i className="fas fa-map-marker-alt me-2 text-primary mt-1" style={{ fontSize: '0.8rem' }}></i>
+                                  <div className="flex-grow-1">
+                                    <strong className="me-1">{getTranslation('cart.meetingPoint', language)}:</strong>
+                                    {editingField?.itemId === item.id && editingField?.field === 'meetingPoint' ? (
+                                      <input
+                                        type="text"
+                                        value={editMeetingPoint}
+                                        onChange={(e) => setEditMeetingPoint(e.target.value)}
+                                        className="form-control form-control-sm mt-1"
+                                        placeholder={language === 'es' ? 'Ingresa el punto de encuentro' : 'Enter meeting point'}
+                                      />
+                                    ) : (
+                                      item.activityDetails.pickupPoint ? (
+                                        <>
+                                          <div>{item.activityDetails.pickupPoint.name}</div>
+                                          {item.activityDetails.pickupPoint.address && (
+                                            <div className="text-muted" style={{ fontSize: '0.75rem' }}>
+                                              {item.activityDetails.pickupPoint.address}
+                                            </div>
+                                          )}
+                                        </>
+                                      ) : (
+                                        item.activityDetails.meetingPoint
+                                      )
+                                    )}
+                                  </div>
+                                </span>
+                                {editingField?.itemId === item.id && editingField?.field === 'meetingPoint' ? (
+                                  <div className="d-flex gap-1 ms-2">
+                                    <button className="btn btn-success btn-sm" onClick={saveFieldChange}>
+                                      <i className="fas fa-check"></i>
+                                    </button>
+                                    <button className="btn btn-outline-secondary btn-sm" onClick={cancelEditing}>
+                                      <i className="fas fa-times"></i>
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button 
+                                    className="btn btn-link btn-sm p-0 ms-2"
+                                    onClick={() => startEditingField(item.id, 'meetingPoint', item.activityDetails?.meetingPoint)}
+                                  >
+                                    Edit
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                            
+                            {/* Comentario */}
+                            {item.activityDetails?.comment && item.activityDetails.comment.trim() !== '' && (
+                              <div className="mb-2 d-flex align-items-start justify-content-between">
+                                <span className="text-muted small d-flex align-items-start">
+                                  <i className="fas fa-comment me-2 text-primary mt-1" style={{ fontSize: '0.8rem' }}></i>
+                                  <div className="flex-grow-1">
+                                    <strong className="me-1">{language === 'es' ? 'Comentario' : 'Comment'}:</strong>
+                                    {editingField?.itemId === item.id && editingField?.field === 'comment' ? (
+                                      <textarea
+                                        value={editComment}
+                                        onChange={(e) => setEditComment(e.target.value)}
+                                        className="form-control form-control-sm mt-1"
+                                        rows={2}
+                                        placeholder={language === 'es' ? 'Ingresa tu comentario' : 'Enter your comment'}
+                                      />
+                                    ) : (
+                                      <div className="text-muted" style={{ wordBreak: 'break-word' }}>{item.activityDetails.comment}</div>
+                                    )}
+                                  </div>
+                                </span>
+                                {editingField?.itemId === item.id && editingField?.field === 'comment' ? (
+                                  <div className="d-flex gap-1 ms-2">
+                                    <button className="btn btn-success btn-sm" onClick={saveFieldChange}>
+                                      <i className="fas fa-check"></i>
+                                    </button>
+                                    <button className="btn btn-outline-secondary btn-sm" onClick={cancelEditing}>
+                                      <i className="fas fa-times"></i>
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button 
+                                    className="btn btn-link btn-sm p-0 ms-2"
+                                    onClick={() => startEditingField(item.id, 'comment', item.activityDetails?.comment)}
+                                  >
+                                    Edit
+                                  </button>
+                                )}
+                              </div>
+                            )}
+
                             {/* Viajeros */}
                             {item.travelers && (
                               <div className="mb-2 d-flex align-items-center justify-content-between">
@@ -632,17 +867,25 @@ const Cart: React.FC = () => {
 
                             {/* Información de precio */}
                             <div className="mb-2">
-                              <span className="text-muted small d-flex align-items-center">
+                              <div className="text-muted small d-flex align-items-center flex-wrap">
                                 <i className="fas fa-tag me-2 text-primary" style={{ fontSize: '0.8rem' }}></i>
                                 <strong className="me-1">{getTranslation('cart.pricePerPerson', language)}:</strong>
-                                {item.currency === 'PEN' ? 'S/' : '$'}{Math.ceil(item.price)}
-                                {item.activityDetails?.hasDiscount && (
-                                  <span className="text-success ms-2">
-                                    <i className="fas fa-percentage me-1"></i>
-                                    {item.activityDetails.discountPercentage}% {getTranslation('cart.discount', language)}
-                                  </span>
+                                {item.activityDetails?.hasDiscount ? (
+                                  <>
+                                    <span className="text-decoration-line-through text-muted me-2">
+                                      {item.currency === 'PEN' ? 'S/' : '$'}{Math.ceil(item.activityDetails.originalPrice)}
+                                    </span>
+                                    <span className="text-danger fw-bold me-2">
+                                      {item.currency === 'PEN' ? 'S/' : '$'}{Math.ceil(item.price)}
+                                    </span>
+                                    <span className="badge bg-danger">
+                                      -{item.activityDetails.discountPercentage}%
+                                    </span>
+                                  </>
+                                ) : (
+                                  <span>{item.currency === 'PEN' ? 'S/' : '$'}{Math.ceil(item.price)}</span>
                                 )}
-                              </span>
+                              </div>
                             </div>
                           </div>
 
@@ -667,26 +910,45 @@ const Cart: React.FC = () => {
                   </div>
                 ))}
                 
-                {/* Total - Desktop Only */}
-                <div className="row d-none d-md-flex">
-                  <div className="col-md-8"></div>
-                  <div className="col-md-4">
-                    <div className="d-flex justify-content-between align-items-center p-3 bg-light rounded">
-                      <span className="fw-bold fs-5">{getTranslation('detail.booking.total', language)}:</span>
-                      <span className="fw-bold fs-5 text-primary">
-                        {items.length > 0 && items[0].currency === 'PEN' ? 'S/' : '$'}{Math.ceil(getTotalPrice())}
-                      </span>
+                {/* Total & Checkout - Desktop Only - Floating */}
+                {items.length > 0 && (
+                  <div className="position-fixed bottom-0 start-0 end-0 d-none d-md-block bg-white border-top shadow-lg" style={{ zIndex: 1000 }}>
+                    <div className="container">
+                      <div className="row">
+                        <div className="col-md-8"></div>
+                        <div className="col-md-4">
+                          <div className="p-3">
+                            {hasAnyDiscount() && (
+                              <div className="mb-2 p-2 bg-success bg-opacity-10 rounded">
+                                <div className="d-flex justify-content-between align-items-center">
+                                  <span className="text-success fw-bold small">
+                                    <i className="fas fa-tag me-1"></i>
+                                    {language === 'es' ? 'Estás ahorrando' : 'You\'re saving'}:
+                                  </span>
+                                  <span className="text-success fw-bold fs-6">
+                                    {items.length > 0 && items[0].currency === 'PEN' ? 'S/' : '$'}{Math.ceil(getTotalSavings())}
+                                  </span>
+                                </div>
+                              </div>
+                            )}
+                            <div className="d-flex align-items-center justify-content-between pt-2 gap-3">
+                              <div className="flex-grow-1">
+                                <div className="small text-muted mb-0">{language === 'es' ? 'Total a pagar' : 'Total to pay'}</div>
+                                <div className="fw-bold fs-5 text-danger">
+                                  {items.length > 0 && items[0].currency === 'PEN' ? 'S/' : '$'}{Math.ceil(getTotalPrice())}
+                                </div>
+                              </div>
+                              <button className="btn btn-primary btn-lg flex-shrink-0">
+                                <i className="fas fa-credit-card me-2"></i>
+                                {getTranslation('cart.checkout', language)}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
-                
-                {/* Checkout Button - Desktop Only */}
-                <div className="text-center mt-4 d-none d-md-block">
-                  <button className="btn btn-primary btn-lg px-5">
-                    <i className="fas fa-credit-card me-2"></i>
-                    {getTranslation('cart.checkout', language)}
-                  </button>
-                </div>
+                )}
               </div>
             </div>
           ) : (
@@ -713,68 +975,34 @@ const Cart: React.FC = () => {
             </div>
           )}
 
-          {/* Cart Features */}
-          <div className="row g-4 mt-5">
-            <div className="col-md-4">
-              <div className="text-center">
-                <div className="bg-primary text-white rounded-circle d-inline-flex align-items-center justify-content-center mb-3" style={{ width: '60px', height: '60px' }}>
-                  <i className="fas fa-shield-alt fs-4"></i>
-                </div>
-                <h5 className="fw-bold mb-2">
-                  {getTranslation('cart.features.secure.title', language)}
-                </h5>
-                <p className="text-muted small">
-                  {getTranslation('cart.features.secure.description', language)}
-                </p>
-              </div>
-            </div>
-            
-            <div className="col-md-4">
-              <div className="text-center">
-                <div className="bg-success text-white rounded-circle d-inline-flex align-items-center justify-content-center mb-3" style={{ width: '60px', height: '60px' }}>
-                  <i className="fas fa-undo fs-4"></i>
-                </div>
-                <h5 className="fw-bold mb-2">
-                  {getTranslation('cart.features.flexible.title', language)}
-                </h5>
-                <p className="text-muted small">
-                  {getTranslation('cart.features.flexible.description', language)}
-                </p>
-              </div>
-            </div>
-            
-            <div className="col-md-4">
-              <div className="text-center">
-                <div className="bg-info text-white rounded-circle d-inline-flex align-items-center justify-content-center mb-3" style={{ width: '60px', height: '60px' }}>
-                  <i className="fas fa-headset fs-4"></i>
-                </div>
-                <h5 className="fw-bold mb-2">
-                  {getTranslation('cart.features.support.title', language)}
-                </h5>
-                <p className="text-muted small">
-                  {getTranslation('cart.features.support.description', language)}
-                </p>
-              </div>
-            </div>
-          </div>
-
           {/* Floating Total & Checkout Button - Mobile Only */}
           {items.length > 0 && (
             <div className="position-fixed bottom-0 start-0 end-0 d-md-none bg-white border-top shadow-lg" style={{ zIndex: 1000 }}>
               <div className="container-fluid">
-                <div className="row align-items-center py-3">
-                  <div className="col-6">
-                    <div className="small text-muted mb-1">{getTranslation('detail.booking.total', language)}</div>
-                    <div className="fw-bold fs-4 text-primary">
+                {hasAnyDiscount() && (
+                  <div className="px-3 pt-2 pb-2 bg-success bg-opacity-10">
+                    <div className="d-flex justify-content-between align-items-center">
+                      <span className="text-success fw-bold" style={{ fontSize: '0.8rem' }}>
+                        <i className="fas fa-tag me-1"></i>
+                        {language === 'es' ? 'Estás ahorrando' : 'You\'re saving'}:
+                      </span>
+                      <span className="text-success fw-bold">
+                        {items[0].currency === 'PEN' ? 'S/' : '$'}{Math.ceil(getTotalSavings())}
+                      </span>
+                    </div>
+                  </div>
+                )}
+                <div className="d-flex align-items-center justify-content-between px-3 py-3 gap-3">
+                  <div className="flex-grow-1">
+                    <div className="small text-muted mb-0">{language === 'es' ? 'Total a pagar' : 'Total to pay'}</div>
+                    <div className="fw-bold fs-5 text-danger">
                       {items[0].currency === 'PEN' ? 'S/' : '$'}{Math.ceil(getTotalPrice())}
                     </div>
                   </div>
-                  <div className="col-6">
-                    <button className="btn btn-primary w-100 btn-lg">
-                      <i className="fas fa-credit-card me-2"></i>
-                      {getTranslation('cart.checkout', language)}
-                    </button>
-                  </div>
+                  <button className="btn btn-primary btn-lg flex-shrink-0">
+                    <i className="fas fa-credit-card me-2"></i>
+                    {getTranslation('cart.checkout', language)}
+                  </button>
                 </div>
               </div>
             </div>

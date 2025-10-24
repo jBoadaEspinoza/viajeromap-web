@@ -23,6 +23,11 @@ export interface CartItem {
     discountPercentage: number;
     originalPrice: number;
     finalPrice: number;
+    pickupPoint?: {
+      name: string;
+      address: string;
+    };
+    comment?: string;
   };
 }
 
@@ -31,7 +36,12 @@ interface CartContextType {
   addItem: (item: CartItem) => void;
   removeItem: (id: string) => void;
   updateQuantity: (id: string, quantity: number) => void;
-  updateItemDetails: (id: string, details: { date?: string; travelers?: { adults: number; children: number } }) => void;
+  updateItemDetails: (id: string, details: { 
+    date?: string; 
+    travelers?: { adults: number; children: number };
+    meetingPoint?: string;
+    comment?: string;
+  }) => void;
   clearCart: () => void;
   getTotalItems: () => number; // Retorna cantidad de actividades
   getTotalTravelersInCart: () => number; // Retorna cantidad total de pasajeros
@@ -125,7 +135,12 @@ export const CartProvider: React.FC<CartProviderProps> = ({ children }) => {
     );
   };
 
-  const updateItemDetails = (id: string, details: { date?: string; travelers?: { adults: number; children: number } }) => {
+  const updateItemDetails = (id: string, details: { 
+    date?: string; 
+    travelers?: { adults: number; children: number };
+    meetingPoint?: string;
+    comment?: string;
+  }) => {
     setItems(prevItems =>
       prevItems.map(item =>
         item.id === id 
@@ -134,7 +149,13 @@ export const CartProvider: React.FC<CartProviderProps> = ({ children }) => {
               date: details.date !== undefined ? details.date : item.date,
               travelers: details.travelers !== undefined ? details.travelers : item.travelers,
               // Actualizar la cantidad basada en el nuevo número de viajeros
-              quantity: details.travelers ? details.travelers.adults + details.travelers.children : item.quantity
+              quantity: details.travelers ? details.travelers.adults + details.travelers.children : item.quantity,
+              // Actualizar activityDetails si hay cambios
+              activityDetails: item.activityDetails ? {
+                ...item.activityDetails,
+                meetingPoint: details.meetingPoint !== undefined ? details.meetingPoint : item.activityDetails.meetingPoint,
+                comment: details.comment !== undefined ? details.comment : item.activityDetails.comment
+              } : item.activityDetails
             } 
           : item
       )
