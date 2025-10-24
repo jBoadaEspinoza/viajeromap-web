@@ -6,7 +6,7 @@ export const useUrlParams = () => {
 
   // Get current URL parameters
   const getLang = (): string => searchParams.get('lang') || 'es';
-  const getCurrency = (): string => searchParams.get('currency') || 'usd';
+  const getCurrency = (): string => searchParams.get('currency')?.toUpperCase() || 'USD';
 
   // Update URL parameters
   const updateLang = useCallback((lang: string) => {

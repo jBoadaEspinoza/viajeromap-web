@@ -53,6 +53,15 @@ const Home: React.FC = () => {
   // Set page title dynamically
   usePageTitle('nav.home', language);
 
+  // Debug: Verificar currency al cargar
+  useEffect(() => {
+    console.log('🏠 Home - Currency desde URL:', {
+      currencyFromURL: searchParams.get('currency'),
+      currencyFromHook: currency,
+      language
+    });
+  }, [currency, searchParams, language]);
+
   // Helper function to parse date in local timezone (America/Lima)
   const parseLocalDate = (dateString: string): Date => {
     // dateString formato: "YYYY-MM-DD"
@@ -174,7 +183,6 @@ const Home: React.FC = () => {
     const fetchActivities = async () => {
       try {
         setLoadingActivities(true);
-        
         const response = await activitiesApi.search({
           lang: language,
           currency: currency.toUpperCase(),

@@ -46,6 +46,25 @@ const Cart: React.FC = () => {
   const hasAnyDiscount = () => {
     return items.some(item => item.activityDetails?.hasDiscount);
   };
+
+  // Función para convertir formato de 24 horas a AM/PM
+  const convertTo12HourFormat = (time24: string): string => {
+    if (!time24 || !time24.includes(':')) return time24;
+    
+    const [hours, minutes] = time24.split(':');
+    const hour = parseInt(hours, 10);
+    const min = minutes || '00';
+    
+    if (hour === 0) {
+      return `12:${min} AM`;
+    } else if (hour === 12) {
+      return `12:${min} PM`;
+    } else if (hour < 12) {
+      return `${hour}:${min} AM`;
+    } else {
+      return `${hour - 12}:${min} PM`;
+    }
+  };
   
   // Referencia al primer item del carrito
   const firstItemRef = useRef<HTMLDivElement>(null);
@@ -297,7 +316,7 @@ const Cart: React.FC = () => {
                                       style={{ width: '120px' }}
                                     />
                                   ) : (
-                                    item.activityDetails.departureTime
+                                    convertTo12HourFormat(item.activityDetails.departureTime)
                                   )}
                                 </span>
                                 {editingField?.itemId === item.id && editingField?.field === 'time' ? (
@@ -377,15 +396,21 @@ const Cart: React.FC = () => {
                                 <span className="text-muted small d-flex align-items-start">
                                   <i className="fas fa-comment me-2 text-primary mt-1" style={{ fontSize: '0.8rem' }}></i>
                                   <div className="flex-grow-1">
-                                    <strong className="me-1">{language === 'es' ? 'Comentario' : 'Comment'}:</strong>
+                                    <strong className="me-1">{language === 'es' ? 'Solicitud especial' : 'Special request'}:</strong>
                                     {editingField?.itemId === item.id && editingField?.field === 'comment' ? (
-                                      <textarea
-                                        value={editComment}
-                                        onChange={(e) => setEditComment(e.target.value)}
-                                        className="form-control form-control-sm mt-1"
-                                        rows={2}
-                                        placeholder={language === 'es' ? 'Ingresa tu comentario' : 'Enter your comment'}
-                                      />
+                                      <>
+                                        <textarea
+                                          value={editComment}
+                                          onChange={(e) => setEditComment(e.target.value)}
+                                          className="form-control form-control-sm mt-1"
+                                          rows={2}
+                                          maxLength={150}
+                                          placeholder={language === 'es' ? 'Ingresa tu comentario' : 'Enter your comment'}
+                                        />
+                                        <small className="text-muted" style={{ fontSize: '0.7rem' }}>
+                                          {editComment.length}/150 {language === 'es' ? 'caracteres' : 'characters'}
+                                        </small>
+                                      </>
                                     ) : (
                                       <div className="text-muted" style={{ wordBreak: 'break-word' }}>{item.activityDetails.comment}</div>
                                     )}
@@ -633,7 +658,7 @@ const Cart: React.FC = () => {
                                       style={{ width: '120px' }}
                                     />
                                   ) : (
-                                    item.activityDetails.departureTime
+                                    convertTo12HourFormat(item.activityDetails.departureTime)
                                   )}
                                 </span>
                                 {editingField?.itemId === item.id && editingField?.field === 'time' ? (
@@ -753,15 +778,21 @@ const Cart: React.FC = () => {
                                 <span className="text-muted small d-flex align-items-start">
                                   <i className="fas fa-comment me-2 text-primary mt-1" style={{ fontSize: '0.8rem' }}></i>
                                   <div className="flex-grow-1">
-                                    <strong className="me-1">{language === 'es' ? 'Comentario' : 'Comment'}:</strong>
+                                    <strong className="me-1">{language === 'es' ? 'Solicitud especial' : 'Special request'}:</strong>
                                     {editingField?.itemId === item.id && editingField?.field === 'comment' ? (
-                                      <textarea
-                                        value={editComment}
-                                        onChange={(e) => setEditComment(e.target.value)}
-                                        className="form-control form-control-sm mt-1"
-                                        rows={2}
-                                        placeholder={language === 'es' ? 'Ingresa tu comentario' : 'Enter your comment'}
-                                      />
+                                      <>
+                                        <textarea
+                                          value={editComment}
+                                          onChange={(e) => setEditComment(e.target.value)}
+                                          className="form-control form-control-sm mt-1"
+                                          rows={2}
+                                          maxLength={150}
+                                          placeholder={language === 'es' ? 'Ingresa tu comentario' : 'Enter your comment'}
+                                        />
+                                        <small className="text-muted" style={{ fontSize: '0.7rem' }}>
+                                          {editComment.length}/150 {language === 'es' ? 'caracteres' : 'characters'}
+                                        </small>
+                                      </>
                                     ) : (
                                       <div className="text-muted" style={{ wordBreak: 'break-word' }}>{item.activityDetails.comment}</div>
                                     )}

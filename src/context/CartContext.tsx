@@ -33,7 +33,7 @@ export interface CartItem {
 
 interface CartContextType {
   items: CartItem[];
-  addItem: (item: CartItem) => void;
+  addItem: (item: CartItem) => boolean; // Retorna true si se agregó, false si ya existe
   removeItem: (id: string) => void;
   updateQuantity: (id: string, quantity: number) => void;
   updateItemDetails: (id: string, details: { 
@@ -101,22 +101,18 @@ export const CartProvider: React.FC<CartProviderProps> = ({ children }) => {
     return item.price * totalTravelers;
   };
 
-  const addItem = (item: CartItem) => {
-    setItems(prevItems => {
-      const existingItem = prevItems.find(i => i.id === item.id);
-      if (existingItem) {
-        // Si el item ya existe, actualizar la cantidad basada en viajeros
-        const totalTravelers = getTotalTravelers(item);
-        return prevItems.map(i =>
-          i.id === item.id
-            ? { ...i, quantity: totalTravelers }
-            : i
-        );
-      }
-      // Si es un item nuevo, establecer la cantidad basada en viajeros
-      const totalTravelers = getTotalTravelers(item);
-      return [...prevItems, { ...item, quantity: totalTravelers }];
-    });
+  const addItem = (item: CartItem): boolean => {
+    // Verificar si el item ya existe antes de agregarlo
+    const existingItem = items.find(i => i.id === item.id);
+    if (existingItem) {
+      // Si el item ya existe, no se puede agregar de nuevo
+      console.log('⚠️ Esta actividad ya está en el carrito');
+      return false;
+    }
+    // Si es un item nuevo, establecer la cantidad basada en viajeros
+    const totalTravelers = getTotalTravelers(item);
+    setItems(prevItems => [...prevItems, { ...item, quantity: totalTravelers }]);
+    return true;
   };
 
   const removeItem = (id: string) => {

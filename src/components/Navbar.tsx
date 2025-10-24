@@ -27,6 +27,12 @@ const Navbar: React.FC = () => {
   
   const cartItems = getTotalItems();
 
+  // Función para validar formato de email
+  const isValidEmail = (email: string): boolean => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  };
+
   const isActive = (path: string) => {
     return location.pathname === path;
   };
@@ -170,7 +176,7 @@ const Navbar: React.FC = () => {
   };
 
   const handleEmailLogin = async () => {
-    if (!loginEmail) return;
+    if (!isValidEmail(loginEmail)) return;
     
     try {
       // Aquí implementar la lógica de login por email
@@ -731,22 +737,31 @@ const Navbar: React.FC = () => {
               {/* Social Login Buttons */}
               <div className="d-flex flex-column gap-2 mb-3">
                 <button
-                  className="btn btn-outline-secondary w-100"
+                  className="btn btn-outline-primary w-100"
                   onClick={handleLoginWithGoogle}
                 >
                   <i className="fab fa-google me-2"></i>
                   Google
                 </button>
                 <button
-                  className="btn btn-outline-secondary w-100"
+                  className="btn btn-outline-dark w-100"
                   onClick={handleLoginWithApple}
                 >
                   <i className="fab fa-apple me-2"></i>
                   Apple
                 </button>
                 <button
-                  className="btn btn-outline-secondary w-100"
+                  className="btn w-100"
                   onClick={handleLoginWithFacebook}
+                  style={{ borderColor: '#1877F2', color: '#1877F2', border: '1px solid' }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = '#1877F2';
+                    e.currentTarget.style.color = 'white';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = 'transparent';
+                    e.currentTarget.style.color = '#1877F2';
+                  }}
                 >
                   <i className="fab fa-facebook me-2"></i>
                   Facebook
@@ -764,9 +779,9 @@ const Navbar: React.FC = () => {
                 />
               </div>
               <button
-                className="btn btn-secondary w-100"
+                className={`btn w-100 ${isValidEmail(loginEmail) ? 'btn-outline-primary' : 'btn-outline-secondary'}`}
                 onClick={handleEmailLogin}
-                disabled={!loginEmail}
+                disabled={!isValidEmail(loginEmail)}
               >
                 {getTranslation('checkout.loginModal.continueWithEmail', language)}
               </button>
@@ -789,16 +804,17 @@ const Navbar: React.FC = () => {
         >
           <div className="modal-dialog modal-dialog-centered">
             <div className="modal-content modal-fade-in">
-              <div className="modal-header border-0">
+              <div className="modal-header border-0 d-flex align-items-between px-4 py-3">
+                <div className="d-flex align-items-center justify-content-center w-100">
+                  <h4 className="fw-bold mb-0">{getTranslation('checkout.loginModal.title', language)}</h4>
+                </div>
                 <button
                   type="button"
-                  className="btn-close"
+                  className="btn-close ms-auto"
                   onClick={handleCloseLoginModal}
                 ></button>
               </div>
               <div className="modal-body text-center">
-                <h4 className="fw-bold mb-4">{getTranslation('checkout.loginModal.title', language)}</h4>
-                
                 <p className="text-muted mb-4">
                   {getTranslation('checkout.loginModal.benefits', language)}
                 </p>
@@ -806,22 +822,31 @@ const Navbar: React.FC = () => {
                 {/* Social Login Buttons */}
                 <div className="d-flex gap-2 mb-3">
                   <button
-                    className="btn btn-outline-secondary flex-fill"
+                    className="btn btn-outline-primary flex-fill"
                     onClick={handleLoginWithGoogle}
                   >
                     <i className="fab fa-google me-2"></i>
                     Google
                   </button>
                   <button
-                    className="btn btn-outline-secondary flex-fill"
+                    className="btn btn-outline-dark flex-fill"
                     onClick={handleLoginWithApple}
                   >
                     <i className="fab fa-apple me-2"></i>
                     Apple
                   </button>
                   <button
-                    className="btn btn-outline-secondary flex-fill"
+                    className="btn flex-fill"
                     onClick={handleLoginWithFacebook}
+                    style={{ borderColor: '#1877F2', color: '#1877F2', border: '1px solid' }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.backgroundColor = '#1877F2';
+                      e.currentTarget.style.color = 'white';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = 'transparent';
+                      e.currentTarget.style.color = '#1877F2';
+                    }}
                   >
                     <i className="fab fa-facebook me-2"></i>
                     Facebook
@@ -839,9 +864,9 @@ const Navbar: React.FC = () => {
                   />
                 </div>
                 <button
-                  className="btn btn-secondary w-100"
+                  className={`btn w-100 ${isValidEmail(loginEmail) ? 'btn-outline-primary' : 'btn-outline-secondary'}`}
                   onClick={handleEmailLogin}
-                  disabled={!loginEmail}
+                  disabled={!isValidEmail(loginEmail)}
                 >
                   {getTranslation('checkout.loginModal.continueWithEmail', language)}
                 </button>

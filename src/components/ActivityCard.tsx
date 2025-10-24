@@ -433,7 +433,7 @@ const ActivityCard: React.FC<ActivityCardProps> = ({
         <div className="col-md-8">
           <div className="card-body">
                     <div className="mb-2">
-          <h5 className="card-title fw-bold mb-2 font-montserrat text-midnightblue">
+          <h5 className="card-title fw-bold mb-2 font-inter text-midnightblue">
             {activity.title || activity.name}
           </h5>
           {activity.category && (

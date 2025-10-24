@@ -44,6 +44,25 @@ const Checkout: React.FC = () => {
   const handleLogoClick = () => {
     navigate('/');
   };
+
+  // Función para convertir formato de 24 horas a AM/PM
+  const convertTo12HourFormat = (time24: string): string => {
+    if (!time24 || !time24.includes(':')) return time24;
+    
+    const [hours, minutes] = time24.split(':');
+    const hour = parseInt(hours, 10);
+    const min = minutes || '00';
+    
+    if (hour === 0) {
+      return `12:${min} AM`;
+    } else if (hour === 12) {
+      return `12:${min} PM`;
+    } else if (hour < 12) {
+      return `${hour}:${min} AM`;
+    } else {
+      return `${hour - 12}:${min} PM`;
+    }
+  };
   
   const [bookingDetails, setBookingDetails] = useState<BookingDetails | null>(null);
   const [timeLeft, setTimeLeft] = useState(() => {
@@ -366,15 +385,17 @@ const Checkout: React.FC = () => {
           >
             <div className="modal-dialog modal-dialog-centered">
               <div className="modal-content modal-fade-in">
-                <div className="modal-header border-0">
+                <div className="modal-header border-0 d-flex align-items-between px-4 py-3">
+                  <div className="d-flex align-items-center justify-content-center w-100">
+                    <h4 className="fw-bold mb-0">{getTranslation('checkout.loginModal.title', language)}</h4>
+                  </div>
                   <button
                     type="button"
-                    className="btn-close"
+                    className="btn-close ms-auto"
                     onClick={() => setShowLoginModal(false)}
                   ></button>
                 </div>
                 <div className="modal-body text-center">
-                  <h4 className="fw-bold mb-4">{getTranslation('checkout.loginModal.title', language)}</h4>
                   
                   <button
                     className="btn btn-primary btn-lg w-100 mb-3"
@@ -778,7 +799,7 @@ const Checkout: React.FC = () => {
                       <i className="fas fa-comment text-primary me-2 mt-1"></i>
                       <div className="flex-grow-1">
                         <span className="small fw-medium d-block">
-                          {language === 'es' ? 'Comentario' : 'Comment'}:
+                          {language === 'es' ? 'Solicitud especial' : 'Special request'}:
                         </span>
                         <span className="small text-muted">
                           {bookingDetails.comment}
@@ -796,7 +817,7 @@ const Checkout: React.FC = () => {
                         year: 'numeric',
                         month: 'long',
                         day: 'numeric'
-                      })}, {bookingDetails.time}
+                      })}, {convertTo12HourFormat(bookingDetails.time)}
                     </span>
                   </div>
                   
@@ -881,15 +902,17 @@ const Checkout: React.FC = () => {
         >
           <div className="modal-dialog modal-dialog-centered">
             <div className="modal-content modal-fade-in">
-              <div className="modal-header border-0">
+              <div className="modal-header border-0 d-flex align-items-between px-4 py-3">
+                <div className="d-flex align-items-center justify-content-center w-100">
+                  <h4 className="fw-bold mb-0">{getTranslation('checkout.loginModal.title', language)}</h4>
+                </div>
                 <button
                   type="button"
-                  className="btn-close"
+                  className="btn-close ms-auto"
                   onClick={() => setShowLoginModal(false)}
                 ></button>
               </div>
               <div className="modal-body text-center">
-                <h4 className="fw-bold mb-4">{getTranslation('checkout.loginModal.title', language)}</h4>
                 
                 <button
                   className="btn btn-primary btn-lg w-100 mb-3"

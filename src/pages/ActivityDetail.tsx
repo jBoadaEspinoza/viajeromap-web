@@ -363,7 +363,16 @@ const ActivityDetail: React.FC = () => {
       console.log('✅ Item que se va a agregar al carrito:', cartItem);
 
       // Agregar al carrito
-      addItem(cartItem);
+      const itemAdded = addItem(cartItem);
+      
+      if (!itemAdded) {
+        // Si el item ya existe, mostrar alerta y no navegar
+        alert(language === 'es' 
+          ? 'Esta actividad ya está en tu carrito' 
+          : 'This activity is already in your cart'
+        );
+        return;
+      }
 
       // Navegar a la página del carrito
       navigate('/cart');
@@ -535,6 +544,25 @@ const ActivityDetail: React.FC = () => {
     const date = parseLocalDate(dateString); // Usar parseLocalDate para evitar problemas de timezone
     const jsDayOfWeek = date.getDay();
     return convertToCustomDayOfWeek(jsDayOfWeek);
+  };
+
+  // Función para convertir formato de 24 horas a AM/PM
+  const convertTo12HourFormat = (time24: string): string => {
+    if (!time24 || !time24.includes(':')) return time24;
+    
+    const [hours, minutes] = time24.split(':');
+    const hour = parseInt(hours, 10);
+    const min = minutes || '00';
+    
+    if (hour === 0) {
+      return `12:${min} AM`;
+    } else if (hour === 12) {
+      return `12:${min} PM`;
+    } else if (hour < 12) {
+      return `${hour}:${min} AM`;
+    } else {
+      return `${hour - 12}:${min} PM`;
+    }
   };
 
   // Función para manejar selección de idioma (único)
@@ -910,7 +938,7 @@ const ActivityDetail: React.FC = () => {
           <div className="col-lg-12">
             <div className="d-flex justify-content-between align-items-start mb-3">
               <div className="flex-grow-1">
-                <h1 className="h2 fw-bold text-dark mb-2 font-montserrat" style={{ 
+                <h1 className="h2 fw-bold text-dark mb-2 font-inter" style={{ 
                    color: '#1a365d',
                    fontWeight: 800
                  }}>{activity.title}</h1>
@@ -1217,11 +1245,13 @@ const ActivityDetail: React.FC = () => {
                         <i className="fas fa-user text-primary me-2" style={{ fontSize: '0.875rem' }}></i>
                         <span className="fw-medium text-dark" style={{ fontSize: '0.875rem' }}>
                           {language === 'es' ? 'Guía: ' : 'Guide: '}
-                          {selectedLanguage || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 0 
-                                ? selectedBookingOption.languages[0] 
-                                : (language === 'es' ? 'Inglés' : 'English')
-                              )
-                          }
+                          {getLanguageName(
+                            selectedLanguage || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 0 
+                              ? selectedBookingOption.languages[0] 
+                              : 'en'
+                            ),
+                            language
+                          )}
                         </span>
                       </div>
 
@@ -1234,7 +1264,7 @@ const ActivityDetail: React.FC = () => {
                               <i className="fas fa-language text-primary me-2" style={{ fontSize: '0.875rem' }}></i>
                               <span className="fw-bold text-dark" style={{ fontSize: '0.875rem' }}>
                                 {language === 'es' ? 'Idioma del guía: ' : 'Guide language: '}
-                                {selectedBookingOption.languages[0]}
+                                {getLanguageName(selectedBookingOption.languages[0], language)}
                               </span>
                             </div>
                           ) : (
@@ -1256,7 +1286,7 @@ const ActivityDetail: React.FC = () => {
                                       border: selectedLanguage === lang ? 'none' : '1px solid #007bff'
                                     }}
                                   >
-                                    {lang}
+                                    {getLanguageName(lang, language)}
                                   </button>
                                 ))}
                               </div>
@@ -1313,21 +1343,6 @@ const ActivityDetail: React.FC = () => {
                                   {language === 'es' ? 'Editar' : 'Edit'}
                                 </button>
                               </div>
-                              
-                              {/* Campo de comentario */}
-                              <div className="mt-2">
-                                <label className="form-label mb-1" style={{ fontSize: '0.8rem' }}>
-                                  {language === 'es' ? 'Comentario (opcional)' : 'Comment (optional)'}
-                                </label>
-                                <textarea
-                                  className="form-control form-control-sm"
-                                  rows={2}
-                                  placeholder={language === 'es' ? 'Ej: Soy el segundo piso del hotel' : "E.g.: I'm on the second floor of the hotel"}
-                                  value={pickupComment}
-                                  onChange={(e) => setPickupComment(e.target.value)}
-                                  style={{ fontSize: '0.8rem' }}
-                                />
-                              </div>
                             </>
                           ) : (
                             /* Mostrar botón para seleccionar punto */
@@ -1372,24 +1387,27 @@ const ActivityDetail: React.FC = () => {
                               }
                             </span>
                           </div>
-                          {/* Campo de comentario para MEETING_POINT */}
-                          {selectedBookingOption?.meetingType === 'MEETING_POINT' && (
-                            <div className="mb-3">
-                              <label className="form-label mb-1" style={{ fontSize: '0.8rem' }}>
-                                {language === 'es' ? 'Comentario (opcional)' : 'Comment (optional)'}
-                              </label>
-                              <textarea
-                                className="form-control form-control-sm"
-                                rows={2}
-                                placeholder={language === 'es' ? 'Ej: Soy el segundo piso del hotel' : "E.g.: I'm on the second floor of the hotel"}
-                                value={pickupComment}
-                                onChange={(e) => setPickupComment(e.target.value)}
-                                style={{ fontSize: '0.8rem' }}
-                              />
-                            </div>
-                          )}
                         </>
                       )}
+
+                      {/* Campo de comentario - Siempre visible */}
+                      <div className="mb-3">
+                        <label className="form-label mb-1" style={{ fontSize: '0.8rem' }}>
+                          {language === 'es' ? '¿Tienes alguna solicitud especial? (opcional)' : 'Do you have any special requests? (optional)'}
+                        </label>
+                        <textarea
+                          className="form-control form-control-sm"
+                          rows={2}
+                          maxLength={150}
+                          placeholder={language === 'es' ? 'Ej: Llegar 15 minutos antes, necesidades específicas, ubicación exacta...' : "E.g.: Arrive 15 minutes early, specific needs, exact location..."}
+                          value={pickupComment}
+                          onChange={(e) => setPickupComment(e.target.value)}
+                          style={{ fontSize: '0.8rem' }}
+                        />
+                        <small className="text-muted" style={{ fontSize: '0.7rem' }}>
+                          {pickupComment.length}/150 {language === 'es' ? 'caracteres' : 'characters'}
+                        </small>
+                      </div>
                     </div>
 
                     <hr className="my-0" />
@@ -1446,7 +1464,7 @@ const ActivityDetail: React.FC = () => {
                           return (
                             <div className="d-flex align-items-center">
                               <span className="fw-bold text-muted" style={{ fontSize: '1rem',margin:0,padding:0 }}>
-                                {availableSchedules[0].startTime}
+                                {convertTo12HourFormat(availableSchedules[0].startTime)}
                               </span>
                             </div>
                           );
@@ -1466,7 +1484,7 @@ const ActivityDetail: React.FC = () => {
                                     border: selectedTimeSlot === schedule.startTime ? 'none' : '1px solid #007bff'
                                   }}
                                 >
-                                  {schedule.startTime}
+                                  {convertTo12HourFormat(schedule.startTime)}
                                 </button>
                               ))}
                             </div>

@@ -7,28 +7,54 @@ export interface Translations {
 
 // Language mapping
 export const getLanguageName = (langCode: string, currentLang: 'es' | 'en' = 'es'): string => {
+  // Normalizar el código a minúsculas para comparación
+  const normalizedCode = langCode.toLowerCase();
+  
   const languageMap: { [key: string]: { es: string; en: string } } = {
     'es': { es: 'Español', en: 'Spanish' },
+    'sp': { es: 'Español', en: 'Spanish' },
+    'esp': { es: 'Español', en: 'Spanish' },
+    'español': { es: 'Español', en: 'Spanish' },
+    'spanish': { es: 'Español', en: 'Spanish' },
+    
     'en': { es: 'Inglés', en: 'English' },
-    'Español': { es: 'Español', en: 'Spanish' },
-    'Spanish': { es: 'Español', en: 'Spanish' },
-    'Inglés': { es: 'Inglés', en: 'English' },
-    'English': { es: 'Inglés', en: 'English' },
-    'Fr': { es: 'Francés', en: 'French' },
-    'French': { es: 'Francés', en: 'French' },
-    'Francés': { es: 'Francés', en: 'French' },
-    'De': { es: 'Alemán', en: 'German' },
-    'German': { es: 'Alemán', en: 'German' },
-    'Alemán': { es: 'Alemán', en: 'German' },
-    'It': { es: 'Italiano', en: 'Italian' },
-    'Italian': { es: 'Italiano', en: 'Italian' },
-    'Italiano': { es: 'Italiano', en: 'Italian' },
-    'Pt': { es: 'Portugués', en: 'Portuguese' },
-    'Portuguese': { es: 'Portugués', en: 'Portuguese' },
-    'Portugués': { es: 'Portugués', en: 'Portuguese' },
+    'english': { es: 'Inglés', en: 'English' },
+    'inglés': { es: 'Inglés', en: 'English' },
+    
+    'fr': { es: 'Francés', en: 'French' },
+    'french': { es: 'Francés', en: 'French' },
+    'francés': { es: 'Francés', en: 'French' },
+    
+    'de': { es: 'Alemán', en: 'German' },
+    'german': { es: 'Alemán', en: 'German' },
+    'alemán': { es: 'Alemán', en: 'German' },
+    
+    'it': { es: 'Italiano', en: 'Italian' },
+    'italian': { es: 'Italiano', en: 'Italian' },
+    'italiano': { es: 'Italiano', en: 'Italian' },
+    
+    'pt': { es: 'Portugués', en: 'Portuguese' },
+    'portuguese': { es: 'Portugués', en: 'Portuguese' },
+    'portugués': { es: 'Portugués', en: 'Portuguese' },
+    
+    'ru': { es: 'Ruso', en: 'Russian' },
+    'russian': { es: 'Ruso', en: 'Russian' },
+    'ruso': { es: 'Ruso', en: 'Russian' },
+    
+    'zh': { es: 'Chino', en: 'Chinese' },
+    'chinese': { es: 'Chino', en: 'Chinese' },
+    'chino': { es: 'Chino', en: 'Chinese' },
+    
+    'ja': { es: 'Japonés', en: 'Japanese' },
+    'japanese': { es: 'Japonés', en: 'Japanese' },
+    'japonés': { es: 'Japonés', en: 'Japanese' },
+    
+    'ko': { es: 'Coreano', en: 'Korean' },
+    'korean': { es: 'Coreano', en: 'Korean' },
+    'coreano': { es: 'Coreano', en: 'Korean' },
   };
   
-  return languageMap[langCode]?.[currentLang] || langCode;
+  return languageMap[normalizedCode]?.[currentLang] || langCode;
 };
 
 export const translations: Translations = {
@@ -1097,6 +1123,10 @@ export const translations: Translations = {
   'common.save': {
     es: 'Guardar',
     en: 'Save'
+  },
+  'common.more': {
+    es: 'Más',
+    en: 'More'
   },
   'cart.editDetails': {
     es: 'Editar detalles',
