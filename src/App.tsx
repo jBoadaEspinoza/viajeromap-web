@@ -6,6 +6,7 @@ import { LanguageProvider } from './context/LanguageContext';
 import { CurrencyProvider } from './context/CurrencyContext';
 import { ConfigProvider } from './context/ConfigContext';
 import { AuthProvider } from './context/AuthContext';
+import { CartProvider } from './context/CartContext';
 import ConditionalLayout from './components/ConditionalLayout';
 import UrlParamsSync from './components/UrlParamsSync';
 import AppRoutes from './routes/AppRoutes';
@@ -18,13 +19,15 @@ function App() {
         <LanguageProvider>
           <CurrencyProvider>
             <AuthProvider>
-              <Router>
-                <UrlParamsSync>
-                  <ConditionalLayout>
-                    <AppRoutes />
-                  </ConditionalLayout>
-                </UrlParamsSync>
-              </Router>
+              <CartProvider>
+                <Router>
+                  <UrlParamsSync>
+                    <ConditionalLayout>
+                      <AppRoutes />
+                    </ConditionalLayout>
+                  </UrlParamsSync>
+                </Router>
+              </CartProvider>
             </AuthProvider>
           </CurrencyProvider>
         </LanguageProvider>

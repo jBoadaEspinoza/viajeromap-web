@@ -8,11 +8,13 @@ declare global {
 }
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { activitiesApi } from '../api/activities';
+import { specialOfferApi } from '../api/specialOffer';
 import type { Activity, BookingOption, Schedule } from '../api/activities';
 import Itinerary from '../components/Itinerary';
 import Reviews from '../components/Reviews';
 import { useLanguage } from '../context/LanguageContext';
 import { useCurrency } from '../context/CurrencyContext';
+import { useCart } from '../context/CartContext';
 import { getTranslation } from '../utils/translations';
 import { useGlobalLoading } from '../hooks/useGlobalLoading';
 import { appConfig } from '../config/appConfig';
@@ -37,6 +39,7 @@ const ActivityDetail: React.FC = () => {
   const navigate = useNavigate();
   const { language } = useLanguage();
   const { currency } = useCurrency();
+  const { addItem } = useCart();
   const { withLoading } = useGlobalLoading();
   const [activity, setActivity] = useState<Activity | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -49,12 +52,23 @@ const ActivityDetail: React.FC = () => {
   const [showFullDescription, setShowFullDescription] = useState(false);
   const [showBookingSection, setShowBookingSection] = useState(false);
   const [showAvailabilitySection, setShowAvailabilitySection] = useState(true);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [showAllIncludes, setShowAllIncludes] = useState(window.innerWidth >= 768); // Estado para mostrar todos los items de inclusión
+  const [showAllNotIncludes, setShowAllNotIncludes] = useState(window.innerWidth >= 768); // Estado para mostrar todos los items de no inclusión
+  const [showAllRecommendations, setShowAllRecommendations] = useState(window.innerWidth >= 768); // Estado para mostrar todas las recomendaciones
+  const [showAllRestrictions, setShowAllRestrictions] = useState(window.innerWidth >= 768); // Estado para mostrar todas las restricciones
   const [selectedBookingOption, setSelectedBookingOption] = useState<any>(null);
   const [selectedTimeSlot, setSelectedTimeSlot] = useState<string | null>(null);
   const [numberOfPeople, setNumberOfPeople] = useState<number>(1); // Cantidad de personas para calcular precio
+  const [specialOffers, setSpecialOffers] = useState<any[]>([]); // Ofertas especiales
+  const [isAddingToCart, setIsAddingToCart] = useState(false); // Estado para loading del carrito
+  const [isBooking, setIsBooking] = useState(false); // Estado para loading del botón reservar
   
   // Obtener parámetros desde la URL
   const [searchParams] = useSearchParams();
+  
+  const [numberOfAdults, setNumberOfAdults] = useState<number>(1); // Cantidad de adultos
+  const [numberOfChildren, setNumberOfChildren] = useState<number>(0); // Cantidad de niños
   
   // Fecha de salida (usar fecha actual si no se proporciona)
   const selectedDate = searchParams.get('date') || (() => {
@@ -162,40 +176,55 @@ const ActivityDetail: React.FC = () => {
 
   // Función para calcular precio total con descuentos automáticos y priceTiers
   const calculateTotalPrice = () => {
+    const totalPeople = numberOfAdults + numberOfChildren;
     if (!selectedBookingOption || !selectedTimeSlot) {
       // Si no hay opción seleccionada, usar el precio mínimo de la actividad
-      return getMinPrice().price || 0;
+      const minPrice = getMinPrice().price || 0;
+      return minPrice * totalPeople;
     }
+    
     
     let basePrice = 0;
     
-    // Si hay priceTiers, buscar el tier que corresponde a la cantidad de personas
+    // Calcular precio por adultos
+    const adultPrice = (selectedBookingOption.pricePerPerson || 0) * numberOfAdults;
+    
+    // Calcular precio por niños (asumiendo que niños tienen el mismo precio por ahora)
+    // Si hay un precio especial para niños, se puede agregar aquí
+    const childrenPrice = (selectedBookingOption.pricePerPerson || 0) * numberOfChildren;
+    
+    basePrice = adultPrice + childrenPrice;
+    
+    // Si hay priceTiers, buscar el tier que corresponde a la cantidad total de personas
     if (selectedBookingOption.priceTiers && selectedBookingOption.priceTiers.length > 0) {
       const matchingTier = selectedBookingOption.priceTiers.find((tier: any) => {
         const min = tier.minParticipants || 1;
         const max = tier.maxParticipants || Infinity;
-        return numberOfPeople >= min && numberOfPeople <= max;
+        return totalPeople >= min && totalPeople <= max;
       });
       
       if (matchingTier) {
         // Si el tier tiene totalPrice, usarlo; si no, calcular desde pricePerParticipant
-        basePrice = matchingTier.totalPrice || (matchingTier.pricePerParticipant * numberOfPeople);
+        basePrice = matchingTier.totalPrice || (matchingTier.pricePerParticipant * totalPeople);
         
         console.log('💰 Precio calculado con priceTiers:', {
-          numberOfPeople,
+          numberOfAdults,
+          numberOfChildren,
+          totalPeople,
           matchingTier,
           basePrice
         });
-      } else {
-        // Si no hay tier que coincida, usar pricePerPerson
-        basePrice = selectedBookingOption.pricePerPerson * numberOfPeople;
       }
-    } else {
-      // Si no hay priceTiers, usar pricePerPerson
-      basePrice = (selectedBookingOption.pricePerPerson || 0) * numberOfPeople;
     }
     
     const discountPercent = selectedBookingOption.specialOfferPercentage || 0;
+    
+    console.log('💰 Verificando descuento:', {
+      selectedBookingOption: selectedBookingOption?.id,
+      specialOfferPercentage: selectedBookingOption?.specialOfferPercentage,
+      discountPercent,
+      basePrice
+    });
     
     // Aplicar descuento automáticamente si existe specialOfferPercentage
     if (discountPercent > 0) {
@@ -252,6 +281,137 @@ const ActivityDetail: React.FC = () => {
   // Función para obtener el porcentaje de descuento
   const getDiscountPercentage = () => {
     return selectedBookingOption?.specialOfferPercentage || 0;
+  };
+
+  // Función para agregar al carrito
+  const handleAddToCart = async () => {
+    if (!activity || !selectedBookingOption || !selectedTimeSlot) {
+      return;
+    }
+
+    setIsAddingToCart(true);
+
+    try {
+      // Obtener el punto de encuentro seleccionado
+      const meetingPoint = selectedBookingOption?.meetingPointAddress || 
+                          'Punto de encuentro por confirmar';
+
+      // Obtener el idioma del guía
+      const guideLanguage = selectedLanguage || 
+                           (selectedBookingOption.languages && selectedBookingOption.languages.length === 1 ? 
+                            selectedBookingOption.languages[0] : 'Español');
+
+      // Obtener la hora de salida
+      const departureTime = selectedTimeSlot;
+
+      // Calcular precio por persona (considerando descuentos)
+      const pricePerPerson = Math.ceil(calculateTotalPrice());
+
+      // Crear el item del carrito
+      const cartItem = {
+        id: `${activity.id}-${selectedBookingOption.id}-${selectedTimeSlot}-${selectedDate}`,
+        title: activity.title,
+        price: pricePerPerson,
+        currency: currency,
+        quantity: numberOfAdults + numberOfChildren,
+        imageUrl: activity.images?.[0]?.imageUrl || '',
+        date: selectedDate,
+        travelers: {
+          adults: numberOfAdults,
+          children: numberOfChildren
+        },
+        // Información adicional específica de la actividad
+        activityDetails: {
+          activityId: activity.id,
+          bookingOptionId: selectedBookingOption.id,
+          meetingPoint: meetingPoint,
+          guideLanguage: guideLanguage,
+          departureTime: departureTime,
+          departureDate: selectedDate,
+          hasDiscount: hasActiveDiscount(),
+          discountPercentage: getDiscountPercentage(),
+          originalPrice: getOriginalPrice(),
+          finalPrice: calculateTotalPrice()
+        }
+      };
+
+      // Simular delay para mostrar loading
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // Agregar al carrito
+      addItem(cartItem);
+
+      // Mostrar mensaje de éxito (opcional)
+      console.log('✅ Actividad agregada al carrito:', cartItem);
+
+    } catch (error) {
+      console.error('❌ Error al agregar al carrito:', error);
+    } finally {
+      setIsAddingToCart(false);
+    }
+  };
+
+  // Función para ir directamente al checkout
+  const handleBookNow = async () => {
+    if (!activity || !selectedBookingOption || !selectedTimeSlot) {
+      return;
+    }
+
+    setIsBooking(true);
+
+    try {
+      // Simular delay para mostrar loading (similar al carrito)
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // Obtener el punto de encuentro seleccionado
+      const meetingPoint = selectedBookingOption?.meetingPointAddress || 
+                          'Punto de encuentro por confirmar';
+
+      // Obtener el idioma del guía
+      const guideLanguage = selectedLanguage || 
+                           (selectedBookingOption.languages && selectedBookingOption.languages.length === 1 ? 
+                            selectedBookingOption.languages[0] : 'Español');
+
+      // Obtener la hora de salida
+      const departureTime = selectedTimeSlot;
+
+      // Calcular precio por persona (considerando descuentos)
+      const pricePerPerson = Math.ceil(calculateTotalPrice());
+
+      // Crear los detalles de reserva para el checkout
+      const bookingDetails = {
+        activityId: activity.id,
+        title: activity.title,
+        imageUrl: activity.images?.[0]?.imageUrl || '',
+        price: pricePerPerson,
+        currency: currency,
+        quantity: numberOfAdults + numberOfChildren,
+        date: selectedDate,
+        time: departureTime,
+        meetingPoint: meetingPoint,
+        guideLanguage: guideLanguage,
+        travelers: {
+          adults: numberOfAdults,
+          children: numberOfChildren
+        },
+        hasDiscount: hasActiveDiscount(),
+        discountPercentage: getDiscountPercentage(),
+        originalPrice: getOriginalPrice(),
+        finalPrice: calculateTotalPrice()
+      };
+
+      // Guardar detalles en sessionStorage para persistencia durante la sesión
+      sessionStorage.setItem('checkoutBookingDetails', JSON.stringify(bookingDetails));
+      
+      // Navegar al checkout con los detalles de reserva
+      console.log('🚀 Navegando al checkout con detalles:', bookingDetails);
+      navigate('/checkout', { state: { bookingDetails } });
+
+    } catch (error) {
+      console.error('❌ Error al procesar reserva:', error);
+    } finally {
+      setIsBooking(false);
+    }
   };
 
   // Función para parsear fecha en timezone local (America/Lima)
@@ -377,6 +537,56 @@ const ActivityDetail: React.FC = () => {
     }));
   };
 
+  // Función para cargar ofertas especiales
+  const loadSpecialOffers = async () => {
+    if (!id) return;
+    
+    try {
+      const response = await specialOfferApi.getList({
+        activityId: id,
+        isActive: true,
+        lang: language
+      });
+      
+      if (response.success && response.data) {
+        setSpecialOffers(response.data);
+        console.log('🎁 Ofertas especiales cargadas:', response.data);
+      }
+    } catch (error) {
+      console.error('Error al cargar ofertas especiales:', error);
+    }
+  };
+
+  // Función para aplicar ofertas especiales a las opciones de reserva
+  const applySpecialOffersToBookingOptions = (bookingOptions: any[]) => {
+    if (!specialOffers.length) return bookingOptions;
+    
+    return bookingOptions.map(option => {
+      // Buscar oferta especial para esta opción de reserva
+      const matchingOffer = specialOffers.find(offer => 
+        offer.bookingOptionId === option.id && 
+        offer.isActive &&
+        new Date(offer.fromDate) <= new Date() &&
+        new Date(offer.toDate) >= new Date()
+      );
+      
+      if (matchingOffer) {
+        console.log('🎁 Aplicando oferta especial:', {
+          optionId: option.id,
+          optionTitle: option.title,
+          discountPercent: matchingOffer.discountPercent,
+          offerName: matchingOffer.offerName
+        });
+        return {
+          ...option,
+          specialOfferPercentage: matchingOffer.discountPercent
+        };
+      }
+      
+      return option;
+    });
+  };
+
   // Función para obtener precio mínimo y currency con descuento aplicado
   const getMinPrice = () => {
     if (!activity?.bookingOptions || activity.bookingOptions.length === 0) return { price: null, currency: 'USD', originalPrice: null, hasDiscount: false, discountPercent: 0 };
@@ -463,8 +673,18 @@ const ActivityDetail: React.FC = () => {
       try {
         await withLoading(async () => {
           setError(null);
+          //Debe mandar la fecha de la url seleccionada
+          const departureDate = searchParams.get('date') || undefined;
+          const activityData = await activitiesApi.getById(id, language, currency, departureDate);
+          //console.log('🎯 CHECCCCKKEKEKKA:', activityData);
+          // Cargar ofertas especiales
+          await loadSpecialOffers();
           
-          const activityData = await activitiesApi.getById(id, language, currency, selectedDate);
+          // Aplicar ofertas especiales a las opciones de reserva
+          if (activityData?.bookingOptions) {
+            activityData.bookingOptions = applySpecialOffersToBookingOptions(activityData.bookingOptions);
+          }
+          
           setActivity(activityData);
           
           // Inicializar automáticamente las opciones de reserva
@@ -535,6 +755,13 @@ const ActivityDetail: React.FC = () => {
     fetchActivity();
   }, [id, language, currency, selectedDate, withLoading]);
 
+  // useEffect para recargar ofertas especiales cuando cambien las dependencias
+  useEffect(() => {
+    if (id && language) {
+      loadSpecialOffers();
+    }
+  }, [id, language]);
+
   // useEffect para detectar scroll y ocultar/mostrar sección de disponibilidad
   useEffect(() => {
     const handleScroll = () => {
@@ -557,7 +784,46 @@ const ActivityDetail: React.FC = () => {
 
     window.addEventListener('scroll', handleScroll);
     return () => window.removeEventListener('scroll', handleScroll);
-  }, [showBookingSection]); // Dependencia agregada para ejecutar cuando cambie showBookingSection
+  }, [showBookingSection]);
+
+  // useEffect para escuchar eventos del menú móvil del navbar
+  useEffect(() => {
+    const handleMobileMenuToggle = (event: CustomEvent) => {
+      const { isOpen } = event.detail;
+      setIsMobileMenuOpen(isOpen);
+      console.log('📱 Mobile menu toggle:', { isOpen });
+    };
+
+    window.addEventListener('mobileMenuToggle', handleMobileMenuToggle as EventListener);
+    return () => window.removeEventListener('mobileMenuToggle', handleMobileMenuToggle as EventListener);
+  }, []); // Dependencia agregada para ejecutar cuando cambie showBookingSection
+
+  // useEffect para ajustar estados de expansión según el tamaño de pantalla
+  useEffect(() => {
+    const handleResize = () => {
+      const isDesktop = window.innerWidth >= 768;
+      setShowAllIncludes(isDesktop);
+      setShowAllNotIncludes(isDesktop);
+      setShowAllRecommendations(isDesktop);
+      setShowAllRestrictions(isDesktop);
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // useEffect para inicializar número de adultos y niños desde URL
+  useEffect(() => {
+    const adults = searchParams.get('adults');
+    const children = searchParams.get('children');
+    
+    const adultCount = adults ? parseInt(adults) : 1;
+    const childrenCount = children ? parseInt(children) : 0;
+    
+    setNumberOfAdults(adultCount);
+    setNumberOfChildren(childrenCount);
+    setNumberOfPeople(adultCount + childrenCount); // Actualizar numberOfPeople con la suma
+  }, [searchParams]);
 
   if (error) {
     return (
@@ -699,13 +965,28 @@ const ActivityDetail: React.FC = () => {
                   <div className="card-body">
                     <h4 className="fw-bold mb-3">{getTranslation('detail.includes', language)}</h4>
                     <ul className="list-unstyled">
-                      {activity.includes.map((item, index) => (
+                      {activity.includes.slice(0, showAllIncludes ? activity.includes.length : 2).map((item, index) => (
                         <li key={index} className="mb-2">
                           <i className="fas fa-check text-success me-2"></i>
                           {item}
                         </li>
                       ))}
                     </ul>
+                    {/* Botón Ver más - Solo para móviles */}
+                    {activity.includes.length > 2 && (
+                      <div className="d-block d-md-none mt-2">
+                        <button
+                          className="btn btn-link p-0 text-decoration-none fw-bold"
+                          onClick={() => setShowAllIncludes(!showAllIncludes)}
+                          style={{ color: '#dc3545' }}
+                        >
+                          {showAllIncludes 
+                            ? getTranslation('common.showLess', language)
+                            : `+${activity.includes.length - 2} ${getTranslation('common.more', language)}`
+                          }
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -715,13 +996,28 @@ const ActivityDetail: React.FC = () => {
                   <div className="card-body">
                     <h4 className="fw-bold mb-3">{getTranslation('detail.notIncludes', language)}</h4>
                     <ul className="list-unstyled">
-                      {activity.notIncludes.map((item, index) => (
+                      {activity.notIncludes.slice(0, showAllNotIncludes ? activity.notIncludes.length : 2).map((item, index) => (
                         <li key={index} className="mb-2">
                           <i className="fas fa-times text-danger me-2"></i>
                           {item}
                         </li>
                       ))}
                     </ul>
+                    {/* Botón Ver más - Solo para móviles */}
+                    {activity.notIncludes.length > 2 && (
+                      <div className="d-block d-md-none mt-2">
+                        <button
+                          className="btn btn-link p-0 text-decoration-none fw-bold"
+                          onClick={() => setShowAllNotIncludes(!showAllNotIncludes)}
+                          style={{ color: '#dc3545' }}
+                        >
+                          {showAllNotIncludes 
+                            ? getTranslation('common.showLess', language)
+                            : `+${activity.notIncludes.length - 2} ${getTranslation('common.more', language)}`
+                          }
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -731,13 +1027,28 @@ const ActivityDetail: React.FC = () => {
                   <div className="card-body">
                     <h4 className="fw-bold mb-3">{getTranslation('detail.recommendations', language)}</h4>
                     <ul className="list-unstyled">
-                      {activity.recommendations.map((item, index) => (
+                      {activity.recommendations.slice(0, showAllRecommendations ? activity.recommendations.length : 2).map((item, index) => (
                         <li key={index} className="mb-2">
                           <i className="fas fa-lightbulb text-warning me-2"></i>
                           {item}
                         </li>
                       ))}
                     </ul>
+                    {/* Botón Ver más - Solo para móviles */}
+                    {activity.recommendations.length > 2 && (
+                      <div className="d-block d-md-none mt-2">
+                        <button
+                          className="btn btn-link p-0 text-decoration-none fw-bold"
+                          onClick={() => setShowAllRecommendations(!showAllRecommendations)}
+                          style={{ color: '#dc3545' }}
+                        >
+                          {showAllRecommendations 
+                            ? getTranslation('common.showLess', language)
+                            : `+${activity.recommendations.length - 2} ${getTranslation('common.more', language)}`
+                          }
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -747,13 +1058,28 @@ const ActivityDetail: React.FC = () => {
                   <div className="card-body">
                     <h4 className="fw-bold mb-3">{getTranslation('detail.restrictions', language)}</h4>
                     <ul className="list-unstyled">
-                      {activity.restrictions.map((item, index) => (
+                      {activity.restrictions.slice(0, showAllRestrictions ? activity.restrictions.length : 2).map((item, index) => (
                         <li key={index} className="mb-2">
                           <i className="fas fa-exclamation-triangle text-danger me-2"></i>
                           {item}
                         </li>
                       ))}
                     </ul>
+                    {/* Botón Ver más - Solo para móviles */}
+                    {activity.restrictions.length > 2 && (
+                      <div className="d-block d-md-none mt-2">
+                        <button
+                          className="btn btn-link p-0 text-decoration-none fw-bold"
+                          onClick={() => setShowAllRestrictions(!showAllRestrictions)}
+                          style={{ color: '#dc3545' }}
+                        >
+                          {showAllRestrictions 
+                            ? getTranslation('common.showLess', language)
+                            : `+${activity.restrictions.length - 2} ${getTranslation('common.more', language)}`
+                          }
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -775,12 +1101,12 @@ const ActivityDetail: React.FC = () => {
                                <div className="d-flex flex-start align-items-center">
                                 <span className="badge bg-danger">-{getMinPrice().discountPercent}%</span>
                                 <span className="text-muted text-decoration-line-through m-1" style={{ fontSize: '0.9rem' }}>
-                                  {currency === 'PEN' ? 'S/ ' : '$ '}{getMinPrice().originalPrice?.toFixed(2)}
+                                  {currency === 'PEN' ? 'S/ ' : '$ '}{Math.ceil(getMinPrice().originalPrice || 0)?.toFixed(2)}
                                 </span>
                                </div>
                               )}
                                <div className={`h4 fw-bold mb-0 ${getMinPrice().hasDiscount ? 'text-danger' : 'text-dark'}`}>
-                                 {currency === 'PEN' ? 'S/ ' : '$ '}{getMinPrice().price?.toFixed(2) || '0.00'}
+                                 {currency === 'PEN' ? 'S/ ' : '$ '}{Math.ceil(getMinPrice().price || 0)?.toFixed(2) || '0.00'}
                                </div>
                              
                               <small className="text-muted" style={{ marginTop: '-4px' }}>{getTranslation('detail.booking.perPerson', language)}</small>
@@ -1047,25 +1373,31 @@ const ActivityDetail: React.FC = () => {
                         <div className="col-md-6">
                           <div className="d-flex flex-column mb-1">
                             {hasActiveDiscount() && (
-                              <div className="d-flex flex-start align-items-center">
-                                <span className="badge bg-danger" style={{ fontSize: '0.875rem' }}>
-                                  -{getDiscountPercentage()}%
-                                </span>
-                                <span className="text-muted text-decoration-line-through m-1" style={{ fontSize: '0.9rem' }}>
-                                  {currency === 'PEN' ? 'S/ ' : '$ '}{getOriginalPrice().toFixed(2)}
-                                </span>
-                                
+                              <div className="d-flex flex-column mb-2">
+                                <div className="d-flex align-items-center gap-2 mb-1">
+                                  <span className="badge bg-danger" style={{ fontSize: '0.875rem' }}>
+                                    -{getDiscountPercentage()}% {getTranslation('activity.discount', language)}
+                                  </span>
+                                </div>
+                                <div className="d-flex align-items-center gap-2">
+                                  <span className="text-muted text-decoration-line-through" style={{ fontSize: '0.9rem' }}>
+                                    {currency === 'PEN' ? 'S/ ' : '$ '}{((Math.ceil(getOriginalPrice())*numberOfPeople)).toFixed(2)}
+                                  </span>
+                                  <span className="text-success fw-bold" style={{ fontSize: '0.9rem' }}>
+                                    {getTranslation('activity.youSave', language)} {currency === 'PEN' ? 'S/ ' : '$ '}{(Math.ceil(getOriginalPrice())*numberOfPeople - Math.ceil(calculateTotalPrice())*numberOfPeople).toFixed(2)}
+                                  </span>
+                                </div>
                               </div>
                             )}
                             <span className="h4 fw-bold text-danger me-2" style={{ fontSize: '1.5rem' }}>
-                              {currency === 'PEN' ? 'S/ ' : '$ '}{calculateTotalPrice().toFixed(2)}
+                              {currency === 'PEN' ? 'S/ ' : '$ '}{(Math.ceil(calculateTotalPrice())*numberOfPeople).toFixed(2)}
                             </span>
                           </div>
                           <p className="text-muted mb-1" style={{ fontSize: '0.875rem' }}>
                             {numberOfPeople} {language === 'es' 
-                              ? (numberOfPeople === 1 ? 'Adulto' : 'Adultos') 
-                              : (numberOfPeople === 1 ? 'Adult' : 'Adults')
-                            } x {currency === 'PEN' ? 'S/ ' : '$ '}{(calculateTotalPrice() / numberOfPeople).toFixed(2)}
+                              ? (numberOfPeople === 1 ? 'Viajero' : 'Viajeros') 
+                              : (numberOfPeople === 1 ? 'Traveler' : 'Travelers')
+                            } x {currency === 'PEN' ? 'S/ ' : '$ '}{(Math.ceil(calculateTotalPrice())).toFixed(2)}
                           </p>
                           <p className="text-muted small" style={{ fontSize: '0.75rem' }}>
                             {language === 'es' ? 'Todos los impuestos y tarifas incluidos' : 'All taxes and fees included'}
@@ -1075,35 +1407,51 @@ const ActivityDetail: React.FC = () => {
                           <div className="d-flex gap-2 justify-content-end">
                             <button 
                               className="btn btn-outline-primary"
-                              disabled={!selectedTimeSlot || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage)}
+                              disabled={!selectedTimeSlot || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage) || isBooking}
+                              onClick={handleBookNow}
                               style={{ 
                                 fontSize: '0.875rem',
                                 padding: '0.5rem 1rem',
                                 borderRadius: '4px',
                                 border: '1px solid #007bff',
-                                color: (!selectedTimeSlot || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage)) ? '#ccc' : '#007bff',
+                                color: (!selectedTimeSlot || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage) || isBooking) ? '#ccc' : '#007bff',
                                 backgroundColor: 'transparent',
-                                opacity: (!selectedTimeSlot || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage)) ? 0.5 : 1,
-                                cursor: (!selectedTimeSlot || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage)) ? 'not-allowed' : 'pointer'
+                                opacity: (!selectedTimeSlot || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage) || isBooking) ? 0.5 : 1,
+                                cursor: (!selectedTimeSlot || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage) || isBooking) ? 'not-allowed' : 'pointer'
                               }}
                             >
-                              {language === 'es' ? 'Reservar ahora' : 'Book now'}
+                              {isBooking ? (
+                                <>
+                                  <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                                  {getTranslation('activity.processing', language)}
+                                </>
+                              ) : (
+                                language === 'es' ? 'Reservar ahora' : 'Book now'
+                              )}
                             </button>
                             <button 
                               className="btn btn-primary"
-                              disabled={!selectedTimeSlot || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage)}
+                              disabled={!selectedTimeSlot || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage) || isAddingToCart}
+                              onClick={handleAddToCart}
                               style={{ 
                                 fontSize: '0.875rem',
                                 padding: '0.5rem 1rem',
                                 borderRadius: '4px',
-                                backgroundColor: (!selectedTimeSlot || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage)) ? '#ccc' : '#007bff',
+                                backgroundColor: (!selectedTimeSlot || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage) || isAddingToCart) ? '#ccc' : '#007bff',
                                 border: 'none',
                                 color: 'white',
-                                opacity: (!selectedTimeSlot || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage)) ? 0.5 : 1,
-                                cursor: (!selectedTimeSlot || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage)) ? 'not-allowed' : 'pointer'
+                                opacity: (!selectedTimeSlot || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage) || isAddingToCart) ? 0.5 : 1,
+                                cursor: (!selectedTimeSlot || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && !selectedLanguage) || isAddingToCart) ? 'not-allowed' : 'pointer'
                               }}
                             >
-                              {language === 'es' ? 'Agregar al carrito' : 'Add to cart'}
+                              {isAddingToCart ? (
+                                <>
+                                  <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                                  {getTranslation('cart.adding', language)}
+                                </>
+                              ) : (
+                                language === 'es' ? 'Agregar al carrito' : 'Add to cart'
+                              )}
                             </button>
                           </div>
                         </div>
@@ -1116,7 +1464,7 @@ const ActivityDetail: React.FC = () => {
           )}
 
         {/* Barra flotante móvil - Solo visible en móvil */}
-        {showAvailabilitySection && (
+        {showAvailabilitySection && !isMobileMenuOpen && (
           <div className="d-block d-md-none position-fixed bottom-0 start-0 w-100 bg-white shadow-lg border-top" style={{ zIndex: 1030 }}>
             <div className="container-fluid p-3">
               <div className="d-flex justify-content-between align-items-center">
@@ -1132,12 +1480,12 @@ const ActivityDetail: React.FC = () => {
                           <div className="d-flex flex-start align-items-center">
                             <span className="badge bg-danger" style={{ fontSize: '0.65rem' }}>-{getMinPrice().discountPercent}%</span>
                             <span className="text-muted text-decoration-line-through" style={{ fontSize: '0.75rem' }}>
-                              {currency === 'PEN' ? 'S/ ' : '$ '}{getMinPrice().originalPrice?.toFixed(2)}
+                              {currency === 'PEN' ? 'S/ ' : '$ '}{Math.ceil(getMinPrice().originalPrice || 0)?.toFixed(2)}
                             </span>
                           </div>
                         )}
                          <div className={`h5 fw-bold mb-0 ${getMinPrice().hasDiscount ? 'text-danger' : 'text-dark'}`} style={{ margin: '0px', padding: '0px' }}>
-                           {currency === 'PEN' ? 'S/ ' : '$ '}{getMinPrice().price?.toFixed(2) || '0.00'}
+                           {currency === 'PEN' ? 'S/ ' : '$ '}{Math.ceil(getMinPrice().price || 0)?.toFixed(2) || '0.00'}
                          </div>
                         </div>
                         <small className="text-muted" style={{ fontSize: '0.7rem', marginTop: '-14px' }}>

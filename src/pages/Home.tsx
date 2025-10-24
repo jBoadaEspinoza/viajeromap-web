@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useLanguage } from '../context/LanguageContext';
+import { useCart } from '../context/CartContext';
 import { getTranslation } from '../utils/translations';
 import { useConfig } from '../context/ConfigContext';
 import { useUrlParams } from '../hooks/useUrlParams';
@@ -174,12 +175,6 @@ const Home: React.FC = () => {
       try {
         setLoadingActivities(true);
         
-        console.log('🚀 Enviando búsqueda al API (Home):');
-        console.log('   📅 departureDate:', activeDates || 'sin fecha');
-        console.log('   📍 destinationCity:', activeDestination || 'sin destino');
-        console.log('   💱 currency:', currency.toUpperCase());
-        console.log('   🌐 lang:', language);
-        
         const response = await activitiesApi.search({
           lang: language,
           currency: currency.toUpperCase(),
@@ -192,27 +187,16 @@ const Home: React.FC = () => {
         
         // LOG 1: Verificar datos crudos del API
         if (response.success && response.data && response.data.length > 0) {
-          console.log('\n🔍 ========================================');
-          console.log('📡 DATOS DESDE API (Home):');
-          console.log('========================================');
-          console.log(`📦 Total actividades recibidas: ${response.data.length}`);
-          
           const activitiesWithOfferFromAPI = response.data.filter(activity => {
             const bookingOption = activity.bookingOptions?.[0];
             return bookingOption?.specialOfferPercentage && bookingOption.specialOfferPercentage > 0;
           });
           
-          console.log(`🎁 Actividades con descuento desde API: ${activitiesWithOfferFromAPI.length}`);
-          console.log(`📊 Porcentaje con descuento: ${((activitiesWithOfferFromAPI.length / response.data.length) * 100).toFixed(1)}%`);
-          
           if (activitiesWithOfferFromAPI.length > 0) {
-            console.log('\n📋 Lista de actividades con descuento desde API:');
             activitiesWithOfferFromAPI.forEach(activity => {
               const bookingOption = activity.bookingOptions?.[0];
-              console.log(`   ✅ ${activity.title} → ${bookingOption?.specialOfferPercentage}% OFF`);
             });
           }
-          console.log('========================================\n');
           // Mapear Activity a ActivityCardData
           const mappedActivities = response.data.map(activity => {
             const bookingOption = activity.bookingOptions?.[0];
@@ -243,12 +227,6 @@ const Home: React.FC = () => {
                 price = bookingOption.pricePerPerson || 0;
                 isFrom = false;
               }
-
-              // Verificar specialOfferPercentage
-              console.log(`📊 Actividad: "${activity.title}"`);
-              console.log(`   💰 Precio base: ${currency} ${price}`);
-              console.log(`   🎁 specialOfferPercentage: ${bookingOption.specialOfferPercentage ?? 'null/undefined'}`);
-
               // Aplicar descuento si existe specialOfferPercentage
               if (bookingOption.specialOfferPercentage && bookingOption.specialOfferPercentage > 0) {
                 hasActiveOffer = true;
@@ -258,10 +236,6 @@ const Home: React.FC = () => {
                 // Calcular precio con descuento
                 const discountAmount = price * (bookingOption.specialOfferPercentage / 100);
                 price = price - discountAmount;
-                
-                console.log(`   ✅ Descuento aplicado: ${discountPercent}%`);
-                console.log(`   💵 Precio original: ${currency} ${originalPrice}`);
-                console.log(`   💲 Precio final: ${currency} ${price}`);
               } else {
                 console.log(`   ❌ Sin descuento`);
               }
@@ -301,37 +275,9 @@ const Home: React.FC = () => {
             };
           });
           
-          // Resumen de descuentos después de filtros
-          console.log('\n🔍 ========================================');
-          console.log('📋 RESUMEN DESPUÉS DE FILTROS (Home):');
-          console.log('========================================');
           
-          // Información de filtros aplicados
-          console.log('🔧 Filtros aplicados:');
-          if (activeDestination) {
-            console.log(`   📍 Destino: ${activeDestination}`);
-          } else {
-            console.log(`   📍 Destino: Todos`);
-          }
-          if (activeDates) {
-            console.log(`   📅 Fecha: ${activeDates}`);
-          }
-          if (activeAdults > 1 || activeChildren > 0) {
-            console.log(`   👥 Viajeros: ${activeAdults} adultos, ${activeChildren} niños`);
-          }
-          
-          console.log('\n📊 Resultados:');
           const withDiscount = mappedActivities.filter(a => a.hasActiveOffer);
           const withoutDiscount = mappedActivities.filter(a => !a.hasActiveOffer);
-          console.log(`   📦 Total actividades después de filtros: ${mappedActivities.length}`);
-          console.log(`   ✅ Con descuento: ${withDiscount.length}`);
-          console.log(`   ❌ Sin descuento: ${withoutDiscount.length}`);
-          console.log(`   📈 Porcentaje con descuento: ${mappedActivities.length > 0 ? ((withDiscount.length / mappedActivities.length) * 100).toFixed(1) : 0}%`);
-          
-          // Comparación con datos del API
-          console.log('\n🔄 Comparación:');
-          console.log(`   Desde API: ${activitiesWithOfferFromAPI.length} con descuento de ${response.data.length} totales`);
-          console.log(`   Después filtros: ${withDiscount.length} con descuento de ${mappedActivities.length} totales`);
           
           if (withDiscount.length > 0) {
             console.log('\n🎁 Actividades con descuento (final):');
@@ -339,7 +285,6 @@ const Home: React.FC = () => {
               console.log(`   - ${a.title}: ${a.discountPercent}% OFF`);
             });
           }
-          console.log('========================================\n');
           
           setActivities(mappedActivities);
         } else {
@@ -474,6 +419,7 @@ const Home: React.FC = () => {
   const getPriceValue = (price: number | string): number => {
     return typeof price === 'string' ? parseFloat(price) : price;
   };
+
 
 
 
@@ -934,25 +880,27 @@ const Home: React.FC = () => {
                             )}
                           </div>
                         </div>
-                        <button 
-                          className="btn btn-outline-primary btn-sm"
-                          onClick={() => {
-                            const params = new URLSearchParams();
-                            params.append('date', activeDates || (() => {
-                              const today = new Date();
-                              return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-                            })());
-                            params.append('currency', currency.toUpperCase());
-                            params.append('lang', language);
-                            if (activeDestination) params.append('destination', activeDestination);
-                            if (activeAdults) params.append('adults', String(activeAdults));
-                            if (activeChildren) params.append('children', String(activeChildren));
-                            navigate(`/activity/${activity.id}?${params.toString()}`);
-                          }}
-                          style={{ whiteSpace: 'normal', lineHeight: '1.2' }}
-                        >
-                          {getTranslation('home.activities.viewDetails', language)}
-                        </button>
+                        <div className="d-flex gap-2">
+                          <button 
+                            className="btn btn-outline-primary btn-sm"
+                            onClick={() => {
+                              const params = new URLSearchParams();
+                              params.append('date', activeDates || (() => {
+                                const today = new Date();
+                                return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+                              })());
+                              params.append('currency', currency.toUpperCase());
+                              params.append('lang', language);
+                              if (activeDestination) params.append('destination', activeDestination);
+                              if (activeAdults) params.append('adults', String(activeAdults));
+                              if (activeChildren) params.append('children', String(activeChildren));
+                              navigate(`/activity/${activity.id}?${params.toString()}`);
+                            }}
+                            style={{ whiteSpace: 'normal', lineHeight: '1.2' }}
+                          >
+                            {getTranslation('home.activities.viewDetails', language)}
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1053,25 +1001,27 @@ const Home: React.FC = () => {
                                 )}
                               </div>
                             </div>
-                            <button 
-                              className="btn btn-outline-primary btn-sm"
-                              style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem', whiteSpace: 'normal', lineHeight: '1.2' }}
-                              onClick={() => {
-                                const params = new URLSearchParams();
-                                params.append('date', activeDates || (() => {
-                                  const today = new Date();
-                                  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-                                })());
-                                params.append('currency', currency.toUpperCase());
-                                params.append('lang', language);
-                                if (activeDestination) params.append('destination', activeDestination);
-                                if (activeAdults) params.append('adults', String(activeAdults));
-                                if (activeChildren) params.append('children', String(activeChildren));
-                                navigate(`/activity/${activity.id}?${params.toString()}`);
-                              }}
-                            >
-                              {getTranslation('common.viewDetails', language)}
-                            </button>
+                            <div className="d-flex gap-1">
+                              <button 
+                                className="btn btn-outline-primary btn-sm"
+                                style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem', whiteSpace: 'normal', lineHeight: '1.2' }}
+                                onClick={() => {
+                                  const params = new URLSearchParams();
+                                  params.append('date', activeDates || (() => {
+                                    const today = new Date();
+                                    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+                                  })());
+                                  params.append('currency', currency.toUpperCase());
+                                  params.append('lang', language);
+                                  if (activeDestination) params.append('destination', activeDestination);
+                                  if (activeAdults) params.append('adults', String(activeAdults));
+                                  if (activeChildren) params.append('children', String(activeChildren));
+                                  navigate(`/activity/${activity.id}?${params.toString()}`);
+                                }}
+                              >
+                                {getTranslation('common.viewDetails', language)}
+                              </button>
+                            </div>
                           </div>
                         </div>
                       </div>

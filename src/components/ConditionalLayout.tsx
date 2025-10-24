@@ -11,9 +11,10 @@ interface ConditionalLayoutProps {
 const ConditionalLayout: React.FC<ConditionalLayoutProps> = ({ children }) => {
   const location = useLocation();
   const isExtranetRoute = location.pathname.startsWith('/extranet');
+  const isCheckoutRoute = location.pathname === '/checkout';
 
-  if (isExtranetRoute) {
-    // Para rutas del extranet, no mostrar navbar ni footer
+  if (isExtranetRoute || isCheckoutRoute) {
+    // Para rutas del extranet y checkout, no mostrar navbar ni footer
     return <>{children}</>;
   }
 

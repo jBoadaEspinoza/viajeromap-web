@@ -823,6 +823,7 @@ const Search: React.FC = () => {
                                   const today = new Date();
                                   return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
                                 })());
+                                
                                 params.append('currency', currency.toUpperCase());
                                 params.append('lang', language);
                                 if (destination) params.append('destination', destination);

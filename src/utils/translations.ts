@@ -52,6 +52,272 @@ export const translations: Translations = {
     en: 'Dollars (USD)'
   },
 
+  // Cart
+  'cart.title': {
+    es: 'Carrito',
+    en: 'Cart'
+  },
+  'cart.items': {
+    es: 'items',
+    en: 'items'
+  },
+  'cart.empty': {
+    es: 'Carrito vacío',
+    en: 'Empty cart'
+  },
+  'cart.addToCart': {
+    es: 'Añadir al carrito',
+    en: 'Add to cart'
+  },
+  'cart.removeFromCart': {
+    es: 'Eliminar del carrito',
+    en: 'Remove from cart'
+  },
+  'cart.viewCart': {
+    es: 'Ver carrito',
+    en: 'View cart'
+  },
+  'cart.checkout': {
+    es: 'Proceder al pago',
+    en: 'Checkout'
+  },
+  'checkout.title': {
+    es: 'Checkout',
+    en: 'Checkout'
+  },
+  'checkout.reservationTimer': {
+    es: 'Tu plaza está reservada durante',
+    en: 'Your spot is reserved for'
+  },
+  'checkout.minutes': {
+    es: 'minutos',
+    en: 'minutes'
+  },
+  'checkout.reviewPersonalData': {
+    es: 'Revisa tus datos personales',
+    en: 'Review your personal data'
+  },
+  'checkout.fastSecureReservation': {
+    es: 'Reserva rápida y segura',
+    en: 'Fast and secure reservation'
+  },
+  'checkout.nameRequired': {
+    es: 'Nombre y apellidos*',
+    en: 'Name and surname*'
+  },
+  'checkout.emailRequired': {
+    es: 'E-mail*',
+    en: 'E-mail*'
+  },
+  'checkout.countryRequired': {
+    es: 'País*',
+    en: 'Country*'
+  },
+  'checkout.phoneRequired': {
+    es: 'Número de móvil*',
+    en: 'Mobile number*'
+  },
+  'checkout.requiredFields': {
+    es: '* Campos obligatorios',
+    en: '* Required fields'
+  },
+  'checkout.contactDisclaimer': {
+    es: 'Solo te contactaremos en caso de que haya notificaciones importantes o cambios en tu reserva.',
+    en: 'We will only contact you in case of important notifications or changes to your reservation.'
+  },
+  'checkout.continuePayment': {
+    es: 'Continuar con el pago',
+    en: 'Continue with payment'
+  },
+  'checkout.noPayToday': {
+    es: 'No pagues nada hoy',
+    en: 'Don\'t pay anything today'
+  },
+  'checkout.bookNowPayLater': {
+    es: 'Reserva ahora y paga después',
+    en: 'Book now and pay later'
+  },
+  'checkout.easyCancellation': {
+    es: 'Cancelación fácil',
+    en: 'Easy cancellation'
+  },
+  'checkout.orderSummary': {
+    es: 'Resumen del pedido',
+    en: 'Order summary'
+  },
+  'checkout.bestRated': {
+    es: 'Mejor valorados',
+    en: 'Best rated'
+  },
+  'checkout.meetingPoint': {
+    es: 'Punto de encuentro',
+    en: 'Meeting point'
+  },
+  'checkout.language': {
+    es: 'Idioma',
+    en: 'Language'
+  },
+  'checkout.changeDateParticipants': {
+    es: 'Cambiar fecha o número de participantes',
+    en: 'Change date or number of participants'
+  },
+  'checkout.goodValue': {
+    es: 'Buena relación calidad-precio',
+    en: 'Good value for money'
+  },
+  'checkout.promotionalCode': {
+    es: 'Introduce un código promocional, de crédito o de regalo',
+    en: 'Enter a promotional, credit, or gift code'
+  },
+  'checkout.total': {
+    es: 'Total',
+    en: 'Total'
+  },
+  'checkout.allTaxesIncluded': {
+    es: 'Todas las tasas e impuestos incluidos',
+    en: 'All taxes and fees included'
+  },
+  'checkout.saveWithOffer': {
+    es: 'Ahorra con esta oferta especial',
+    en: 'Save with this special offer'
+  },
+  'checkout.loginModal.title': {
+    es: '¿Quieres iniciar sesión?',
+    en: 'Do you want to log in?'
+  },
+  'checkout.loginModal.continueWithoutLogin': {
+    es: 'Continuar sin iniciar sesión',
+    en: 'Continue without logging in'
+  },
+  'checkout.loginModal.benefits': {
+    es: 'Consulta o accede a tus tickets fácilmente desde cualquier dispositivo con tu cuenta ViajeroMap.',
+    en: 'Consult or access your tickets easily from any device with your ViajeroMap account.'
+  },
+  'checkout.loginModal.emailPlaceholder': {
+    es: 'Dirección de correo electrónico',
+    en: 'Email address'
+  },
+  'checkout.loginModal.continueWithEmail': {
+    es: 'Continuar con tu correo',
+    en: 'Continue with your email'
+  },
+  'activity.processing': {
+    es: 'Procesando...',
+    en: 'Processing...'
+  },
+  'cart.subtitle': {
+    es: 'Revisa tus actividades seleccionadas',
+    en: 'Review your selected activities'
+  },
+  'cart.empty.title': {
+    es: 'Tu carrito está vacío',
+    en: 'Your cart is empty'
+  },
+  'cart.empty.message': {
+    es: 'No has agregado ninguna actividad al carrito aún. Explora nuestras increíbles experiencias y comienza a planificar tu aventura.',
+    en: 'You haven\'t added any activities to your cart yet. Explore our amazing experiences and start planning your adventure.'
+  },
+  'cart.empty.exploreActivities': {
+    es: 'Explorar Actividades',
+    en: 'Explore Activities'
+  },
+  'cart.features.secure.title': {
+    es: 'Reserva Segura',
+    en: 'Secure Booking'
+  },
+  'cart.features.secure.description': {
+    es: 'Tus datos están protegidos con encriptación SSL',
+    en: 'Your data is protected with SSL encryption'
+  },
+  'cart.features.flexible.title': {
+    es: 'Cancelación Flexible',
+    en: 'Flexible Cancellation'
+  },
+  'cart.features.flexible.description': {
+    es: 'Cancela gratis hasta 24h antes del viaje',
+    en: 'Cancel for free up to 24h before travel'
+  },
+  'cart.features.support.title': {
+    es: 'Soporte 24/7',
+    en: '24/7 Support'
+  },
+  'cart.features.support.description': {
+    es: 'Nuestro equipo está aquí para ayudarte',
+    en: 'Our team is here to help you'
+  },
+  'cart.remove.title': {
+    es: 'Eliminar',
+    en: 'Remove'
+  },
+  'cart.edit.title': {
+    es: 'Editar',
+    en: 'Edit'
+  },
+
+  // Profile
+  'profile.title': {
+    es: 'Perfil',
+    en: 'Profile'
+  },
+
+  // Page Views
+  'pageview.language.title': {
+    es: 'Idioma',
+    en: 'Language'
+  },
+  'pageview.language.selectLanguage': {
+    es: 'Seleccionar Idioma',
+    en: 'Select Language'
+  },
+  'pageview.language.spanish': {
+    es: 'Español',
+    en: 'Spanish'
+  },
+  'pageview.language.english': {
+    es: 'Inglés',
+    en: 'English'
+  },
+  'pageview.currency.title': {
+    es: 'Moneda',
+    en: 'Currency'
+  },
+  'pageview.currency.selectCurrency': {
+    es: 'Seleccionar Moneda',
+    en: 'Select Currency'
+  },
+  'pageview.currency.usd': {
+    es: 'Dólar Estadounidense',
+    en: 'US Dollar'
+  },
+  'pageview.currency.pen': {
+    es: 'Sol Peruano',
+    en: 'Peruvian Sol'
+  },
+  'pageview.login.title': {
+    es: 'Inicia sesión o regístrate',
+    en: 'Log in or sign up'
+  },
+  'pageview.support.title': {
+    es: 'Ayuda',
+    en: 'Support'
+  },
+  'pageview.download.title': {
+    es: 'Descarga la app',
+    en: 'Download the app'
+  },
+  'pageview.notifications.title': {
+    es: 'Notificaciones',
+    en: 'Notifications'
+  },
+  'pageview.appearance.title': {
+    es: 'Apariencia',
+    en: 'Appearance'
+  },
+  'pageview.appearance.alwaysLight': {
+    es: 'Siempre modo claro',
+    en: 'Always light mode'
+  },
+
   // Home page
   'home.hero.title': {
     es: 'Descubre las mejores experiencias en Perú',
@@ -528,6 +794,14 @@ export const translations: Translations = {
     es: 'precio por persona',
     en: 'price per person'
   },
+  'activity.discount': {
+    es: 'DESCUENTO',
+    en: 'DISCOUNT'
+  },
+  'activity.youSave': {
+    es: 'Ahorras:',
+    en: 'You save:'
+  },
   'detail.booking.security': {
     es: 'Reserva segura con cancelación gratuita',
     en: 'Secure booking with free cancellation'
@@ -789,6 +1063,58 @@ export const translations: Translations = {
   'common.showLess': {
     es: 'Mostrar menos',
     en: 'Show less'
+  },
+  'common.edit': {
+    es: 'Editar',
+    en: 'Edit'
+  },
+  'common.save': {
+    es: 'Guardar',
+    en: 'Save'
+  },
+  'cart.editDetails': {
+    es: 'Editar detalles',
+    en: 'Edit details'
+  },
+  'cart.traveler': {
+    es: 'Viajero',
+    en: 'Traveler'
+  },
+  'cart.travelers': {
+    es: 'Viajeros',
+    en: 'Travelers'
+  },
+  'cart.adding': {
+    es: 'Agregando...',
+    en: 'Adding...'
+  },
+  'cart.departureDate': {
+    es: 'Fecha de salida',
+    en: 'Departure date'
+  },
+  'cart.departureTime': {
+    es: 'Hora de salida',
+    en: 'Departure time'
+  },
+  'cart.meetingPoint': {
+    es: 'Punto de encuentro',
+    en: 'Meeting point'
+  },
+  'cart.guideLanguage': {
+    es: 'Idioma del guía',
+    en: 'Guide language'
+  },
+  'cart.pricePerPerson': {
+    es: 'Precio por persona',
+    en: 'Price per person'
+  },
+  'cart.discount': {
+    es: 'descuento',
+    en: 'discount'
+  },
+  'cart.perPerson': {
+    es: 'por persona',
+    en: 'per person'
   },
   'booking.selectOption': {
     es: 'Selecciona una opción de reserva',
