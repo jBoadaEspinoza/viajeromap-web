@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useLanguage } from '../context/LanguageContext';
 import { useCurrency } from '../context/CurrencyContext';
@@ -7,6 +7,8 @@ import { useCart } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
 import { getTranslation } from '../utils/translations';
 import LanguageCurrencyModal from './LanguageCurrencyModal';
+import { signInWithPopup } from 'firebase/auth';
+import { auth, googleProvider } from '../config/firebase';
 
 const Navbar: React.FC = () => {
   const location = useLocation();
@@ -23,14 +25,34 @@ const Navbar: React.FC = () => {
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false); // Estado para el menú contextual de perfil
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false); // Estado para el modal de login (desktop)
   const [isLoginPageViewOpen, setIsLoginPageViewOpen] = useState(false); // Estado para el page view de login (mobile)
-  const [loginEmail, setLoginEmail] = useState(''); // Estado para el email del login
+  const [loginPhone, setLoginPhone] = useState(''); // Estado para el teléfono del login
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false); // Estado para loading de Google
+  const [firebaseUser, setFirebaseUser] = useState<any>(null); // Estado para el usuario de Firebase
   
   const cartItems = getTotalItems();
 
-  // Función para validar formato de email
-  const isValidEmail = (email: string): boolean => {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return emailRegex.test(email);
+  // Leer información del usuario de Firebase desde localStorage
+  useEffect(() => {
+    const userData = localStorage.getItem('firebaseUser');
+    console.log('🔍 Navbar - Leyendo usuario de localStorage:', userData);
+    if (userData) {
+      try {
+        const parsedData = JSON.parse(userData);
+        console.log('✅ Navbar - Usuario parseado:', parsedData);
+        setFirebaseUser(parsedData);
+      } catch (error) {
+        console.error('❌ Error parsing firebaseUser:', error);
+      }
+    } else {
+      console.log('⚠️ Navbar - No hay usuario en localStorage');
+    }
+  }, []);
+
+  // Función para validar formato de teléfono
+  const isValidPhone = (phone: string): boolean => {
+    // Validar formato de teléfono internacional (mínimo 10 dígitos)
+    const phoneRegex = /^\+?[1-9]\d{9,14}$/;
+    return phoneRegex.test(phone.replace(/\s/g, ''));
   };
 
   const isActive = (path: string) => {
@@ -131,6 +153,16 @@ const Navbar: React.FC = () => {
     navigate('/cart');
   };
 
+  const handleMyBookingsClick = () => {
+    // TODO: Implementar navegación a la página de mis reservas
+    console.log('Mis reservas click');
+    // Por ahora mostrar un mensaje
+    alert(language === 'es' 
+      ? 'Próximamente: Mis reservas' 
+      : 'Coming soon: My bookings'
+    );
+  };
+
   const handleLoginClick = () => {
     // Determinar si es móvil o desktop basado en el ancho de pantalla
     const isMobile = window.innerWidth < 992;
@@ -146,44 +178,98 @@ const Navbar: React.FC = () => {
 
   const handleCloseLoginModal = () => {
     setIsLoginModalOpen(false);
-    setLoginEmail('');
+    setLoginPhone('');
   };
 
   const closeLoginPageView = () => {
     setIsLoginPageViewOpen(false);
-    setLoginEmail('');
+    setLoginPhone('');
   };
 
-  const handleLoginWithGoogle = () => {
-    console.log('Login with Google');
-    // Implementar login con Google
-    setIsLoginModalOpen(false);
-    setIsLoginPageViewOpen(false);
-  };
-
-  const handleLoginWithApple = () => {
-    console.log('Login with Apple');
-    // Implementar login con Apple
-    setIsLoginModalOpen(false);
-    setIsLoginPageViewOpen(false);
-  };
-
-  const handleLoginWithFacebook = () => {
-    console.log('Login with Facebook');
-    // Implementar login con Facebook
-    setIsLoginModalOpen(false);
-    setIsLoginPageViewOpen(false);
-  };
-
-  const handleEmailLogin = async () => {
-    if (!isValidEmail(loginEmail)) return;
-    
+  const handleLoginWithGoogle = async () => {
     try {
-      // Aquí implementar la lógica de login por email
-      console.log('Login with email:', loginEmail);
+      console.log('Iniciando login con Google...');
+      
+      // Activar loading
+      setIsGoogleLoading(true);
+      
+      // Autenticar con Google usando Firebase
+      const result = await signInWithPopup(auth, googleProvider);
+      const user = result.user;
+      
+      console.log('✅ Login exitoso con Google:', {
+        email: user.email,
+        displayName: user.displayName,
+        photoURL: user.photoURL,
+        uid: user.uid
+      });
+      
+      // Guardar la información del usuario en localStorage
+      const userData = {
+        email: user.email,
+        displayName: user.displayName,
+        photoURL: user.photoURL,
+        uid: user.uid
+      };
+      
+      console.log('💾 Guardando usuario en localStorage:', userData);
+      localStorage.setItem('firebaseUser', JSON.stringify(userData));
+      
+      // Verificar que se guardó correctamente
+      const savedData = localStorage.getItem('firebaseUser');
+      console.log('✅ Usuario guardado en localStorage:', savedData);
+      
+      // Actualizar el estado del usuario
+      setFirebaseUser(userData);
+      console.log('✅ Estado firebaseUser actualizado:', userData);
+      
+      // Cerrar modales
       setIsLoginModalOpen(false);
       setIsLoginPageViewOpen(false);
-      setLoginEmail('');
+      
+      // Desactivar loading después de cerrar modales
+      setIsGoogleLoading(false);
+      
+    } catch (error: any) {
+      console.error('Error en login con Google:', error);
+      
+      // Desactivar loading
+      setIsGoogleLoading(false);
+      
+      // Mostrar mensaje de error al usuario
+      alert(language === 'es' 
+        ? 'Error al iniciar sesión con Google' 
+        : 'Error signing in with Google'
+      );
+    }
+  };
+
+  const handleLogout = () => {
+    console.log('Cerrando sesión...');
+    
+    // Limpiar localStorage
+    localStorage.removeItem('firebaseUser');
+    
+    // Limpiar estado
+    setFirebaseUser(null);
+    
+    // Cerrar menús
+    setIsProfileMenuOpen(false);
+    setIsMobileMenuOpen(false);
+    
+    console.log('✅ Sesión cerrada exitosamente');
+  };
+
+
+  const handlePhoneLogin = async () => {
+    if (!isValidPhone(loginPhone)) return;
+    
+    try {
+      // Aquí implementar la lógica de login por teléfono
+      console.log('Login with phone:', loginPhone);
+      setIsLoginModalOpen(false);
+      setIsLoginPageViewOpen(false);
+      setLoginPhone('');
     } catch (error) {
       console.error('Error en login:', error);
     }
@@ -271,6 +357,20 @@ const Navbar: React.FC = () => {
               )}
             </div>
 
+            {/* My Bookings Icon - only show if logged in */}
+            {firebaseUser && (
+              <div className="position-relative">
+                <button 
+                  className="btn btn-link p-2"
+                  style={{ border: 'none', backgroundColor: 'transparent' }}
+                  aria-label="My Bookings"
+                  onClick={handleMyBookingsClick}
+                >
+                  <i className="fas fa-calendar-check text-muted" style={{ fontSize: '1.2rem' }}></i>
+                </button>
+              </div>
+            )}
+
             {/* Mobile menu button */}
             <div className="position-relative">
               <button
@@ -308,6 +408,21 @@ const Navbar: React.FC = () => {
               </button>
             </div>
 
+            {/* My Bookings - Desktop - only show if logged in */}
+            {firebaseUser && (
+              <div className="position-relative">
+                <button
+                  className="btn d-flex flex-column align-items-center gap-1 py-2 px-3"
+                  style={{ border: 'none', backgroundColor: 'transparent' }}
+                  type="button"
+                  onClick={handleMyBookingsClick}
+                >
+                  <i className="fas fa-calendar-check fs-6"></i>
+                  <span className="small" style={{ fontSize: '0.7rem' }}>{language === 'es' ? 'Mis reservas' : 'My bookings'}</span>
+                </button>
+              </div>
+            )}
+
             {/* Language and Currency Selector - Desktop */}
             <button
               className="btn d-flex flex-column align-items-center gap-1 py-2 px-3"
@@ -335,8 +450,36 @@ const Navbar: React.FC = () => {
                 type="button"
               >
                 <div className="position-relative">
-                  <i className="fa-regular fa-circle-user fs-6"></i>
+                  {(() => {
+                    console.log('🖼️ Botón perfil - firebaseUser:', firebaseUser);
+                    console.log('🖼️ Botón perfil - photoURL:', firebaseUser?.photoURL);
+                    return firebaseUser?.photoURL ? (
+                      <img 
+                        src={firebaseUser.photoURL} 
+                        alt={firebaseUser.displayName || 'User'} 
+                        style={{ 
+                          width: '24px', 
+                          height: '24px', 
+                          borderRadius: '50%',
+                          objectFit: 'cover'
+                        }}
+                        onError={(e) => {
+                          console.error('❌ Error cargando imagen:', e);
+                        }}
+                        onLoad={() => {
+                          console.log('✅ Imagen cargada exitosamente');
+                        }}
+                      />
+                    ) : (
+                      <i className="fa-regular fa-circle-user fs-6"></i>
+                    );
+                  })()}
                 </div>
+                {firebaseUser?.displayName && (
+                  <span className="small" style={{ fontSize: '0.7rem', maxWidth: '80px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {firebaseUser.displayName}
+                  </span>
+                )}
                 <div className="d-flex align-items-center">
                   <span className="small" style={{ fontSize: '0.7rem' }}>{getTranslation('profile.title', language)}</span>
                 </div>
@@ -357,22 +500,74 @@ const Navbar: React.FC = () => {
                     <h6 className="mb-0 fw-bold">{getTranslation('profile.title', language)}</h6>
                   </div>
 
-                  {/* Menu Items */}
-                  <div className="py-2">
-                    {/* Log in or sign up */}
-                    <div 
-                      className="px-4 py-2 d-flex align-items-center justify-content-between"
-                      style={{ backgroundColor: '#f8f9fa', cursor: 'pointer' }}
-                      onClick={handleLoginClick}
-                    >
+                  {/* User info if logged in */}
+                  {firebaseUser && (
+                    <div className="px-4 py-3 border-bottom">
                       <div className="d-flex align-items-center">
-                        <i className="fas fa-arrow-right text-primary me-3" style={{ fontSize: '1.2rem' }}></i>
-                        <span className="fw-medium">{getTranslation('pageview.login.title', language)}</span>
+                        {firebaseUser.photoURL && (
+                          <img 
+                            src={firebaseUser.photoURL} 
+                            alt={firebaseUser.displayName || 'User'} 
+                            style={{ 
+                              width: '40px', 
+                              height: '40px', 
+                              borderRadius: '50%',
+                              objectFit: 'cover',
+                              marginRight: '12px'
+                            }}
+                          />
+                        )}
+                        <div className="flex-grow-1">
+                          <div className="fw-bold" style={{ fontSize: '0.9rem' }}>
+                            {firebaseUser.displayName || 'Usuario'}
+                          </div>
+                          <div className="text-muted small">
+                            {firebaseUser.email}
+                          </div>
+                        </div>
                       </div>
                     </div>
+                  )}
 
-                    {/* Separator */}
-                    <div className="border-top my-2"></div>
+                  {/* Menu Items */}
+                  <div className="py-2">
+                    {/* Log in or sign up - only show if not logged in */}
+                    {!firebaseUser && (
+                      <>
+                        <div 
+                          className="px-4 py-2 d-flex align-items-center justify-content-between"
+                          style={{ backgroundColor: '#f8f9fa', cursor: 'pointer' }}
+                          onClick={handleLoginClick}
+                        >
+                          <div className="d-flex align-items-center">
+                            <i className="fas fa-arrow-right text-primary me-3" style={{ fontSize: '1.2rem' }}></i>
+                            <span className="fw-medium">{getTranslation('pageview.login.title', language)}</span>
+                          </div>
+                        </div>
+
+                        {/* Separator */}
+                        <div className="border-top my-2"></div>
+                      </>
+                    )}
+
+                    {/* Logout - only show if logged in */}
+                    {firebaseUser && (
+                      <>
+                        <div 
+                          className="px-4 py-2 d-flex align-items-center justify-content-between"
+                          style={{ cursor: 'pointer' }}
+                          onClick={handleLogout}
+                        >
+                          <div className="d-flex align-items-center">
+                            <i className="fas fa-sign-out-alt text-danger me-3" style={{ fontSize: '1.2rem' }}></i>
+                            <span className="fw-medium text-danger">{language === 'es' ? 'Cerrar sesión' : 'Logout'}</span>
+                          </div>
+                        </div>
+
+                        {/* Separator */}
+                        <div className="border-top my-2"></div>
+                      </>
+                    )}
 
                     {/* Support */}
                     <div 
@@ -448,18 +643,60 @@ const Navbar: React.FC = () => {
                     Profile
                   </h6>
                   
-                  {/* Log in or sign up */}
-                  <div 
-                    className="d-flex align-items-center justify-content-between py-2 mobile-menu-item" 
-                    onClick={handleLoginClick}
-                    style={{ borderRadius: '8px', cursor: 'pointer' }}
-                  >
-                    <div className="d-flex align-items-center">
-                      <i className="fas fa-arrow-right text-primary me-3" style={{ fontSize: '1.2rem' }}></i>
-                      <span className="fw-medium">{getTranslation('pageview.login.title', language)}</span>
+                  {/* User info if logged in */}
+                  {firebaseUser ? (
+                    <>
+                      <div className="d-flex align-items-center py-2 mb-3">
+                        {firebaseUser.photoURL && (
+                          <img 
+                            src={firebaseUser.photoURL} 
+                            alt={firebaseUser.displayName || 'User'} 
+                            style={{ 
+                              width: '40px', 
+                              height: '40px', 
+                              borderRadius: '50%',
+                              objectFit: 'cover',
+                              marginRight: '12px'
+                            }}
+                          />
+                        )}
+                        <div className="flex-grow-1">
+                          <div className="fw-bold" style={{ fontSize: '0.9rem' }}>
+                            {firebaseUser.displayName || 'Usuario'}
+                          </div>
+                          <div className="text-muted small">
+                            {firebaseUser.email}
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {/* Logout button for mobile */}
+                      <div 
+                        className="d-flex align-items-center justify-content-between py-2 mobile-menu-item mb-3" 
+                        onClick={handleLogout}
+                        style={{ borderRadius: '8px', cursor: 'pointer' }}
+                      >
+                        <div className="d-flex align-items-center">
+                          <i className="fas fa-sign-out-alt text-danger me-3" style={{ fontSize: '1.2rem' }}></i>
+                          <span className="fw-medium text-danger">{language === 'es' ? 'Cerrar sesión' : 'Logout'}</span>
+                        </div>
+                        <i className="fas fa-chevron-right text-muted"></i>
+                      </div>
+                    </>
+                  ) : (
+                    /* Log in or sign up */
+                    <div 
+                      className="d-flex align-items-center justify-content-between py-2 mobile-menu-item" 
+                      onClick={handleLoginClick}
+                      style={{ borderRadius: '8px', cursor: 'pointer' }}
+                    >
+                      <div className="d-flex align-items-center">
+                        <i className="fas fa-arrow-right text-primary me-3" style={{ fontSize: '1.2rem' }}></i>
+                        <span className="fw-medium">{getTranslation('pageview.login.title', language)}</span>
+                      </div>
+                      <i className="fas fa-chevron-right text-muted"></i>
                     </div>
-                    <i className="fas fa-chevron-right text-muted"></i>
-                  </div>
+                  )}
                   
                   {/* Currency */}
                   <div className="d-flex align-items-center justify-content-between py-2 mobile-menu-item" onClick={openCurrencyPageView} style={{ borderRadius: '8px', cursor: 'pointer' }}>
@@ -739,51 +976,38 @@ const Navbar: React.FC = () => {
                 <button
                   className="btn btn-outline-primary w-100"
                   onClick={handleLoginWithGoogle}
+                  disabled={isGoogleLoading}
                 >
-                  <i className="fab fa-google me-2"></i>
-                  Google
-                </button>
-                <button
-                  className="btn btn-outline-dark w-100"
-                  onClick={handleLoginWithApple}
-                >
-                  <i className="fab fa-apple me-2"></i>
-                  Apple
-                </button>
-                <button
-                  className="btn w-100"
-                  onClick={handleLoginWithFacebook}
-                  style={{ borderColor: '#1877F2', color: '#1877F2', border: '1px solid' }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.backgroundColor = '#1877F2';
-                    e.currentTarget.style.color = 'white';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.backgroundColor = 'transparent';
-                    e.currentTarget.style.color = '#1877F2';
-                  }}
-                >
-                  <i className="fab fa-facebook me-2"></i>
-                  Facebook
+                  {isGoogleLoading ? (
+                    <>
+                      <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                      {language === 'es' ? 'Iniciando sesión...' : 'Signing in...'}
+                    </>
+                  ) : (
+                    <>
+                      <i className="fab fa-google me-2"></i>
+                      Google
+                    </>
+                  )}
                 </button>
               </div>
 
-              {/* Email Login */}
+              {/* Phone Login */}
               <div className="mb-3">
                 <input
-                  type="email"
+                  type="tel"
                   className="form-control"
-                  placeholder={getTranslation('checkout.loginModal.emailPlaceholder', language)}
-                  value={loginEmail}
-                  onChange={(e) => setLoginEmail(e.target.value)}
+                  placeholder={language === 'es' ? 'Ingresa tu número de celular' : 'Enter your mobile number'}
+                  value={loginPhone}
+                  onChange={(e) => setLoginPhone(e.target.value)}
                 />
               </div>
               <button
-                className={`btn w-100 ${isValidEmail(loginEmail) ? 'btn-outline-primary' : 'btn-outline-secondary'}`}
-                onClick={handleEmailLogin}
-                disabled={!isValidEmail(loginEmail)}
+                className={`btn w-100 ${isValidPhone(loginPhone) ? 'btn-outline-primary' : 'btn-outline-secondary'}`}
+                onClick={handlePhoneLogin}
+                disabled={!isValidPhone(loginPhone)}
               >
-                {getTranslation('checkout.loginModal.continueWithEmail', language)}
+                {language === 'es' ? 'Continuar con celular' : 'Continue with mobile'}
               </button>
             </div>
           </div>
@@ -824,51 +1048,38 @@ const Navbar: React.FC = () => {
                   <button
                     className="btn btn-outline-primary flex-fill"
                     onClick={handleLoginWithGoogle}
+                    disabled={isGoogleLoading}
                   >
-                    <i className="fab fa-google me-2"></i>
-                    Google
-                  </button>
-                  <button
-                    className="btn btn-outline-dark flex-fill"
-                    onClick={handleLoginWithApple}
-                  >
-                    <i className="fab fa-apple me-2"></i>
-                    Apple
-                  </button>
-                  <button
-                    className="btn flex-fill"
-                    onClick={handleLoginWithFacebook}
-                    style={{ borderColor: '#1877F2', color: '#1877F2', border: '1px solid' }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.backgroundColor = '#1877F2';
-                      e.currentTarget.style.color = 'white';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.backgroundColor = 'transparent';
-                      e.currentTarget.style.color = '#1877F2';
-                    }}
-                  >
-                    <i className="fab fa-facebook me-2"></i>
-                    Facebook
+                    {isGoogleLoading ? (
+                      <>
+                        <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                        {language === 'es' ? 'Iniciando...' : 'Signing in...'}
+                      </>
+                    ) : (
+                      <>
+                        <i className="fab fa-google me-2"></i>
+                        Google
+                      </>
+                    )}
                   </button>
                 </div>
 
-                {/* Email Login */}
+                {/* Phone Login */}
                 <div className="mb-3">
                   <input
-                    type="email"
+                    type="tel"
                     className="form-control"
-                    placeholder={getTranslation('checkout.loginModal.emailPlaceholder', language)}
-                    value={loginEmail}
-                    onChange={(e) => setLoginEmail(e.target.value)}
+                    placeholder={language === 'es' ? 'Ingresa tu número de celular' : 'Enter your mobile number'}
+                    value={loginPhone}
+                    onChange={(e) => setLoginPhone(e.target.value)}
                   />
                 </div>
                 <button
-                  className={`btn w-100 ${isValidEmail(loginEmail) ? 'btn-outline-primary' : 'btn-outline-secondary'}`}
-                  onClick={handleEmailLogin}
-                  disabled={!isValidEmail(loginEmail)}
+                  className={`btn w-100 ${isValidPhone(loginPhone) ? 'btn-outline-primary' : 'btn-outline-secondary'}`}
+                  onClick={handlePhoneLogin}
+                  disabled={!isValidPhone(loginPhone)}
                 >
-                  {getTranslation('checkout.loginModal.continueWithEmail', language)}
+                  {language === 'es' ? 'Continuar con celular' : 'Continue with mobile'}
                 </button>
               </div>
             </div>

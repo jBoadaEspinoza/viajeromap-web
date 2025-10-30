@@ -812,7 +812,7 @@ const Home: React.FC = () => {
                       />
                       <div className="position-absolute top-0 end-0 m-2">
                         <span className="badge bg-primary">
-                          {activity.duration}
+                          <i className="fas fa-clock me-1"></i>{activity.duration}
                         </span>
                       </div>
                     </div>

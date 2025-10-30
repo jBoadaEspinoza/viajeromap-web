@@ -153,21 +153,45 @@ export const translations: Translations = {
     es: 'Reserva rápida y segura',
     en: 'Fast and secure reservation'
   },
+  'checkout.documentTypeRequired': {
+    es: 'Tipo de documento*',
+    en: 'Document type*'
+  },
+  'checkout.documentNumberRequired': {
+    es: 'Número de documento*',
+    en: 'Document number*'
+  },
   'checkout.nameRequired': {
-    es: 'Nombre y apellidos*',
-    en: 'Name and surname*'
+    es: 'Nombres*',
+    en: 'Name*'
+  },
+  'checkout.lastNameRequired': {
+    es: 'Apellidos*',
+    en: 'Last name*'
   },
   'checkout.emailRequired': {
     es: 'E-mail*',
     en: 'E-mail*'
   },
-  'checkout.countryRequired': {
-    es: 'País*',
-    en: 'Country*'
+  'checkout.phoneCodeRequired': {
+    es: 'Código telefónico*',
+    en: 'Phone code*'
   },
   'checkout.phoneRequired': {
     es: 'Número de móvil*',
     en: 'Mobile number*'
+  },
+  'checkout.nationalityRequired': {
+    es: 'Nacionalidad*',
+    en: 'Nationality*'
+  },
+  'checkout.selectNationality': {
+    es: 'Seleccione una nacionalidad',
+    en: 'Select a nationality'
+  },
+  'checkout.noNationalitiesAvailable': {
+    es: 'No hay nacionalidades disponibles',
+    en: 'No nationalities available'
   },
   'checkout.requiredFields': {
     es: '* Campos obligatorios',
@@ -176,6 +200,26 @@ export const translations: Translations = {
   'checkout.contactDisclaimer': {
     es: 'Solo te contactaremos en caso de que haya notificaciones importantes o cambios en tu reserva.',
     en: 'We will only contact you in case of important notifications or changes to your reservation.'
+  },
+  'checkout.namePlaceholder': {
+    es: 'Ingresa tu nombre completo',
+    en: 'Enter your full name'
+  },
+  'checkout.lastNamePlaceholder': {
+    es: 'Ingresa tu apellido',
+    en: 'Enter your last name'
+  },
+  'checkout.emailPlaceholder': {
+    es: 'tu@email.com',
+    en: 'your@email.com'
+  },
+  'checkout.phonePlaceholder': {
+    es: '123456789',
+    en: '123456789'
+  },
+  'checkout.noPhoneCodesAvailable': {
+    es: 'No hay códigos disponibles',
+    en: 'No phone codes available'
   },
   'checkout.continuePayment': {
     es: 'Continuar con el pago',
@@ -189,9 +233,25 @@ export const translations: Translations = {
     es: 'Reserva ahora y paga después',
     en: 'Book now and pay later'
   },
+  'checkout.cancelBefore': {
+    es: 'Hasta',
+    en: 'Until'
+  },
+  'checkout.departureDate': {
+    es: 'Fecha de salida',
+    en: 'Departure date'
+  },
+  'checkout.cancellationDeadline': {
+    es: 'Fecha límite de cancelación',
+    en: 'Cancellation deadline'
+  },
   'checkout.easyCancellation': {
-    es: 'Cancelación fácil',
-    en: 'Easy cancellation'
+    es: 'Cancelación fácil hasta el ',
+    en: 'Easy cancellation until the '
+  },
+  'checkout.cancellationNotAvailable': {
+    es: 'La cancelación no está disponible. El plazo de cancelación ha expirado.',
+    en: 'Cancellation is not available. The cancellation deadline has expired.'
   },
   'checkout.orderSummary': {
     es: 'Resumen del pedido',
@@ -205,6 +265,10 @@ export const translations: Translations = {
     es: 'Punto de encuentro',
     en: 'Meeting point'
   },
+  'checkout.noComment': {
+    es: 'No hay comentario',
+    en: 'No comment'
+  },
   'checkout.language': {
     es: 'Idioma',
     en: 'Language'
@@ -212,6 +276,10 @@ export const translations: Translations = {
   'checkout.changeDateParticipants': {
     es: 'Cambiar fecha o número de participantes',
     en: 'Change date or number of participants'
+  },
+  'checkout.activityReceivedRating': {
+    es: 'La actividad ha recibido un {rating}/5 por su relación calidad-precio',
+    en: 'The activity has received a {rating}/5 for its quality-price ratio'
   },
   'checkout.goodValue': {
     es: 'Buena relación calidad-precio',
@@ -228,6 +296,10 @@ export const translations: Translations = {
   'checkout.allTaxesIncluded': {
     es: 'Todas las tasas e impuestos incluidos',
     en: 'All taxes and fees included'
+  },
+  'checkout.travelers': {
+    es: 'viajeros',
+    en: 'travelers'
   },
   'checkout.saveWithOffer': {
     es: 'Ahorra con esta oferta especial',

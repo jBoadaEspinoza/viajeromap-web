@@ -22,29 +22,30 @@ const Cart: React.FC = () => {
   }, [items]);
   
   // Calcular ahorro total de todos los items con descuento
+  // NOTA: Los datos de descuento (discountPercentage, originalPrice) deben obtenerse de la API de la actividad
   const getTotalSavings = () => {
     return items.reduce((total, item) => {
-      if (item.activityDetails?.hasDiscount) {
-        const itemSavings = (item.activityDetails.originalPrice * getTotalTravelers(item)) - (item.activityDetails.finalPrice * getTotalTravelers(item));
-        return total + itemSavings;
-      }
+      // Por ahora, retornar 0 ya que no tenemos access a discountPercentage y originalPrice
+      // Estos datos deben obtenerse de la API cuando sea necesario
       return total;
     }, 0);
   };
   
   // Calcular precio original total
+  // NOTA: Los datos de descuento (discountPercentage, originalPrice) deben obtenerse de la API de la actividad
   const getTotalOriginalPrice = () => {
     return items.reduce((total, item) => {
-      if (item.activityDetails?.hasDiscount) {
-        return total + (item.activityDetails.originalPrice * getTotalTravelers(item));
-      }
+      // Usar el precio actual del item
       return total + getItemTotalPrice(item);
     }, 0);
   };
   
   // Verificar si hay algún descuento en el carrito
+  // NOTA: Los datos de descuento (discountPercentage, originalPrice) deben obtenerse de la API de la actividad
   const hasAnyDiscount = () => {
-    return items.some(item => item.activityDetails?.hasDiscount);
+    // Por ahora, retornar false ya que no tenemos access a discountPercentage
+    // Este dato debe obtenerse de la API cuando sea necesario
+    return false;
   };
 
   // Función para convertir formato de 24 horas a AM/PM
@@ -564,21 +565,8 @@ const Cart: React.FC = () => {
                               <div className="text-muted small d-flex align-items-center flex-wrap">
                                 <i className="fas fa-tag me-2 text-primary" style={{ fontSize: '0.8rem' }}></i>
                                 <strong className="me-1">{getTranslation('cart.pricePerPerson', language)}:</strong>
-                                {item.activityDetails?.hasDiscount ? (
-                                  <>
-                                    <span className="text-decoration-line-through text-muted me-2">
-                                      {item.currency === 'PEN' ? 'S/' : '$'}{Math.ceil(item.activityDetails.originalPrice)}
-                                    </span>
-                                    <span className="text-danger fw-bold me-2">
-                                      {item.currency === 'PEN' ? 'S/' : '$'}{Math.ceil(item.price)}
-                                    </span>
-                                    <span className="badge bg-danger">
-                                      -{item.activityDetails.discountPercentage}%
-                                    </span>
-                                  </>
-                                ) : (
-                                  <span>{item.currency === 'PEN' ? 'S/' : '$'}{Math.ceil(item.price)}</span>
-                                )}
+                                {/* TODO: Obtener datos de descuento de la API de la actividad si es necesario */}
+                                <span>{item.currency === 'PEN' ? 'S/' : '$'}{Math.ceil(item.price)}</span>
                               </div>
                             </div>
                           </div>
@@ -901,21 +889,8 @@ const Cart: React.FC = () => {
                               <div className="text-muted small d-flex align-items-center flex-wrap">
                                 <i className="fas fa-tag me-2 text-primary" style={{ fontSize: '0.8rem' }}></i>
                                 <strong className="me-1">{getTranslation('cart.pricePerPerson', language)}:</strong>
-                                {item.activityDetails?.hasDiscount ? (
-                                  <>
-                                    <span className="text-decoration-line-through text-muted me-2">
-                                      {item.currency === 'PEN' ? 'S/' : '$'}{Math.ceil(item.activityDetails.originalPrice)}
-                                    </span>
-                                    <span className="text-danger fw-bold me-2">
-                                      {item.currency === 'PEN' ? 'S/' : '$'}{Math.ceil(item.price)}
-                                    </span>
-                                    <span className="badge bg-danger">
-                                      -{item.activityDetails.discountPercentage}%
-                                    </span>
-                                  </>
-                                ) : (
-                                  <span>{item.currency === 'PEN' ? 'S/' : '$'}{Math.ceil(item.price)}</span>
-                                )}
+                                {/* TODO: Obtener datos de descuento de la API de la actividad si es necesario */}
+                                <span>{item.currency === 'PEN' ? 'S/' : '$'}{Math.ceil(item.price)}</span>
                               </div>
                             </div>
                           </div>

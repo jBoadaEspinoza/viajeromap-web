@@ -131,9 +131,16 @@ const Search: React.FC = () => {
               console.log(`📊 Actividad: "${activity.title}"`);
               console.log(`   💰 Precio base: ${currency} ${price}`);
               console.log(`   🎁 specialOfferPercentage: ${bookingOption.specialOfferPercentage ?? 'null/undefined'}`);
+              console.log(`   🎁 Tipo de dato: ${typeof bookingOption.specialOfferPercentage}`);
+              console.log(`   🎁 Valor absoluto: ${bookingOption.specialOfferPercentage !== null && bookingOption.specialOfferPercentage !== undefined ? Math.abs(bookingOption.specialOfferPercentage) : 'null/undefined'}`);
 
               // Aplicar descuento si existe specialOfferPercentage
-              if (bookingOption.specialOfferPercentage && bookingOption.specialOfferPercentage > 0) {
+              // Verificar que no sea null, undefined, y sea mayor que 0
+              const hasValidDiscount = bookingOption.specialOfferPercentage !== null && 
+                                      bookingOption.specialOfferPercentage !== undefined && 
+                                      bookingOption.specialOfferPercentage > 0;
+              
+              if (hasValidDiscount && bookingOption.specialOfferPercentage !== null) {
                 hasActiveOffer = true;
                 originalPrice = price;
                 discountPercent = bookingOption.specialOfferPercentage;
@@ -146,7 +153,7 @@ const Search: React.FC = () => {
                 console.log(`   💵 Precio original: ${currency} ${originalPrice}`);
                 console.log(`   💲 Precio final: ${currency} ${price}`);
               } else {
-                console.log(`   ❌ Sin descuento`);
+                console.log(`   ❌ Sin descuento (condición no cumplida)`);
               }
             }
 
@@ -621,7 +628,7 @@ const Search: React.FC = () => {
                       />
                       <div className="position-absolute top-0 end-0 m-2">
                         <span className="badge bg-primary">
-                          {activity.duration}
+                          <i className="fas fa-clock me-1"></i>{activity.duration}
                         </span>
                       </div>
                     </div>

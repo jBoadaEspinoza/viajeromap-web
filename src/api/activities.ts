@@ -111,6 +111,8 @@ export interface BookingOption {
   defaultCutoffMinutes: number;
   lastMinuteAfterFirst: boolean;
   customCutoffBySchedule: boolean;
+  cancelBefore: String;
+  cancelBeforeMinutes: number;
   isActive: boolean;
   availabilityMode?: string; // 'TIME_SLOTS' | 'OPENING_HOURS' | etc
   pickupPoints: PickupPoint[] | null;

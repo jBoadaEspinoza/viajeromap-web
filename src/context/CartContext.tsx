@@ -19,9 +19,6 @@ export interface CartItem {
     guideLanguage: string;
     departureTime: string;
     departureDate: string;
-    hasDiscount: boolean;
-    discountPercentage: number;
-    originalPrice: number;
     finalPrice: number;
     pickupPoint?: {
       name: string;
