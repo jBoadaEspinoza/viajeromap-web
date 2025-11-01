@@ -23,6 +23,7 @@ export interface ActivityCardData {
   presentation?: string;
   rating: number | null;
   reviewCount?: number; // Para compatibilidad con el nuevo nombre
+  commentsCount?: number | null; // Conteo de comentarios
   reviews?: number; // Para compatibilidad con datos existentes
   highlights?: string[];
   includes?: string[];
@@ -30,11 +31,13 @@ export interface ActivityCardData {
   isFromPrice?: boolean; // Indica si el precio debe mostrarse con "desde"
   supplier?: string; // Nombre del proveedor de la actividad
   supplierName?: string; // Nombre del proveedor de la actividad (alternativo)
+  supplierVerified?: boolean; // Proveedor verificado
   pricingMode?: 'PER_PERSON' | 'PER_GROUP';
   bookingOptions?: BookingOption[]; // Opciones de booking para calcular precio mínimo
   hasActiveOffer?: boolean; // Indica si tiene una oferta activa válida
   originalPrice?: number; // Precio original antes del descuento
   discountPercent?: number; // Porcentaje de descuento aplicado
+  isNew?: boolean; // Indica si la actividad es nueva
 }
 
 export interface ActivityCardProps {

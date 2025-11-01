@@ -8,6 +8,7 @@ import { usePageTitle } from '../hooks/usePageTitle';
 import type { ActivityCardData } from '../components/ActivityCard';
 import { activitiesApi } from '../api/activities';
 import type { Destination } from '../api/activities';
+import RatingStars from '../components/RatingStars';
 
 const Search: React.FC = () => {
   const navigate = useNavigate();
@@ -177,7 +178,8 @@ const Search: React.FC = () => {
                 return parts.length > 0 ? parts.join(' ') : 'N/A';
               })(),
               rating: activity.rating || 0,
-              reviewCount: 0,
+              reviewCount: activity.commentsCount || 0,
+              commentsCount: activity.commentsCount || 0,
               location: activity.pointsOfInterest?.[0]?.name || 'N/A',
               category: activity.categoryName || 'N/A',
               isActive: activity.isActive || true,
@@ -185,9 +187,11 @@ const Search: React.FC = () => {
               currency: currency,
               isFromPrice: isFrom,
               supplierName: activity.supplier?.name?.split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(' ') || '',
+              supplierVerified: Boolean(activity.supplier?.isVerified),
               hasActiveOffer: hasActiveOffer,
               originalPrice: originalPrice > 0 ? originalPrice : undefined,
-              discountPercent: discountPercent > 0 ? discountPercent : undefined
+              discountPercent: discountPercent > 0 ? discountPercent : undefined,
+              isNew: activity.isNew || false
             };
           });
           
@@ -357,6 +361,39 @@ const Search: React.FC = () => {
           height: 0.3px;
           background-color: currentColor;
         }
+        /* Verified tooltip */
+        .verified-badge { position: relative; display: inline-flex; align-items: center; }
+        .verified-tooltip {
+          position: absolute;
+          bottom: 125%;
+          left: 50%;
+          transform: translateX(-50%);
+          background: rgba(0,0,0,0.85);
+          color: #fff;
+          padding: 6px 8px;
+          border-radius: 4px;
+          font-size: 0.7rem;
+          line-height: 1.2;
+          white-space: normal;
+          text-align: center;
+          width: 220px;
+          max-width: 260px;
+          visibility: hidden;
+          opacity: 0;
+          transition: opacity 0.15s ease, visibility 0.15s ease;
+          z-index: 1000;
+        }
+        .verified-tooltip::after {
+          content: '';
+          position: absolute;
+          top: 100%;
+          left: 50%;
+          transform: translateX(-50%);
+          border-width: 6px;
+          border-style: solid;
+          border-color: rgba(0,0,0,0.85) transparent transparent transparent;
+        }
+        .verified-badge:hover .verified-tooltip { visibility: visible; opacity: 1; }
       `}</style>
 
       {/* Barra de búsqueda superior */}
@@ -626,6 +663,13 @@ const Search: React.FC = () => {
                         alt={activity.title}
                         style={{ height: '200px', objectFit: 'cover' }}
                       />
+                      {activity.isNew && (
+                        <div className="position-absolute top-0 start-0 m-2">
+                          <span className="badge bg-light text-dark">
+                            {language === 'es' ? 'Nueva Actividad' : 'New Activity'}
+                          </span>
+                        </div>
+                      )}
                       <div className="position-absolute top-0 end-0 m-2">
                         <span className="badge bg-primary">
                           <i className="fas fa-clock me-1"></i>{activity.duration}
@@ -641,9 +685,34 @@ const Search: React.FC = () => {
                       <h5 className="card-title fw-bold mb-2">
                         {activity.title.length > 80 ? `${activity.title.substring(0, 80)}...` : activity.title}
                       </h5>
+                      <div className="mb-2">
+                        <RatingStars
+                          rating={activity.rating ?? null}
+                          commentsCount={activity.commentsCount ?? null}
+                          starSize={16}
+                        />
+                      </div>
                       {activity.supplierName && (
-                        <p className="small text-muted mb-2 fw-bold" style={{ fontSize: '0.8rem', padding: '0px', margin: '0px' }}>
-                          {getTranslation('home.activities.provider', language)} {activity.supplierName.length > 30 ? `${activity.supplierName.substring(0, 30)}...` : activity.supplierName}
+                        <p className="small text-muted mb-2 fw-bold d-flex align-items-center gap-2" style={{ fontSize: '0.8rem', padding: '0px', margin: '0px' }}>
+                          <span>
+                            {getTranslation('home.activities.provider', language)} {activity.supplierName.length > 30 ? `${activity.supplierName.substring(0, 30)}...` : activity.supplierName}
+                          </span>
+                          {activity.supplierVerified && (
+                            <span className="verified-badge">
+                              <span 
+                                className="badge fw-semibold"
+                                style={{ fontSize: '0.6rem', backgroundColor: '#191970', color: '#fff', lineHeight: 1, padding: '0.25rem 0.4rem', display: 'inline-flex', alignItems: 'center' }}
+                                aria-label={language === 'es' ? 'Proveedor verificado' : 'Verified provider'}
+                              >
+                                <i className="fas fa-check-circle me-1"></i>{language === 'es' ? 'Verificado' : 'Verified'}
+                              </span>
+                              <span className="verified-tooltip">
+                                {language === 'es' 
+                                  ? 'Proveedor verificado: cuenta con toda su documentación del gobierno local y del Ministerio de Turismo.'
+                                  : 'Verified provider: holds all documentation from the local government and the Ministry of Tourism.'}
+                              </span>
+                            </span>
+                          )}
                         </p>
                       )}
                       {activity.presentation && (
@@ -743,9 +812,9 @@ const Search: React.FC = () => {
                             alt={activity.title}
                             style={{ width: '100%', height: '100%', objectFit: 'cover', minHeight: '180px' }}
                           />
-                          <div className="position-absolute top-0 end-0 m-1">
+                          <div className="position-absolute top-0 start-0 m-1">
                             <span className="badge bg-primary" style={{ fontSize: '0.7rem' }}>
-                              {activity.duration}
+                              <i className="fas fa-clock me-1"></i>{activity.duration}
                             </span>
                           </div>
                         </div>
@@ -760,9 +829,41 @@ const Search: React.FC = () => {
                           <h6 className="card-title fw-bold mb-1" style={{ fontSize: '0.9rem', lineHeight: '1.2' }}>
                             {activity.title.length > 80 ? `${activity.title.substring(0, 80)}...` : activity.title}
                           </h6>
+                          {activity.isNew && (
+                            <div className="mb-1">
+                              <span className="badge bg-light text-dark" style={{ fontSize: '0.65rem' }}>
+                                {language === 'es' ? 'Nueva Actividad' : 'New Activity'}
+                              </span>
+                            </div>
+                          )}
+                          <div className="mb-1">
+                            <RatingStars
+                              rating={activity.rating ?? null}
+                              commentsCount={activity.commentsCount ?? null}
+                              starSize={14}
+                            />
+                          </div>
                           {activity.supplierName && (
-                            <p className="small text-muted mb-1 fw-bold" style={{ fontSize: '0.7rem' }}>
-                              {getTranslation('home.activities.provider', language)} {activity.supplierName.length > 30 ? `${activity.supplierName.substring(0, 30)}...` : activity.supplierName}
+                            <p className="small text-muted mb-1 fw-bold d-flex align-items-center gap-2" style={{ fontSize: '0.7rem' }}>
+                              <span>
+                                {getTranslation('home.activities.provider', language)} {activity.supplierName.length > 30 ? `${activity.supplierName.substring(0, 30)}...` : activity.supplierName}
+                              </span>
+                              {activity.supplierVerified && (
+                                <span className="verified-badge">
+                                  <span 
+                                    className="badge"
+                                    style={{ fontSize: '0.55rem', backgroundColor: '#191970', color: '#fff', lineHeight: 1, padding: '0.2rem 0.35rem', display: 'inline-flex', alignItems: 'center' }}
+                                    aria-label={language === 'es' ? 'Proveedor verificado' : 'Verified provider'}
+                                  >
+                                    <i className="fas fa-check-circle me-1"></i>{language === 'es' ? 'Verificado' : 'Verified'}
+                                  </span>
+                                  <span className="verified-tooltip">
+                                    {language === 'es' 
+                                      ? 'Proveedor verificado: cuenta con toda su documentación del gobierno local y del Ministerio de Turismo.'
+                                      : 'Verified provider: holds all documentation from the local government and the Ministry of Tourism.'}
+                                  </span>
+                                </span>
+                              )}
                             </p>
                           )}
                           <p className="card-text text-muted small mb-2" style={{ fontSize: '0.9rem', lineHeight: '1.3' }}>

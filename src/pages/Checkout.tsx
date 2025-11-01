@@ -9,6 +9,7 @@ import { countriesApi, PhoneCode, Nationality } from '../api/countries';
 import { activitiesApi } from '../api/activities';
 import { useCart } from '../context/CartContext';
 import type { CartItem } from '../context/CartContext';
+import RatingStars from '../components/RatingStars';
 
 interface BookingDetails {
   activityId: string;
@@ -121,6 +122,7 @@ const Checkout: React.FC = () => {
   const [loadingNationalities, setLoadingNationalities] = useState(true);
   const [activityTitle, setActivityTitle] = useState<string>('');
   const [activityRating, setActivityRating] = useState<number | null>(null);
+  const [activityCommentsCount, setActivityCommentsCount] = useState<number | null>(null);
   const [bookingOptionCancelInfo, setBookingOptionCancelInfo] = useState<{
     cancelBefore?: string;
     cancelBeforeMinutes?: number;
@@ -296,9 +298,10 @@ const Checkout: React.FC = () => {
   // Load activity title by language
   useEffect(() => {
     if (!bookingDetails) {
-      // Si no hay bookingDetails, limpiar el título y rating
+      // Si no hay bookingDetails, limpiar el título, rating y commentsCount
       setActivityTitle('');
       setActivityRating(null);
+      setActivityCommentsCount(null);
       return;
     }
 
@@ -309,6 +312,7 @@ const Checkout: React.FC = () => {
           setActivityTitle(bookingDetails.title);
         }
         setActivityRating(null);
+        setActivityCommentsCount(null);
         return;
       }
 
@@ -330,6 +334,8 @@ const Checkout: React.FC = () => {
           
           // Guardar el rating de la actividad (puede ser null)
           setActivityRating(activity.rating);
+          // Guardar el conteo de comentarios de la actividad (puede ser null)
+          setActivityCommentsCount(activity.commentsCount);
 
           // Buscar información de cancelación y lenguajes del bookingOption
           if (activity.bookingOptions && activity.bookingOptions.length > 0) {
@@ -399,15 +405,17 @@ const Checkout: React.FC = () => {
           // Fallback al título del bookingDetails si la API no retorna nada
           setActivityTitle(bookingDetails.title);
           setActivityRating(null);
+          setActivityCommentsCount(null);
         }
       } catch (error) {
         console.error('Error loading activity title:', error);
         // En caso de error, usar el título del bookingDetails como fallback
         if (bookingDetails.title) {
-          setActivityTitle(bookingDetails.title);
-        }
-        setActivityRating(null);
+        setActivityTitle(bookingDetails.title);
       }
+      setActivityRating(null);
+      setActivityCommentsCount(null);
+    }
     };
 
     loadActivityTitle();
@@ -642,12 +650,6 @@ const Checkout: React.FC = () => {
         return null;
       }
 
-      console.log('📅 Calculando fecha límite de cancelación:', {
-        cancelBeforeMinutes: cancelBeforeMinutes,
-        date: bookingDetails.date,
-        time: bookingDetails.time
-      });
-
       try {
         // Parsear fecha y hora de salida de la actividad
         const [year, month, day] = bookingDetails.date.split('-').map(Number);
@@ -682,13 +684,11 @@ const Checkout: React.FC = () => {
           const dateStr = cancellationDeadline.toLocaleDateString('es-ES', dateOptions);
           const timeStr = cancellationDeadline.toLocaleTimeString('es-ES', timeOptions);
           const result = `${dateStr} a las ${timeStr}`;
-          console.log('✅ Fecha límite calculada (ES):', result);
           return result;
         } else {
           const dateStr = cancellationDeadline.toLocaleDateString('en-US', dateOptions);
           const timeStr = cancellationDeadline.toLocaleTimeString('en-US', timeOptions);
           const result = `${dateStr} at ${timeStr}`;
-          console.log('✅ Fecha límite calculada (EN):', result);
           return result;
         }
       } catch (error) {
@@ -1058,6 +1058,64 @@ const Checkout: React.FC = () => {
         .step-line.active {
           background-color: #007bff;
         }
+        
+        /* Floating Footer - Mobile Only */
+        @media (max-width: 767.98px) {
+          .checkout-floating-footer {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            background: white;
+            box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);
+            padding: 0;
+          }
+          
+          .checkout-floating-container {
+            padding: 10px 12px;
+            padding-bottom: calc(10px + env(safe-area-inset-bottom));
+          }
+          
+          .checkout-floating-content {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+          }
+          
+          .checkout-floating-total {
+            flex: 1;
+            min-width: 0;
+            max-width: calc(100% - 140px);
+          }
+          
+          .checkout-floating-info {
+            line-height: 1.2;
+          }
+          
+          .checkout-floating-total-text {
+            white-space: nowrap;
+          }
+          
+          .checkout-floating-button {
+            flex-shrink: 0;
+            white-space: nowrap;
+            padding: 10px 16px;
+            font-size: 0.9rem;
+            min-width: 120px;
+          }
+          
+          /* Agregar padding inferior al body para que el contenido no se oculte detrás del footer flotante */
+          body {
+            padding-bottom: 80px;
+          }
+          
+          /* Asegurar que el contenido principal tenga margen inferior en móviles */
+          .checkout-main-content {
+            padding-bottom: 100px;
+          }
+        }
       `}</style>
       
       {/* Header con Logo y Progress Steps */}
@@ -1162,7 +1220,7 @@ const Checkout: React.FC = () => {
         </div>
       </div>
 
-      <div className="container py-4">
+      <div className="container py-4 checkout-main-content">
         <div className="row">
           {/* Left Column - Personal Data */}
           <div className="col-lg-6">
@@ -1333,7 +1391,7 @@ const Checkout: React.FC = () => {
 
                   <button
                     type="button"
-                    className="btn btn-primary btn-lg w-100"
+                    className="btn btn-primary btn-lg w-100 d-none d-md-block"
                     onClick={handleContinueToPayment}
                   >
                     {getTranslation('checkout.continuePayment', language)}
@@ -1396,17 +1454,13 @@ const Checkout: React.FC = () => {
                     {bookingDetails?.hasDiscount && bookingDetails?.discountPercentage > 0 && (
                       <span className="badge bg-success small">-{bookingDetails.discountPercentage}%</span>
                     )}
-                    {activityRating !== null && activityRating !== undefined && typeof activityRating === 'number' && (
-                    <div className="d-flex align-items-center mb-2">
-                      <div className="d-flex align-items-center me-3">
-                        {[...Array(5)].map((_, i) => (
-                          <i key={i} className="fas fa-star text-warning me-1" style={{ fontSize: '0.8rem' }}></i>
-                        ))}
-                          <span className="fw-medium me-1">{activityRating.toFixed(1)}</span>
+                    <div className="mb-2">
+                      <RatingStars
+                        rating={activityRating ?? null}
+                        commentsCount={activityCommentsCount ?? null}
+                        starSize={16}
+                      />
                     </div>
-                    <span className="badge bg-primary">{getTranslation('checkout.bestRated', language)}</span>
-                      </div>
-                    )}
                   </div>
                 </div>
 
@@ -2044,12 +2098,13 @@ const Checkout: React.FC = () => {
                       </span>
                   </div>
                   )}
-                  {activityRating !== null && activityRating !== undefined && typeof activityRating === 'number' && (
-                  <div className="d-flex align-items-center mb-2">
-                    <i className="fas fa-thumbs-up text-success me-2"></i>
-                      <span className="small">{getTranslation('checkout.goodValue', language)} - {getTranslation('checkout.activityReceivedRating', language).replace('{rating}', activityRating.toFixed(1))}</span>
+                  <div className="mb-2">
+                    <RatingStars
+                      rating={activityRating ?? null}
+                      commentsCount={activityCommentsCount ?? null}
+                      starSize={14}
+                    />
                   </div>
-                  )}
                 </div>
 
                 {/* Promotional Code */}
@@ -2063,7 +2118,7 @@ const Checkout: React.FC = () => {
                 </div>
 
                 {/* Total Price */}
-                <div className="border-top pt-3">
+                <div className="border-top pt-3 d-none d-md-block">
                   <div className="d-flex justify-content-between align-items-center mb-2">
                     <span className="fw-bold">{getTranslation('checkout.total', language)}</span>
                     <div className="text-end">
@@ -2126,6 +2181,72 @@ const Checkout: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Floating Total & Payment Button - Mobile Only */}
+      {bookingDetails && (
+        <div className="d-md-none checkout-floating-footer">
+        <div className="checkout-floating-container">
+          <div className="checkout-floating-content">
+            {/* Total a pagar */}
+            <div className="checkout-floating-total">
+              {(() => {
+                const { originalTotal, finalTotal } = calculateTotalPrice();
+                const safeOriginalTotal = typeof originalTotal === 'number' ? originalTotal : 0;
+                const safeFinalTotal = typeof finalTotal === 'number' ? finalTotal : 0;
+                const showDiscount = !!bookingDetails?.hasDiscount && safeOriginalTotal > safeFinalTotal;
+                const savings = safeOriginalTotal - safeFinalTotal;
+                const totalTravelers = getTotalTravelers();
+                const ceilFinalPrice = Math.ceil(bookingDetails.price);
+
+                return (
+                  <div className="checkout-floating-info">
+                    <div className="d-flex align-items-center justify-content-between gap-2 mb-1 flex-wrap">
+                      {showDiscount && bookingDetails.discountPercentage > 0 && (
+                        <span className="badge bg-danger" style={{ fontSize: '0.7rem', padding: '2px 6px' }}>
+                          -{bookingDetails.discountPercentage}%
+                        </span>
+                      )}
+                      <div className="fw-bold checkout-floating-total-text" style={{ fontSize: '1rem', color: showDiscount ? '#dc3545' : 'inherit', lineHeight: '1.2' }}>
+                        {language === 'es' ? 'Total' : 'Total'}: {bookingDetails?.currency === 'PEN' ? 'S/ ' : '$ '}{safeFinalTotal}
+                      </div>
+                    </div>
+                    {showDiscount && (
+                      <div className="d-flex align-items-center gap-2 flex-wrap" style={{ fontSize: '0.65rem', lineHeight: '1.2' }}>
+                        <span className="text-muted text-decoration-line-through">
+                          {bookingDetails?.currency === 'PEN' ? 'S/ ' : '$ '}{safeOriginalTotal}
+                        </span>
+                        <span className="text-success">
+                          <i className="fas fa-piggy-bank me-1" style={{ fontSize: '0.6rem' }}></i>
+                          {language === 'es' ? 'Ahorras' : 'Save'} {bookingDetails?.currency === 'PEN' ? 'S/ ' : '$ '}{savings}
+                        </span>
+                        {totalTravelers > 1 && (
+                          <span className="text-muted">
+                            {bookingDetails?.currency === 'PEN' ? 'S/ ' : '$ '}{ceilFinalPrice} × {totalTravelers}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {!showDiscount && totalTravelers > 1 && (
+                      <div className="text-muted" style={{ fontSize: '0.65rem', lineHeight: '1.2' }}>
+                        {bookingDetails?.currency === 'PEN' ? 'S/ ' : '$ '}{ceilFinalPrice} × {totalTravelers} {language === 'es' ? 'pax' : 'pax'}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+            {/* Botón Continuar con el pago */}
+            <button
+              type="button"
+              className="btn btn-primary btn-lg checkout-floating-button"
+              onClick={handleContinueToPayment}
+            >
+              {getTranslation('checkout.continuePayment', language)}
+            </button>
+          </div>
+        </div>
+        </div>
+      )}
 
       {/* Login Modal */}
       {showLoginModal && (

@@ -909,6 +909,14 @@ export const translations: Translations = {
     es: 'reseñas',
     en: 'reviews'
   },
+  'rating.comments': {
+    es: 'comentarios',
+    en: 'comments'
+  },
+  'rating.basedOn': {
+    es: 'basado en',
+    en: 'based on'
+  },
 
   'detail.perPerson': {
     es: 'por persona',

@@ -12,6 +12,7 @@ export interface Supplier {
   linkReviewGoogleMap: string;
   whatsappNumber: string;
   isActive: boolean;
+  isVerified: boolean;
 }
 
 export interface Itinerary {
@@ -141,6 +142,7 @@ export interface Activity {
   id: string;
   title: string;
   rating: number | null;
+  commentsCount: number | null;
   presentation: string;
   description: string[];
   recommendations: string[];
@@ -166,6 +168,7 @@ export interface Activity {
   createAt: string;
   updatedAt: string;
   isActive: boolean;
+  isNew: boolean;
 }
 
 
