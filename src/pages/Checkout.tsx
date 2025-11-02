@@ -142,6 +142,11 @@ const Checkout: React.FC = () => {
   const [editedChildren, setEditedChildren] = useState<number>(0);
   const [isEditingPickupPoint, setIsEditingPickupPoint] = useState(false);
   const [selectedPickupPointId, setSelectedPickupPointId] = useState<number | ''>('');
+  const [currentStep, setCurrentStep] = useState<1 | 2>(() => {
+    // Intentar recuperar el paso actual desde sessionStorage
+    const savedStep = sessionStorage.getItem('checkoutCurrentStep');
+    return savedStep === '2' ? 2 : 1;
+  });
 
   // Get booking details from location state, localStorage, or sessionStorage
   useEffect(() => {
@@ -208,6 +213,21 @@ const Checkout: React.FC = () => {
 
     return () => clearTimeout(timer);
   }, [location.state, navigate, loginDismissed]);
+
+  // Load form data from sessionStorage if in step 2
+  useEffect(() => {
+    if (currentStep === 2) {
+      const savedFormData = sessionStorage.getItem('checkoutFormData');
+      if (savedFormData) {
+        try {
+          const parsed = JSON.parse(savedFormData);
+          setFormData(parsed);
+        } catch (e) {
+          console.error('Error loading form data from sessionStorage:', e);
+        }
+      }
+    }
+  }, [currentStep]);
 
   // Show login modal if user is not authenticated OR if no booking details
   useEffect(() => {
@@ -734,23 +754,40 @@ const Checkout: React.FC = () => {
     console.log('Login with email:', formData.email);
   };
 
-  const handleContinueToPayment = () => {
+  const handleContinueToReservation = () => {
     // Validate form
     if (!formData.name || !formData.lastName || !formData.email || !formData.phone || !formData.nationality || formData.nationality === 'none') {
-      alert('Por favor completa todos los campos obligatorios');
+      alert(language === 'es' ? 'Por favor completa todos los campos obligatorios' : 'Please complete all required fields');
       return;
     }
     
-    // Process payment
-    console.log('Proceeding to payment with:', formData);
+    // Guardar datos del formulario y avanzar al paso 2
+    sessionStorage.setItem('checkoutFormData', JSON.stringify(formData));
+    setCurrentStep(2);
+    sessionStorage.setItem('checkoutCurrentStep', '2');
+  };
+
+  const handleReserveNow = () => {
+    // Process reservation
+    console.log('Processing reservation with:', {
+      formData,
+      bookingDetails
+    });
     
-    // Limpiar datos de reserva después del pago exitoso
+    // Aquí se procesaría la reserva (sin pago inmediato)
+    // Por ahora simulamos éxito
+    alert(language === 'es' ? '¡Reserva realizada exitosamente! Pagarás más tarde.' : 'Reservation completed successfully! You will pay later.');
+    
+    // Limpiar datos de reserva después de la reserva exitosa
     sessionStorage.removeItem('checkoutBookingDetails');
     sessionStorage.removeItem('checkoutTimeLeft');
-    
-    // Here you would typically redirect to payment gateway
-    // Por ahora simulamos éxito
-    alert('¡Pago procesado exitosamente!');
+    sessionStorage.removeItem('checkoutCurrentStep');
+    sessionStorage.removeItem('checkoutFormData');
+  };
+
+  const handleBackToContact = () => {
+    setCurrentStep(1);
+    sessionStorage.setItem('checkoutCurrentStep', '1');
   };
 
   // Función para limpiar datos de reserva (útil para otros casos)
@@ -848,11 +885,11 @@ const Checkout: React.FC = () => {
                 <div className="step-line active"></div>
                 
                 <div className="d-flex align-items-center">
-                  <div className="bg-light text-muted rounded-circle d-flex align-items-center justify-content-center" 
-                       style={{ width: '30px', height: '30px', fontSize: '0.9rem' }}>
-                    2
-                  </div>
-                  <span className="fw-medium text-muted ms-2">Pago</span>
+                <div className="bg-light text-muted rounded-circle d-flex align-items-center justify-content-center" 
+                     style={{ width: '30px', height: '30px', fontSize: '0.9rem' }}>
+                  2
+                </div>
+                <span className="fw-medium text-muted ms-2">{language === 'es' ? 'Reservar' : 'Reserve'}</span>
                 </div>
               </div>
 
@@ -898,11 +935,11 @@ const Checkout: React.FC = () => {
                 <div className="step-line active" style={{ width: '40px', height: '2px' }}></div>
                 
                 <div className="d-flex align-items-center">
-                  <div className="bg-light text-muted rounded-circle d-flex align-items-center justify-content-center" 
-                       style={{ width: '28px', height: '28px', fontSize: '0.8rem' }}>
-                    2
-                  </div>
-                  <span className="fw-medium text-muted ms-2" style={{ fontSize: '0.9rem' }}>Pago</span>
+                <div className="bg-light text-muted rounded-circle d-flex align-items-center justify-content-center" 
+                     style={{ width: '28px', height: '28px', fontSize: '0.8rem' }}>
+                  2
+                </div>
+                <span className="fw-medium text-muted ms-2" style={{ fontSize: '0.9rem' }}>{language === 'es' ? 'Reservar' : 'Reserve'}</span>
                 </div>
               </div>
             </div>
@@ -1148,22 +1185,22 @@ const Checkout: React.FC = () => {
             {/* Progress Steps centrados */}
             <div className="d-flex align-items-center">
               <div className="d-flex align-items-center">
-                <div className="bg-primary text-white rounded-circle d-flex align-items-center justify-content-center" 
+                <div className={`${currentStep === 1 ? 'bg-primary text-white' : 'bg-success text-white'} rounded-circle d-flex align-items-center justify-content-center`} 
                      style={{ width: '30px', height: '30px', fontSize: '0.9rem' }}>
-                  1
+                  {currentStep === 2 ? <i className="fas fa-check"></i> : '1'}
                 </div>
-                <span className="fw-medium text-primary ms-2">Contacto</span>
+                <span className={`fw-medium ${currentStep >= 1 ? 'text-primary' : 'text-muted'} ms-2`}>Contacto</span>
               </div>
               
               {/* Línea conectora */}
-              <div className="step-line active"></div>
+              <div className={`step-line ${currentStep >= 2 ? 'active' : ''}`}></div>
               
               <div className="d-flex align-items-center">
-                <div className="bg-light text-muted rounded-circle d-flex align-items-center justify-content-center" 
+                <div className={`${currentStep === 2 ? 'bg-primary text-white' : currentStep > 2 ? 'bg-success text-white' : 'bg-light text-muted'} rounded-circle d-flex align-items-center justify-content-center`} 
                      style={{ width: '30px', height: '30px', fontSize: '0.9rem' }}>
-                  2
+                  {currentStep > 2 ? <i className="fas fa-check"></i> : '2'}
                 </div>
-                <span className="fw-medium text-muted ms-2">Pago</span>
+                <span className={`fw-medium ${currentStep === 2 ? 'text-primary' : 'text-muted'} ms-2`}>{language === 'es' ? 'Reservar' : 'Reserve'}</span>
               </div>
             </div>
 
@@ -1198,22 +1235,22 @@ const Checkout: React.FC = () => {
             {/* Progress Steps centrados */}
             <div className="d-flex align-items-center justify-content-center">
               <div className="d-flex align-items-center">
-                <div className="bg-primary text-white rounded-circle d-flex align-items-center justify-content-center" 
+                <div className={`${currentStep === 1 ? 'bg-primary text-white' : 'bg-success text-white'} rounded-circle d-flex align-items-center justify-content-center`} 
                      style={{ width: '28px', height: '28px', fontSize: '0.8rem' }}>
-                  1
+                  {currentStep === 2 ? <i className="fas fa-check" style={{ fontSize: '0.7rem' }}></i> : '1'}
                 </div>
-                <span className="fw-medium text-primary ms-2" style={{ fontSize: '0.9rem' }}>Contacto</span>
+                <span className={`fw-medium ${currentStep >= 1 ? 'text-primary' : 'text-muted'} ms-2`} style={{ fontSize: '0.9rem' }}>Contacto</span>
               </div>
               
               {/* Línea conectora */}
-              <div className="step-line active" style={{ width: '40px', height: '2px' }}></div>
+              <div className={`step-line ${currentStep >= 2 ? 'active' : ''}`} style={{ width: '40px', height: '2px' }}></div>
               
               <div className="d-flex align-items-center">
-                <div className="bg-light text-muted rounded-circle d-flex align-items-center justify-content-center" 
+                <div className={`${currentStep === 2 ? 'bg-primary text-white' : currentStep > 2 ? 'bg-success text-white' : 'bg-light text-muted'} rounded-circle d-flex align-items-center justify-content-center`} 
                      style={{ width: '28px', height: '28px', fontSize: '0.8rem' }}>
-                  2
+                  {currentStep > 2 ? <i className="fas fa-check" style={{ fontSize: '0.7rem' }}></i> : '2'}
                 </div>
-                <span className="fw-medium text-muted ms-2" style={{ fontSize: '0.9rem' }}>Pago</span>
+                <span className={`fw-medium ${currentStep === 2 ? 'text-primary' : 'text-muted'} ms-2`} style={{ fontSize: '0.9rem' }}>{language === 'es' ? 'Reservar' : 'Reserve'}</span>
               </div>
             </div>
           </div>
@@ -1222,22 +1259,24 @@ const Checkout: React.FC = () => {
 
       <div className="container py-4 checkout-main-content">
         <div className="row">
-          {/* Left Column - Personal Data */}
+          {/* Left Column - Personal Data (Step 1) or Payment (Step 2) */}
           <div className="col-lg-6">
-            {/* Reservation Timer */}
-            <div className="alert alert-warning mb-4" style={{ backgroundColor: '#fff3cd', borderColor: '#ffeaa7' }}>
-              <div className="d-flex align-items-center">
-                <i className="fas fa-clock me-2"></i>
-                <span className="fw-medium">
-                  {getTranslation('checkout.reservationTimer', language)} {formatTime(timeLeft, language)}.
-                </span>
-              </div>
-            </div>
+            {currentStep === 1 ? (
+              <>
+                {/* Reservation Timer */}
+                <div className="alert alert-warning mb-4" style={{ backgroundColor: '#fff3cd', borderColor: '#ffeaa7' }}>
+                  <div className="d-flex align-items-center">
+                    <i className="fas fa-clock me-2"></i>
+                    <span className="fw-medium">
+                      {getTranslation('checkout.reservationTimer', language)} {formatTime(timeLeft, language)}.
+                    </span>
+                  </div>
+                </div>
 
-            {/* Personal Data Form */}
-            <div className="card">
-              <div className="card-body">
-                <h2 className="fw-bold mb-3">{getTranslation('checkout.reviewPersonalData', language)}</h2>
+                {/* Personal Data Form */}
+                <div className="card">
+                  <div className="card-body">
+                    <h2 className="fw-bold mb-3">{getTranslation('checkout.reviewPersonalData', language)}</h2>
                 <div className="d-flex align-items-center mb-4">
                   <i className="fas fa-lock text-success me-2"></i>
                   <span className="text-success fw-medium">{getTranslation('checkout.fastSecureReservation', language)}</span>
@@ -1392,9 +1431,9 @@ const Checkout: React.FC = () => {
                   <button
                     type="button"
                     className="btn btn-primary btn-lg w-100 d-none d-md-block"
-                    onClick={handleContinueToPayment}
+                    onClick={handleContinueToReservation}
                   >
-                    {getTranslation('checkout.continuePayment', language)}
+                    {language === 'es' ? 'Continuar con la reserva' : 'Continue with reservation'}
                   </button>
 
                   {/* Booking Policies */}
@@ -1433,6 +1472,75 @@ const Checkout: React.FC = () => {
                 </form>
               </div>
             </div>
+          </>
+        ) : (
+          <>
+            {/* Spot Hold Timer - Step 2 */}
+            <div className="alert mb-4" style={{ backgroundColor: '#fce4ec', borderColor: '#f8bbd0', color: '#880e4f' }}>
+              <div className="d-flex align-items-center">
+                <span className="fw-medium">
+                  {language === 'es' ? 'Mantenemos tu lugar por' : "We'll hold your spot for"} {formatTime(timeLeft, language)}.
+                </span>
+              </div>
+            </div>
+
+            {/* Reservation Option */}
+            <div className="card">
+              <div className="card-body">
+                <h2 className="fw-bold mb-3">
+                  {language === 'es' ? 'Finaliza tu reserva' : 'Complete your reservation'}
+                </h2>
+                <div className="d-flex align-items-center mb-4">
+                  <i className="fas fa-check-circle text-success me-2"></i>
+                  <span className="text-success fw-medium">
+                    {language === 'es' ? 'Reserva ahora y paga después. Sin cargo por cancelación hasta la fecha límite.' : 'Reserve now and pay later. Free cancellation until the deadline.'}
+                  </span>
+                </div>
+
+                {/* Reservation Option */}
+                <div className="mb-4">
+                  <div className="p-4 border rounded" style={{ backgroundColor: '#f8f9fa', cursor: 'pointer' }}>
+                    <div className="d-flex align-items-center justify-content-between">
+                      <div className="d-flex align-items-center">
+                        <i className="fas fa-calendar-check me-3" style={{ fontSize: '2rem', color: '#28a745' }}></i>
+                        <div>
+                          <h5 className="fw-bold mb-1">
+                            {language === 'es' ? 'Reservar y pagar después' : 'Reserve and pay later'}
+                          </h5>
+                          <p className="text-muted mb-0 small">
+                            {language === 'es' 
+                              ? 'Tu lugar está asegurado. Puedes pagar antes de la fecha de la actividad.'
+                              : 'Your spot is secured. You can pay before the activity date.'}
+                          </p>
+                        </div>
+                      </div>
+                      <i className="fas fa-check-circle text-success" style={{ fontSize: '1.5rem' }}></i>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Legal Information */}
+                <div className="mb-4">
+                  <small className="text-muted">
+                    {language === 'es' 
+                      ? 'Al continuar, aceptas los términos y condiciones generales de viajeromap. Lee más sobre el derecho de retracto y la información sobre la ley de viajes aplicable.'
+                      : "By continuing, you agree to viajeromap's general terms and conditions. Read more on the right of withdrawal and information on the applicable travel law."}
+                  </small>
+                </div>
+
+                {/* Reserve Now Button */}
+                <button
+                  type="button"
+                  className="btn btn-primary btn-lg w-100 d-none d-md-block"
+                  onClick={handleReserveNow}
+                >
+                  <i className="fas fa-calendar-check me-2"></i>
+                  {language === 'es' ? 'Reservar ahora' : 'Reserve now'}
+                </button>
+              </div>
+            </div>
+          </>
+        )}
           </div>
 
           {/* Right Column - Order Summary */}
@@ -1896,25 +2004,35 @@ const Checkout: React.FC = () => {
                           </div>
                         </div>
                       ) : (
-                        <span className="small">
-                          <span className="fw-medium">{getTranslation('checkout.departureDate', language)}: </span>
-                          {(() => {
-                            const formattedDate = getDepartureDateFormatted();
-                            if (formattedDate) {
-                              return formattedDate;
-                            }
-                            // Fallback al formato anterior si hay error
-                            return `${new Date(bookingDetails.date).toLocaleDateString(language === 'es' ? 'es-ES' : 'en-US', {
-                              weekday: 'long',
-                              year: 'numeric',
-                              month: 'long',
-                              day: 'numeric'
-                            })}, ${convertTo12HourFormat(bookingDetails.time)}`;
-                          })()}
-                        </span>
+                        <div className="small">
+                          <div>
+                            <span className="fw-medium">{getTranslation('checkout.departureDate', language)}: </span>
+                            {(() => {
+                              const formattedDate = getDepartureDateFormatted();
+                              if (formattedDate) {
+                                return formattedDate;
+                              }
+                              // Fallback al formato anterior si hay error
+                              return `${new Date(bookingDetails.date).toLocaleDateString(language === 'es' ? 'es-ES' : 'en-US', {
+                                weekday: 'long',
+                                year: 'numeric',
+                                month: 'long',
+                                day: 'numeric'
+                              })}, ${convertTo12HourFormat(bookingDetails.time)}`;
+                            })()}
+                          </div>
+                          {currentStep === 2 && (
+                            <a href="#" className="text-primary text-decoration-none" onClick={(e) => {
+                              e.preventDefault();
+                              handleBackToContact();
+                            }}>
+                              {language === 'es' ? 'Cambiar fecha o participantes' : 'Change date or participants'}
+                            </a>
+                          )}
+                        </div>
                       )}
                     </div>
-                    {!isEditingDateTime && (
+                    {!isEditingDateTime && currentStep === 1 && (
                       <a href="#" className="text-primary text-decoration-none small ms-2" style={{ alignSelf: 'center', whiteSpace: 'nowrap' }} onClick={(e) => {
                         e.preventDefault();
                         setEditedDate(bookingDetails?.date || '');
@@ -1941,12 +2059,22 @@ const Checkout: React.FC = () => {
                       <div className="d-flex align-items-center flex-grow-1">
                         <i className="fas fa-user text-primary me-2"></i>
                         {!isEditingTravelers ? (
-                          <span className="small">
-                            {bookingDetails.travelers.adults} {language === 'es' ? 'adulto' : 'adult'} {bookingDetails.travelers.adults > 1 ? (language === 'es' ? 'adultos' : 'adults') : ''}
-                            {bookingDetails.travelers.children > 0 && (
-                              <> • {bookingDetails.travelers.children} {language === 'es' ? 'niño' : 'child'} {bookingDetails.travelers.children > 1 ? (language === 'es' ? 'niños' : 'children') : ''}</>
+                          <div className="small">
+                            <div>
+                              {bookingDetails.travelers.adults} {language === 'es' ? 'adulto' : 'adult'} {bookingDetails.travelers.adults > 1 ? (language === 'es' ? 'adultos' : 'adults') : ''}
+                              {bookingDetails.travelers.children > 0 && (
+                                <> • {bookingDetails.travelers.children} {language === 'es' ? 'niño' : 'child'} {bookingDetails.travelers.children > 1 ? (language === 'es' ? 'niños' : 'children') : ''}</>
+                              )}
+                            </div>
+                            {currentStep === 2 && (
+                              <a href="#" className="text-primary text-decoration-none" onClick={(e) => {
+                                e.preventDefault();
+                                handleBackToContact();
+                              }}>
+                                {language === 'es' ? 'Cambiar fecha o participantes' : 'Change date or participants'}
+                              </a>
                             )}
-                          </span>
+                          </div>
                         ) : (
                           <div className="d-flex gap-2">
                             <div className="d-flex align-items-center">
@@ -2074,6 +2202,35 @@ const Checkout: React.FC = () => {
                     )}
                   </div>
                 </div>
+
+                {/* Contact Information - Show in Step 2 */}
+                {currentStep === 2 && (
+                  <div className="mb-4 border-top pt-3">
+                    <div className="d-flex justify-content-between align-items-start mb-3">
+                      <h6 className="fw-bold mb-0">
+                        {language === 'es' ? 'Información de contacto' : 'Contact Information'}
+                      </h6>
+                      <button
+                        className="btn btn-sm btn-link text-primary p-0"
+                        onClick={handleBackToContact}
+                        style={{ fontSize: '0.875rem' }}
+                      >
+                        {language === 'es' ? 'Editar' : 'Edit'}
+                      </button>
+                    </div>
+                    <div className="small">
+                      <div className="mb-1">
+                        <strong>{formData.name} {formData.lastName}</strong>
+                      </div>
+                      <div className="mb-1 text-muted">
+                        {formData.email}
+                      </div>
+                      <div className="mb-1 text-muted">
+                        {formData.phoneCode} {formData.phone}
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Cancellation & Quality */}
                 <div className="mb-4">
@@ -2235,13 +2392,15 @@ const Checkout: React.FC = () => {
                 );
               })()}
             </div>
-            {/* Botón Continuar con el pago */}
+            {/* Botón Continuar con la reserva (Step 1) o Reserve Now (Step 2) */}
             <button
               type="button"
               className="btn btn-primary btn-lg checkout-floating-button"
-              onClick={handleContinueToPayment}
+              onClick={currentStep === 1 ? handleContinueToReservation : handleReserveNow}
             >
-              {getTranslation('checkout.continuePayment', language)}
+              {currentStep === 1 
+                ? (language === 'es' ? 'Continuar con la reserva' : 'Continue with reservation')
+                : (language === 'es' ? 'Reservar ahora' : 'Reserve now')}
             </button>
           </div>
         </div>
