@@ -21,7 +21,7 @@ export const ConfigProvider: React.FC<ConfigProviderProps> = ({ children }) => {
   useEffect(() => {
     if (!loading) {
       try {
-      updateAppColors(config);
+        updateAppColors(config);
       } catch (error) {
         console.error('Error updating app colors:', error);
       }
@@ -42,24 +42,48 @@ export const ConfigProvider: React.FC<ConfigProviderProps> = ({ children }) => {
     );
   }
 
-  // Show error state if configuration failed to load
+  // Show error state if configuration failed to load - usar appConfig por defecto
   if (error) {
     console.error('ConfigContext error:', error);
     // Fallback to default config
+    try {
+      return (
+        <ConfigContext.Provider value={{ config: appConfig }}>
+          {children}
+        </ConfigContext.Provider>
+      );
+    } catch (fallbackError) {
+      console.error('Error in fallback config:', fallbackError);
+      // Último recurso: devolver children sin provider
+      return <>{children}</>;
+    }
+  }
+
+  // Validar que config tenga todas las propiedades requeridas
+  try {
+    const validatedConfig: AppConfig = {
+      ...appConfig,
+      ...config,
+      // Asegurar que paypal esté presente
+      paypal: config.paypal || appConfig.paypal
+    };
+
+    return (
+      <ConfigContext.Provider value={{
+        config: validatedConfig
+      }}>
+        {children}
+      </ConfigContext.Provider>
+    );
+  } catch (configError) {
+    console.error('Error validating config:', configError);
+    // Fallback a appConfig
     return (
       <ConfigContext.Provider value={{ config: appConfig }}>
         {children}
       </ConfigContext.Provider>
     );
   }
-
-  return (
-    <ConfigContext.Provider value={{
-      config
-    }}>
-      {children}
-    </ConfigContext.Provider>
-  );
 };
 
 export const useConfig = (): ConfigContextType => {

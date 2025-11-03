@@ -12,10 +12,11 @@ import { specialOfferApi } from '../api/specialOffer';
 import type { Activity, BookingOption, Schedule } from '../api/activities';
 import Itinerary from '../components/Itinerary';
 import Reviews from '../components/Reviews';
+import RatingStars from '../components/RatingStars';
 import { useLanguage } from '../context/LanguageContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { useCart } from '../context/CartContext';
-import { getTranslation, getLanguageName } from '../utils/translations';
+import { getTranslation, getTranslationWithParams, getLanguageName } from '../utils/translations';
 import { useGlobalLoading } from '../hooks/useGlobalLoading';
 import { appConfig } from '../config/appConfig';
 
@@ -367,10 +368,7 @@ const ActivityDetail: React.FC = () => {
       
       if (!itemAdded) {
         // Si el item ya existe, mostrar alerta y no navegar
-        alert(language === 'es' 
-          ? 'Esta actividad ya está en tu carrito' 
-          : 'This activity is already in your cart'
-        );
+        alert(getTranslation('detail.booking.activityAlreadyInCart', language));
         return;
       }
 
@@ -575,6 +573,70 @@ const ActivityDetail: React.FC = () => {
     setSelectedSchedule(prev => prev === scheduleId ? null : scheduleId);
   };
 
+  // Función para calcular la fecha límite de cancelación basada en beforeCancel
+  const getCancellationDeadline = (): string | null => {
+    // Verificar que tenemos los datos necesarios
+    if (!selectedBookingOption || !selectedDate || !selectedTimeSlot) {
+      return null;
+    }
+
+    // Obtener cancelBeforeMinutes del bookingOption
+    const cancelBeforeMinutes = selectedBookingOption.cancelBeforeMinutes;
+    
+    // Si tenemos cancelBeforeMinutes, calcular desde fecha/hora de salida
+    if (cancelBeforeMinutes !== undefined && cancelBeforeMinutes !== null && cancelBeforeMinutes > 0) {
+      try {
+        // Parsear fecha de salida
+        const [year, month, day] = selectedDate.split('-').map(Number);
+        
+        // Parsear hora de salida
+        const timeParts = selectedTimeSlot.split(':');
+        const hours = timeParts[0] ? parseInt(timeParts[0], 10) : 0;
+        const minutes = timeParts[1] ? parseInt(timeParts[1], 10) : 0;
+        
+        // Crear fecha y hora de salida
+        const departureDate = new Date(year, month - 1, day, hours, minutes, 0);
+        const cancellationDeadline = new Date(departureDate.getTime() - (cancelBeforeMinutes * 60 * 1000));
+        
+        // Verificar que la fecha es válida
+        if (isNaN(cancellationDeadline.getTime())) {
+          console.error('Fecha de cancelación inválida');
+          return null;
+        }
+        
+        // Formatear según el idioma con formato más legible
+        const dateOptions: Intl.DateTimeFormatOptions = {
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric'
+        };
+        
+        const timeOptions: Intl.DateTimeFormatOptions = {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true
+        };
+        
+        if (language === 'es') {
+          const dateStr = cancellationDeadline.toLocaleDateString('es-ES', dateOptions);
+          const timeStr = cancellationDeadline.toLocaleTimeString('es-ES', timeOptions);
+          const result = `${dateStr} a las ${timeStr}`;
+          return result;
+        } else {
+          const dateStr = cancellationDeadline.toLocaleDateString('en-US', dateOptions);
+          const timeStr = cancellationDeadline.toLocaleTimeString('en-US', timeOptions);
+          const result = `${dateStr} at ${timeStr}`;
+          return result;
+        }
+      } catch (error) {
+        console.error('Error calculating cancellation deadline:', error);
+        return null;
+      }
+    }
+
+    return null;
+  };
+
   // Función para manejar selección de punto de encuentro
   const handleMeetingPointSelection = (optionTitle: string, meetingPoint: string) => {
     setSelectedMeetingPoints(prev => ({
@@ -653,7 +715,8 @@ const ActivityDetail: React.FC = () => {
   };
 
   // Función para obtener precio mínimo y currency con descuento aplicado
-  const getMinPrice = () => {
+  // Función para obtener precio mínimo según la cantidad de personas cuando hay priceTiers
+  const getMinPriceForPeople = (peopleCount: number) => {
     if (!activity?.bookingOptions || activity.bookingOptions.length === 0) return { price: null, currency: 'USD', originalPrice: null, hasDiscount: false, discountPercent: 0 };
     
     const activeOptions = activity.bookingOptions.filter(option => option.isActive);
@@ -668,12 +731,25 @@ const ActivityDetail: React.FC = () => {
     activeOptions.forEach(option => {
       let optionMinPrice = Infinity;
       
-      // Si el pricingMode es PER_PERSON, obtener el precio desde priceTiers
+      // Si el pricingMode es PER_PERSON y hay priceTiers, buscar el tier que corresponde a la cantidad de personas
       if (option.pricingMode === 'PER_PERSON' && option.priceTiers && option.priceTiers.length > 0) {
-        optionMinPrice = Math.min(...option.priceTiers.map(tier => tier.totalPrice));
+        // Buscar el tier que corresponde a la cantidad de personas
+        const matchingTier = option.priceTiers.find((tier: any) => {
+          const min = tier.minParticipants || 1;
+          const max = tier.maxParticipants || Infinity;
+          return peopleCount >= min && peopleCount <= max;
+        });
+        
+        if (matchingTier) {
+          // Si el tier tiene totalPrice, usarlo; si no, calcular desde pricePerParticipant
+          optionMinPrice = matchingTier.totalPrice || (matchingTier.pricePerParticipant * peopleCount);
+        } else {
+          // Si no hay tier que coincida, usar el precio mínimo de todos los tiers
+          optionMinPrice = Math.min(...option.priceTiers.map((tier: any) => tier.totalPrice || (tier.pricePerParticipant || 0) * (tier.minParticipants || 1)));
+        }
       } else {
         // Para otros modos de pricing, usar pricePerPerson directamente
-        optionMinPrice = option.pricePerPerson;
+        optionMinPrice = option.pricePerPerson || 0;
       }
       
       // Aplicar descuento si existe specialOfferPercentage
@@ -706,6 +782,138 @@ const ActivityDetail: React.FC = () => {
       currency: minCurrency,
       hasDiscount,
       discountPercent
+    };
+  };
+
+  // Función para obtener el mínimo de participantes para el precio mínimo
+  const getMinParticipantsForMinPrice = (): number | null => {
+    if (!activity?.bookingOptions || activity.bookingOptions.length === 0) return null;
+    
+    const activeOptions = activity.bookingOptions.filter(option => option.isActive);
+    if (activeOptions.length === 0) return null;
+    
+    let minPrice = Infinity;
+    let minParticipants = Infinity;
+    
+    activeOptions.forEach(option => {
+      // Si hay priceTiers, buscar el tier con el precio total mínimo
+      if (option.pricingMode === 'PER_PERSON' && option.priceTiers && option.priceTiers.length > 0) {
+        option.priceTiers.forEach((tier: any) => {
+          // Usar totalPrice del tier directamente sin dividir
+          const tierTotalPrice = tier.totalPrice || 0;
+          const minParticipantsCount = tier.minParticipants || 1;
+          
+          // Aplicar descuento si existe
+          let finalPrice = tierTotalPrice;
+          if (option.specialOfferPercentage && option.specialOfferPercentage > 0) {
+            finalPrice = tierTotalPrice - (tierTotalPrice * (option.specialOfferPercentage / 100));
+          }
+          
+          if (finalPrice < minPrice) {
+            minPrice = finalPrice;
+            minParticipants = minParticipantsCount;
+          } else if (finalPrice === minPrice && minParticipantsCount < minParticipants) {
+            // Si el precio es igual, tomar el menor número de participantes
+            minParticipants = minParticipantsCount;
+          }
+        });
+      } else {
+        // Si no hay priceTiers, el precio mínimo es para 1 persona
+        const optionPrice = option.pricePerPerson || 0;
+        let finalPrice = optionPrice;
+        if (option.specialOfferPercentage && option.specialOfferPercentage > 0) {
+          finalPrice = optionPrice - (optionPrice * (option.specialOfferPercentage / 100));
+        }
+        
+        if (finalPrice < minPrice) {
+          minPrice = finalPrice;
+          minParticipants = 1;
+        }
+      }
+    });
+    
+    return minParticipants === Infinity ? null : minParticipants;
+  };
+
+  const getMinPrice = () => {
+    if (!activity?.bookingOptions || activity.bookingOptions.length === 0) return { price: null, currency: 'USD', originalPrice: null, hasDiscount: false, discountPercent: 0, minParticipants: null, hasMultiplePriceTiers: false };
+    
+    const activeOptions = activity.bookingOptions.filter(option => option.isActive);
+    if (activeOptions.length === 0) return { price: null, currency: 'USD', originalPrice: null, hasDiscount: false, discountPercent: 0, minParticipants: null, hasMultiplePriceTiers: false };
+    
+    // Verificar si hay múltiples priceTiers en alguna opción activa
+    const hasMultiplePriceTiers = activeOptions.some(option => 
+      option.pricingMode === 'PER_PERSON' && option.priceTiers && option.priceTiers.length > 1
+    );
+    
+    // Siempre calcular el precio mínimo absoluto entre todos los tiers
+    let minPrice = Infinity;
+    let minCurrency = 'USD';
+    let minOriginalPrice = Infinity;
+    let hasDiscount = false;
+    let discountPercent = 0;
+    
+    activeOptions.forEach(option => {
+      let optionMinPrice = Infinity;
+      
+      let optionHasDiscount = false;
+      let optionDiscountPercent = 0;
+      
+      // Si el pricingMode es PER_PERSON y hay priceTiers, buscar el precio mínimo absoluto
+      if (option.pricingMode === 'PER_PERSON' && option.priceTiers && option.priceTiers.length > 0) {
+        // Calcular el precio mínimo entre todos los tiers usando totalPrice directamente
+        option.priceTiers.forEach((tier: any) => {
+          const tierTotalPrice = tier.totalPrice || 0;
+          
+          // Aplicar descuento si existe
+          let finalPrice = tierTotalPrice;
+          if (option.specialOfferPercentage && option.specialOfferPercentage > 0) {
+            finalPrice = tierTotalPrice - (tierTotalPrice * (option.specialOfferPercentage / 100));
+            optionHasDiscount = true;
+            optionDiscountPercent = option.specialOfferPercentage;
+          }
+          
+          // Comparar precio total para encontrar el mínimo
+          if (finalPrice < optionMinPrice) {
+            optionMinPrice = finalPrice;
+          }
+        });
+      } else {
+        // Para otros modos de pricing, usar pricePerPerson directamente
+        optionMinPrice = option.pricePerPerson || 0;
+        
+        // Verificar descuento para opciones sin priceTiers
+        if (option.specialOfferPercentage && option.specialOfferPercentage > 0) {
+          optionHasDiscount = true;
+          optionDiscountPercent = option.specialOfferPercentage;
+        }
+      }
+      
+      // Aplicar descuento si existe specialOfferPercentage (para casos sin priceTiers)
+      let finalPrice = optionMinPrice;
+      if (optionHasDiscount && (!option.priceTiers || option.priceTiers.length === 0)) {
+        const discount = optionMinPrice * (optionDiscountPercent / 100);
+        finalPrice = optionMinPrice - discount;
+      }
+      
+      // Actualizar el precio mínimo global
+      if (finalPrice < minPrice) {
+        minPrice = finalPrice;
+        minOriginalPrice = optionHasDiscount ? optionMinPrice : finalPrice;
+        minCurrency = option.currency;
+        hasDiscount = optionHasDiscount;
+        discountPercent = optionDiscountPercent;
+      }
+    });
+    
+    return { 
+      price: minPrice === Infinity ? null : Math.round(minPrice * 100) / 100,
+      originalPrice: minOriginalPrice === Infinity ? null : Math.round(minOriginalPrice * 100) / 100,
+      currency: minCurrency,
+      hasDiscount,
+      discountPercent,
+      minParticipants: hasMultiplePriceTiers ? getMinParticipantsForMinPrice() : null,
+      hasMultiplePriceTiers
     };
   };
 
@@ -942,15 +1150,27 @@ const ActivityDetail: React.FC = () => {
                    color: '#1a365d',
                    fontWeight: 800
                  }}>{activity.title}</h1>
-                {activity.rating && (<div className="d-flex align-items-center mb-2">
-                  <div className="d-flex align-items-center me-3">
-                    <svg className="text-warning me-1" width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
-                      <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-                    </svg>
-                    <span className="fw-medium me-1">4.8</span>
-                    <small className="text-muted">(150 {getTranslation('detail.reviews', language)})</small>
+                <div className="mb-2">
+                  <RatingStars
+                    rating={activity.rating}
+                    commentsCount={activity.commentsCount}
+                    starSize={20}
+                  />
+                </div>
+                {/* Información del proveedor */}
+                {activity.supplier && (
+                  <div className="d-flex align-items-center mb-2">
+                    <span className="fw-medium text-dark me-2" style={{ fontSize: '0.875rem' }}>
+                      {getTranslation('detail.booking.provider', language)}: {activity.supplier.name}
+                    </span>
+                    {activity.supplier.isVerified && (
+                      <span className="badge bg-success" style={{ fontSize: '0.7rem' }}>
+                        <i className="fas fa-check-circle me-1"></i>
+                        {getTranslation('detail.booking.verified', language)}
+                      </span>
+                    )}
                   </div>
-                </div>)}
+                )}
               </div>
             </div>
           </div>
@@ -1175,6 +1395,18 @@ const ActivityDetail: React.FC = () => {
                                </div>
                              
                               <small className="text-muted" style={{ marginTop: '-4px' }}>{getTranslation('detail.booking.perPerson', language)}</small>
+                              
+                              {/* Mostrar "a partir de X personas" solo si hay múltiples priceTiers */}
+                              {getMinPrice().hasMultiplePriceTiers && getMinPrice().minParticipants !== null && getMinPrice().minParticipants !== undefined && (
+                                <small className="text-muted d-block" style={{ fontSize: '0.75rem', marginTop: '2px' }}>
+                                  {getTranslationWithParams('detail.booking.fromParticipants', language, {
+                                    count: getMinPrice().minParticipants || 0,
+                                    plural: getMinPrice().minParticipants === 1 
+                                      ? getTranslation('detail.booking.participantSingular', language)
+                                      : getTranslation('detail.booking.participantPlural', language)
+                                  })}
+                                </small>
+                              )}
                           </>
                         ) : (
                           <div className="h3 fw-bold text-dark mb-0">
@@ -1227,15 +1459,16 @@ const ActivityDetail: React.FC = () => {
                       <div className="d-flex align-items-center mb-2">
                         <i className="fas fa-clock text-primary me-2" style={{ fontSize: '0.875rem' }}></i>
                         <span className="fw-medium text-dark" style={{ fontSize: '0.875rem' }}>
+                          {getTranslation('detail.booking.duration', language)} :&nbsp;
                           {selectedBookingOption ? (
                             <>
-                              {selectedBookingOption.durationDays > 0 ? `${selectedBookingOption.durationDays} ${language === 'es' ? (selectedBookingOption.durationDays === 1 ? 'día' : 'días') : (selectedBookingOption.durationDays === 1 ? 'day' : 'days')}` : ''}
-                              {selectedBookingOption.durationHours > 0 ? `${selectedBookingOption.durationDays > 0 ? ' ' : ''}${selectedBookingOption.durationHours} ${language === 'es' ? (selectedBookingOption.durationHours === 1 ? 'hora' : 'horas') : (selectedBookingOption.durationHours === 1 ? 'hour' : 'hours')}` : ''}
-                              {selectedBookingOption.durationMinutes > 0 ? `${selectedBookingOption.durationHours > 0 || selectedBookingOption.durationDays > 0 ? ' ' : ''}${selectedBookingOption.durationMinutes} ${language === 'es' ? (selectedBookingOption.durationMinutes === 1 ? 'minuto' : 'minutos') : (selectedBookingOption.durationMinutes === 1 ? 'minute' : 'minutes')}` : ''}
-                              {!selectedBookingOption.durationHours && !selectedBookingOption.durationMinutes && !selectedBookingOption.durationDays ? (language === 'es' ? 'Duración no especificada' : 'Duration not specified') : ''}
+                              {selectedBookingOption.durationDays > 0 ? `${selectedBookingOption.durationDays} ${selectedBookingOption.durationDays === 1 ? getTranslation('detail.booking.duration.day', language) : getTranslation('detail.booking.duration.days', language)}` : ''}
+                              {selectedBookingOption.durationHours > 0 ? `${selectedBookingOption.durationDays > 0 ? ' ' : ''}${selectedBookingOption.durationHours} ${selectedBookingOption.durationHours === 1 ? getTranslation('detail.booking.duration.hour', language) : getTranslation('detail.booking.duration.hours', language)}` : ''}
+                              {selectedBookingOption.durationMinutes > 0 ? `${selectedBookingOption.durationHours > 0 || selectedBookingOption.durationDays > 0 ? ' ' : ''}${selectedBookingOption.durationMinutes} ${selectedBookingOption.durationMinutes === 1 ? getTranslation('detail.booking.duration.minute', language) : getTranslation('detail.booking.duration.minutes', language)}` : ''}
+                              {!selectedBookingOption.durationHours && !selectedBookingOption.durationMinutes && !selectedBookingOption.durationDays ? getTranslation('detail.booking.duration.notSpecified', language) : ''}
                             </>
                           ) : (
-                            language === 'es' ? '2 horas' : '2 hours'
+                            getTranslation('detail.booking.duration.default', language)
                           )}
                         </span>
                       </div>
@@ -1244,7 +1477,7 @@ const ActivityDetail: React.FC = () => {
                       <div className="d-flex align-items-center mb-2">
                         <i className="fas fa-user text-primary me-2" style={{ fontSize: '0.875rem' }}></i>
                         <span className="fw-medium text-dark" style={{ fontSize: '0.875rem' }}>
-                          {language === 'es' ? 'Guía: ' : 'Guide: '}
+                          {getTranslation('detail.booking.guide', language)} :&nbsp; 
                           {getLanguageName(
                             selectedLanguage || (selectedBookingOption?.languages && selectedBookingOption.languages.length > 0 
                               ? selectedBookingOption.languages[0] 
@@ -1263,7 +1496,7 @@ const ActivityDetail: React.FC = () => {
                             <div className="d-flex align-items-center">
                               <i className="fas fa-language text-primary me-2" style={{ fontSize: '0.875rem' }}></i>
                               <span className="fw-bold text-dark" style={{ fontSize: '0.875rem' }}>
-                                {language === 'es' ? 'Idioma del guía: ' : 'Guide language: '}
+                                {getTranslation('detail.booking.guideLanguage', language)}
                                 {getLanguageName(selectedBookingOption.languages[0], language)}
                               </span>
                             </div>
@@ -1271,7 +1504,7 @@ const ActivityDetail: React.FC = () => {
                             // Mostrar botones cuando hay múltiples idiomas
                             <>
                               <h6 className="fw-bold mb-2 text-dark" style={{ fontSize: '0.9rem' }}>
-                                {language === 'es' ? 'Selecciona idiomas del guía' : 'Select guide languages'}
+                                {getTranslation('detail.booking.selectGuideLanguages', language)}
                               </h6>
                               <div className="d-flex gap-2 flex-wrap">
                                 {selectedBookingOption.languages.map((lang: string, index: number) => (
@@ -1292,10 +1525,7 @@ const ActivityDetail: React.FC = () => {
                               </div>
                               {!selectedLanguage && (
                                 <small className="text-muted" style={{ fontSize: '0.75rem' }}>
-                                  {language === 'es' 
-                                    ? 'Selecciona un idioma'
-                                    : 'Select a language'
-                                  }
+                                  {getTranslation('detail.booking.selectLanguage', language)}
                                 </small>
                               )}
                             </>
@@ -1314,7 +1544,7 @@ const ActivityDetail: React.FC = () => {
                                   <div className="d-flex align-items-center mb-1">
                                     <i className="fas fa-map-marker-alt text-primary me-2" style={{ fontSize: '0.875rem' }}></i>
                                     <span className="fw-medium text-dark" style={{ fontSize: '0.875rem' }}>
-                                      {language === 'es' ? 'Ubicación seleccionada:' : 'Selected location:'}
+                                      {getTranslation('detail.booking.selectedLocation', language)}
                                     </span>
                                   </div>
                                   <div style={{ marginLeft: '1.5rem' }}>
@@ -1340,7 +1570,7 @@ const ActivityDetail: React.FC = () => {
                                     }
                                   }}
                                 >
-                                  {language === 'es' ? 'Editar' : 'Edit'}
+                                  {getTranslation('detail.booking.edit', language)}
                                 </button>
                               </div>
                             </>
@@ -1361,18 +1591,15 @@ const ActivityDetail: React.FC = () => {
                                     }
                                   }}
                                 >
-                                  {language === 'es' ? 'Ver ' : 'View '}
-                                  {selectedBookingOption.pickupPoints?.length || 0}
-                                  {language === 'es' ? ' ubicaciones de recogida' : ' pickup locations'}
+                                  {getTranslationWithParams('detail.booking.viewPickupLocations', language, {
+                                    count: selectedBookingOption.pickupPoints?.length || 0
+                                  })}
                                 </button>
                               </div>
                               
                               {/* Descripción explicativa */}
                               <p className="text-muted mb-0" style={{ fontSize: '0.8rem', lineHeight: '1.3' }}>
-                                {language === 'es' 
-                                  ? 'La recogida está disponible desde múltiples ubicaciones. Selecciona tu ubicación preferida.'
-                                  : 'Pickup is available from multiple locations. Select your preferred location.'
-                                }
+                                {getTranslation('detail.booking.pickupAvailableDescription', language)}
                               </p>
                             </>
                           )}
@@ -1393,19 +1620,19 @@ const ActivityDetail: React.FC = () => {
                       {/* Campo de comentario - Siempre visible */}
                       <div className="mb-3">
                         <label className="form-label mb-1" style={{ fontSize: '0.8rem' }}>
-                          {language === 'es' ? '¿Tienes alguna solicitud especial? (opcional)' : 'Do you have any special requests? (optional)'}
+                          {getTranslation('detail.booking.specialRequests', language)}
                         </label>
                         <textarea
                           className="form-control form-control-sm"
                           rows={2}
                           maxLength={150}
-                          placeholder={language === 'es' ? 'Ej: Llegar 15 minutos antes, necesidades específicas, ubicación exacta...' : "E.g.: Arrive 15 minutes early, specific needs, exact location..."}
+                          placeholder={getTranslation('detail.booking.specialRequestsPlaceholder', language)}
                           value={pickupComment}
                           onChange={(e) => setPickupComment(e.target.value)}
                           style={{ fontSize: '0.8rem' }}
                         />
                         <small className="text-muted" style={{ fontSize: '0.7rem' }}>
-                          {pickupComment.length}/150 {language === 'es' ? 'caracteres' : 'characters'}
+                          {pickupComment.length}/150 {getTranslation('detail.booking.characters', language)}
                         </small>
                       </div>
                     </div>
@@ -1418,9 +1645,9 @@ const ActivityDetail: React.FC = () => {
                         {(() => {
                           const availableSchedules = getSchedulesForSelectedDate();
                           if (availableSchedules.length === 1) {
-                            return language === 'es' ? 'Hora de inicio' : 'Start time';
+                            return getTranslation('detail.booking.startTime', language);
                           } else {
-                            return language === 'es' ? 'Selecciona un horario de inicio' : 'Select a starting time';
+                            return getTranslation('detail.booking.selectStartTime', language);
                           }
                         })()}
                       </h5>
@@ -1439,10 +1666,10 @@ const ActivityDetail: React.FC = () => {
                       {selectedDate && getSchedulesForSelectedDate().length === 0 && (
                         <div className="alert alert-warning" style={{ fontSize: '0.875rem', padding: '0.5rem 0.75rem', margin: 0 }}>
                           <i className="fas fa-exclamation-triangle me-2"></i>
-                          {language === 'es' 
-                            ? `No hay horarios disponibles para ${getDayName(getCustomDayOfWeekFromDate(selectedDate))} (${selectedDate}).`
-                            : `No schedules available for ${getDayName(getCustomDayOfWeekFromDate(selectedDate))} (${selectedDate}).`
-                          }
+                          {getTranslationWithParams('detail.booking.noSchedulesForDay', language, {
+                            day: getDayName(getCustomDayOfWeekFromDate(selectedDate)),
+                            date: selectedDate
+                          })}
                         </div>
                       )}
                       
@@ -1496,17 +1723,22 @@ const ActivityDetail: React.FC = () => {
                     <hr className="my-0" />
 
                     {/* Política de cancelación */}
-                    <div className="p-3">
-                      <div className="d-flex align-items-start">
-                        <i className="fas fa-calendar-check text-success me-2 mt-1" style={{ fontSize: '0.875rem' }}></i>
-                        <span className="text-muted" style={{ fontSize: '0.875rem' }}>
-                          {language === 'es' 
-                            ? 'Cancela antes de las 8:00 AM del 22 de octubre para un reembolso completo'
-                            : 'Cancel before 8:00 AM on October 22 for a full refund'
-                          }
-                        </span>
+                    {selectedBookingOption && selectedBookingOption.cancelBeforeMinutes && selectedDate && selectedTimeSlot && (
+                      <div className="p-3">
+                        <div className="d-flex align-items-start">
+                          <i className="fas fa-calendar-check text-success me-2 mt-1" style={{ fontSize: '0.875rem' }}></i>
+                          <span className="text-muted" style={{ fontSize: '0.875rem' }}>
+                            {(() => {
+                              const deadline = getCancellationDeadline();
+                              if (deadline) {
+                                return getTranslationWithParams('detail.booking.cancelBeforeDeadline', language, { deadline });
+                              }
+                              return null;
+                            })()}
+                          </span>
+                        </div>
                       </div>
-                    </div>
+                    )}
 
                     {/* Precios y botones */}
                     <div className="p-3" style={{ backgroundColor: '#f8f9fa' }}>
@@ -1541,7 +1773,7 @@ const ActivityDetail: React.FC = () => {
                             } x {currency === 'PEN' ? 'S/ ' : '$ '}{(Math.ceil(calculateTotalPrice())).toFixed(2)}
                           </p>
                           <p className="text-muted small" style={{ fontSize: '0.75rem' }}>
-                            {language === 'es' ? 'Todos los impuestos y tarifas incluidos' : 'All taxes and fees included'}
+                            {getTranslation('detail.booking.allTaxesIncluded', language)}
                           </p>
                         </div>
                         <div className="col-md-6 text-end">
@@ -1591,7 +1823,7 @@ const ActivityDetail: React.FC = () => {
                                   {getTranslation('activity.processing', language)}
                                 </>
                               ) : (
-                                language === 'es' ? 'Reservar ahora' : 'Book now'
+                                getTranslation('detail.booking.reserveNow', language)
                               )}
                             </button>
                             <button 
@@ -1639,7 +1871,7 @@ const ActivityDetail: React.FC = () => {
                                   {getTranslation('cart.adding', language)}
                                 </>
                               ) : (
-                                language === 'es' ? 'Agregar al carrito' : 'Add to cart'
+                                getTranslation('detail.booking.addToCart', language)
                               )}
                             </button>
                           </div>
@@ -1680,6 +1912,18 @@ const ActivityDetail: React.FC = () => {
                         <small className="text-muted" style={{ fontSize: '0.7rem', marginTop: '-14px' }}>
                           {getTranslation('detail.booking.perPerson', language)}
                         </small>
+                        
+                        {/* Mostrar "a partir de X personas" solo si hay múltiples priceTiers */}
+                        {getMinPrice().hasMultiplePriceTiers && getMinPrice().minParticipants !== null && getMinPrice().minParticipants !== undefined && (
+                          <small className="text-muted d-block" style={{ fontSize: '0.65rem', marginTop: '2px' }}>
+                            {getTranslationWithParams('detail.booking.fromParticipants', language, {
+                              count: getMinPrice().minParticipants || 0,
+                              plural: getMinPrice().minParticipants === 1 
+                                ? getTranslation('detail.booking.participantSingular', language)
+                                : getTranslation('detail.booking.participantPlural', language)
+                            })}
+                          </small>
+                        )}
                     </>
                   ) : (
                     <div className="h6 fw-bold text-dark mb-0">
@@ -1709,7 +1953,7 @@ const ActivityDetail: React.FC = () => {
             <div className="modal-content">
               <div className="modal-header">
                 <h5 className="modal-title fw-bold">
-                  {language === 'es' ? 'Ubicaciones de Recogida' : 'Pickup Locations'}
+                  {getTranslation('detail.booking.pickupLocations', language)}
                 </h5>
                 <button
                   type="button"
@@ -1719,10 +1963,7 @@ const ActivityDetail: React.FC = () => {
               </div>
               <div className="modal-body">
                 <p className="text-muted mb-3">
-                  {language === 'es' 
-                    ? 'Selecciona tu ubicación de recogida preferida:'
-                    : 'Select your preferred pickup location:'
-                  }
+                  {getTranslation('detail.booking.selectPickupLocation', language)}
                 </p>
                 <div className="list-group">
                   {selectedBookingOption.pickupPoints.map((point: any, index: number) => (
@@ -1754,7 +1995,7 @@ const ActivityDetail: React.FC = () => {
                   className="btn btn-secondary"
                   onClick={() => setShowPickupPointsModal(false)}
                 >
-                  {language === 'es' ? 'Cerrar' : 'Close'}
+                  {getTranslation('detail.booking.close', language)}
                 </button>
                 <button
                   type="button"
@@ -1766,7 +2007,7 @@ const ActivityDetail: React.FC = () => {
                   }}
                   disabled={!selectedPickupPoint}
                 >
-                  {language === 'es' ? 'Confirmar' : 'Confirm'}
+                  {getTranslation('detail.booking.confirm', language)}
                 </button>
               </div>
             </div>
@@ -1806,7 +2047,7 @@ const ActivityDetail: React.FC = () => {
                   <i className="fas fa-arrow-left"></i>
                 </button>
                 <h4 className="mb-0 fw-bold">
-                  {language === 'es' ? 'Ubicaciones de Recogida' : 'Pickup Locations'}
+                  {getTranslation('detail.booking.pickupLocations', language)}
                 </h4>
               </div>
             </div>

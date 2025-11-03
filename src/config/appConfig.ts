@@ -16,6 +16,14 @@ export interface AppConfig {
     baseUrl: string;
     timeout: number;
   };
+  paypal: {
+    clientId: string;
+    secretKey: string;
+    environment: string;
+    currency: string;
+    baseUrl?: string;
+    redirectBaseUrl?: string;
+  };
   pricing: {
     defaultCommissionPercentage: number;
   };
@@ -45,6 +53,18 @@ export const appConfig: AppConfig = {
   api: {
     baseUrl: "https://tg4jd2gc-8080.brs.devtunnels.ms",
     timeout: 10000
+  },
+  paypal: {
+    clientId: "AasgdTxSUz2plju5i_XUtXjgF8LepczWTmvCFfLRUMiJ8pqRobCqYT9r_r2nuXX2LVSdPRfimCXVtD5T",
+    secretKey: "AasgdTxSUz2plju5i_XUtXjgF8LepczWTmvCFfLRUMiJ8pqRobCqYT9r_r2nuXX2LVSdPRfimCXVtD5T",
+    environment: "sandbox",
+    currency: "USD",
+    baseUrl: "https://sandbox.paypal.com",
+    redirectBaseUrl: typeof window !== 'undefined' ? (
+      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+        ? `${window.location.protocol}//${window.location.hostname}:3000`
+        : window.location.origin
+    ) : ''
   },
   pricing: {
     defaultCommissionPercentage: 15

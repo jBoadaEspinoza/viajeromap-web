@@ -21,7 +21,10 @@ export const apiConfig = {
     'Cache-Control': 'no-cache, no-store, must-revalidate',
     'Pragma': 'no-cache',
     'Expires': '0'
-  }
+  },
+  
+  // Configuración de PayPal (obtenida de appConfig)
+  paypal: appConfig.paypal
 };
 
 // Función para crear configuración de request

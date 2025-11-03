@@ -29,6 +29,7 @@ export interface ActivityCardData {
   includes?: string[];
   currency?: string;
   isFromPrice?: boolean; // Indica si el precio debe mostrarse con "desde"
+  minParticipants?: number | null; // Número mínimo de participantes para el precio mostrado
   supplier?: string; // Nombre del proveedor de la actividad
   supplierName?: string; // Nombre del proveedor de la actividad (alternativo)
   supplierVerified?: boolean; // Proveedor verificado

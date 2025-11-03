@@ -16,6 +16,14 @@
     "baseUrl": "https://tg4jd2gc-8080.brs.devtunnels.ms",
     "timeout": 10000
   },
+  "paypal": {
+    "clientId": "AZjOcV-UocM8DtraEeXIklXc8hLHZgjf-Buym7EqhZddAzuUw7wPBbFXoPqrAUTssG1Fd35J0-hDANBf",
+    "secretKey": "EOnsXY0mTUGlOuncwuR1SV6f2Dmae6mhoIz5SSlrK87N3NqBZEdZOcB0VUaz_OiZjW6QRQA4rHDVPWiD",
+    "environment": "sandbox",
+    "currency": "USD",
+    "baseUrl": "https://sandbox.paypal.com",
+    "redirectBaseUrl": "http://localhost:3000"
+  },
   "pricing": {
     "defaultCommissionPercentage": 15
   },

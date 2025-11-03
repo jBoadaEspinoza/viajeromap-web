@@ -4,12 +4,13 @@ import { useLanguage } from '../context/LanguageContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { useConfig } from '../context/ConfigContext';
 import { useAuth } from '../context/AuthContext';
-import { getTranslation, getLanguageName } from '../utils/translations';
+import { getTranslation, getTranslationWithParams, getLanguageName } from '../utils/translations';
 import { countriesApi, PhoneCode, Nationality } from '../api/countries';
 import { activitiesApi } from '../api/activities';
 import { useCart } from '../context/CartContext';
 import type { CartItem } from '../context/CartContext';
 import RatingStars from '../components/RatingStars';
+import { apiConfig } from '../utils/apiConfig';
 
 interface BookingDetails {
   activityId: string;
@@ -142,11 +143,91 @@ const Checkout: React.FC = () => {
   const [editedChildren, setEditedChildren] = useState<number>(0);
   const [isEditingPickupPoint, setIsEditingPickupPoint] = useState(false);
   const [selectedPickupPointId, setSelectedPickupPointId] = useState<number | ''>('');
-  const [currentStep, setCurrentStep] = useState<1 | 2>(() => {
-    // Intentar recuperar el paso actual desde sessionStorage
-    const savedStep = sessionStorage.getItem('checkoutCurrentStep');
-    return savedStep === '2' ? 2 : 1;
-  });
+  const [currentStep, setCurrentStep] = useState<1 | 2>(1); // Siempre inicia en el paso 1 (Contacto)
+  const [paymentMethod, setPaymentMethod] = useState<'paypal' | 'googlepay' | 'reserve' | 'reserveLater' | ''>('');
+  const [isProcessingPayPal, setIsProcessingPayPal] = useState(false);
+
+  // Determinar si se puede reservar y pagar después
+  // Se puede reservar y pagar después si:
+  // 1. cancelBeforeMinutes > 1440 minutos (más de 1 día)
+  // 2. La fecha/hora de salida menos la fecha/hora actual es mayor a 1 día (1440 minutos)
+  const canReserveAndPayLater = (): boolean => {
+    const cancelBeforeMinutes = bookingDetails?.cancelBeforeMinutes ?? bookingOptionCancelInfo?.cancelBeforeMinutes;
+    
+    // Si cancelBeforeMinutes no es mayor a 1 día, no se puede reservar y pagar después
+    if (cancelBeforeMinutes === undefined || cancelBeforeMinutes === null || cancelBeforeMinutes <= 1440) {
+      return false;
+    }
+    
+    // Verificar que la fecha/hora de salida menos la fecha/hora actual sea mayor a 1 día
+    if (!bookingDetails?.date || !bookingDetails?.time) {
+      // Si no hay fecha o hora de salida, no se puede reservar y pagar después
+      return false;
+    }
+    
+    try {
+      // Construir la fecha/hora de salida
+      const [year, month, day] = bookingDetails.date.split('-').map(Number);
+      const timeParts = bookingDetails.time.split(':');
+      const hours = timeParts[0] ? parseInt(timeParts[0], 10) : 0;
+      const minutes = timeParts[1] ? parseInt(timeParts[1], 10) : 0;
+      
+      const departureDate = new Date(year, month - 1, day, hours, minutes, 0);
+      
+      // Verificar que la fecha es válida
+      if (isNaN(departureDate.getTime())) {
+        return false;
+      }
+      
+      // Calcular la diferencia en minutos entre la fecha de salida y ahora
+      const now = new Date();
+      const diffInMilliseconds = departureDate.getTime() - now.getTime();
+      const diffInMinutes = diffInMilliseconds / (1000 * 60);
+      
+      // 1 día = 24 horas = 1440 minutos
+      // Si la diferencia es menor o igual a 1 día, no se puede reservar y pagar después
+      return diffInMinutes > 1440;
+    } catch (error) {
+      console.error('Error calculating if can reserve and pay later:', error);
+      return false;
+    }
+  };
+
+  // Verificar si la fecha/hora de salida ya pasó
+  const isDepartureDatePast = (): boolean => {
+    if (!bookingDetails?.date || !bookingDetails?.time) {
+      return false;
+    }
+    
+    try {
+      // Construir la fecha/hora de salida
+      const [year, month, day] = bookingDetails.date.split('-').map(Number);
+      const timeParts = bookingDetails.time.split(':');
+      const hours = timeParts[0] ? parseInt(timeParts[0], 10) : 0;
+      const minutes = timeParts[1] ? parseInt(timeParts[1], 10) : 0;
+      
+      const departureDate = new Date(year, month - 1, day, hours, minutes, 0);
+      
+      // Verificar que la fecha es válida
+      if (isNaN(departureDate.getTime())) {
+        return false;
+      }
+      
+      // Comparar con la fecha/hora actual
+      const now = new Date();
+      return departureDate < now;
+    } catch (error) {
+      console.error('Error checking if departure date is past:', error);
+      return false;
+    }
+  };
+
+  // Asegurar que el checkout siempre inicie en el paso 1
+  useEffect(() => {
+    setCurrentStep(1);
+    // Limpiar el paso guardado en sessionStorage para evitar conflictos
+    sessionStorage.removeItem('checkoutCurrentStep');
+  }, []);
 
   // Get booking details from location state, localStorage, or sessionStorage
   useEffect(() => {
@@ -214,7 +295,7 @@ const Checkout: React.FC = () => {
     return () => clearTimeout(timer);
   }, [location.state, navigate, loginDismissed]);
 
-  // Load form data from sessionStorage if in step 2
+  // Load form data from sessionStorage if in step 2 and auto-select reserve option if applicable
   useEffect(() => {
     if (currentStep === 2) {
       const savedFormData = sessionStorage.getItem('checkoutFormData');
@@ -226,8 +307,435 @@ const Checkout: React.FC = () => {
           console.error('Error loading form data from sessionStorage:', e);
         }
       }
+
+      // Ya no auto-seleccionamos la opción de reserva, el usuario debe elegirla manualmente
     }
-  }, [currentStep]);
+  }, [currentStep, bookingDetails, bookingOptionCancelInfo, paymentMethod]);
+
+  // Función para cargar el SDK de PayPal dinámicamente
+  const loadPayPalSDK = (): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      // Verificar si ya está cargado
+      if ((window as any).paypal) {
+        resolve();
+        return;
+      }
+
+      // Obtener credenciales de PayPal desde config
+      const paypalConfig = config?.paypal || apiConfig.paypal;
+      const clientId = paypalConfig?.clientId || '';
+      
+      if (!clientId) {
+        reject(new Error('PayPal Client ID no configurado. Por favor configúralo en appConfig.ts.'));
+        return;
+      }
+
+      const currency = bookingDetails?.currency || paypalConfig?.currency || 'USD';
+      const script = document.createElement('script');
+      script.src = `https://www.paypal.com/sdk/js?client-id=${clientId}&currency=${currency}&components=buttons`;
+      script.async = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error('Error al cargar el SDK de PayPal'));
+      document.body.appendChild(script);
+    });
+  };
+
+  // Función auxiliar para calcular el precio total con descuento
+  const calculatePayPalAmount = () => {
+    const totalAdults = bookingDetails?.travelers?.adults || 1;
+    const totalChildren = bookingDetails?.travelers?.children || 0;
+    const totalTravelers = totalAdults + totalChildren;
+    
+    let pricePerPerson = (bookingDetails as any)?.finalPrice || bookingDetails?.price || 0;
+    
+    // Verificar si hay descuento activo y asegurar que se aplique correctamente
+    if (bookingDetails?.hasDiscount && bookingDetails?.discountPercentage > 0) {
+      const originalPrice = bookingDetails?.originalPrice || 0;
+      
+      if (originalPrice > 0 && Math.abs(pricePerPerson - originalPrice) < 0.01) {
+        const discountAmount = originalPrice * (bookingDetails.discountPercentage / 100);
+        pricePerPerson = Math.round((originalPrice - discountAmount) * 100) / 100;
+      }
+    }
+    
+    const totalAmount = (pricePerPerson * totalTravelers).toFixed(2);
+    const paypalConfig = config?.paypal || apiConfig.paypal;
+    const currency = bookingDetails?.currency || paypalConfig?.currency || 'USD';
+    
+    return { totalAmount, currency };
+  };
+
+
+  // Cargar botones de PayPal cuando se selecciona PayPal como método de pago
+  useEffect(() => {
+    // Solo ejecutar si estamos en el paso 2 y PayPal está seleccionado
+    if (currentStep !== 2 || paymentMethod !== 'paypal' || !bookingDetails) {
+      return;
+    }
+
+    // Limpiar contenedor anterior si existe
+    const container = document.getElementById('paypal-button-container');
+    if (!container) {
+      return;
+    }
+
+    container.innerHTML = '';
+
+    // Cargar PayPal automáticamente cuando se selecciona
+    const loadPayPal = async () => {
+      try {
+        await loadPayPalSDK();
+        
+        if (!(window as any).paypal) {
+          console.error('PayPal SDK no está disponible');
+          return;
+        }
+
+        const { totalAmount, currency } = calculatePayPalAmount();
+
+        // Obtener URLs base desde la configuración de PayPal
+        // PayPal baseUrl es para el entorno de PayPal (sandbox.paypal.com)
+        // redirectBaseUrl es para la URL de nuestra aplicación donde PayPal redirigirá después del pago
+        const paypalBaseUrl = config?.paypal?.baseUrl || 'https://sandbox.paypal.com'; // URL base de PayPal
+        
+        // Construir la URL de redirección asegurando que incluya el puerto 3000 para PayPal
+        let appRedirectBaseUrl = config?.paypal?.redirectBaseUrl;
+        
+        if (!appRedirectBaseUrl && typeof window !== 'undefined') {
+          // Construir URL con puerto 3000 explícito para PayPal
+          const hostname = window.location.hostname;
+          const protocol = window.location.protocol;
+          const port = window.location.port || '3000';
+          
+          // Para PayPal, siempre usar puerto explícito si está en localhost
+          if (hostname === 'localhost' || hostname === '127.0.0.1' || !window.location.port) {
+            appRedirectBaseUrl = `${protocol}//${hostname}:3000`;
+          } else {
+            appRedirectBaseUrl = window.location.origin;
+          }
+        } else if (typeof window !== 'undefined' && appRedirectBaseUrl && !appRedirectBaseUrl.includes(':3000') && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+          // Si la URL configurada no incluye puerto y estamos en localhost, forzar puerto 3000
+          const url = new URL(appRedirectBaseUrl || window.location.origin);
+          if (!url.port || url.port !== '3000') {
+            url.port = '3000';
+            appRedirectBaseUrl = url.toString().replace(/\/$/, ''); // Remover trailing slash
+          }
+        }
+        
+        // Asegurar que siempre tengamos una URL de redirección válida
+        if (!appRedirectBaseUrl && typeof window !== 'undefined') {
+          appRedirectBaseUrl = window.location.origin;
+        }
+        
+        // Construir URLs de retorno y cancelación (deben apuntar a nuestra aplicación con puerto 3000)
+        const returnUrl = `${appRedirectBaseUrl}/capture-payment?token=${encodeURIComponent(bookingDetails?.activityId?.toString() || '')}`;
+        const cancelUrl = `${appRedirectBaseUrl}/cancel-payment`;
+        
+        // La baseUrl de PayPal es solo informativa (para logging), las redirecciones usan appRedirectBaseUrl
+        const baseUrl = paypalBaseUrl;
+        
+        console.log('🔗 PayPal URLs configuradas:', {
+          paypalBaseUrl: baseUrl,
+          appRedirectBaseUrl,
+          returnUrl,
+          cancelUrl,
+          paypalConfig: config?.paypal,
+        });
+
+        const paypal = (window as any).paypal;
+        paypal.Buttons({
+          createOrder: (data: any, actions: any) => {
+            // Calcular cantidad total de viajeros
+            const totalAdults = bookingDetails?.travelers?.adults || 1;
+            const totalChildren = bookingDetails?.travelers?.children || 0;
+            const totalTravelers = totalAdults + totalChildren;
+            
+            // Preparar descripción con título y cantidad de viajeros
+            const activityTitle = bookingDetails?.title || 'Reserva de actividad';
+            const travelersDescription = totalTravelers === 1 
+              ? getTranslation('checkout.traveler', language)
+              : getTranslationWithParams('checkout.travelers', language, { count: totalTravelers });
+            
+            const description = `${activityTitle} - ${travelersDescription}`;
+            
+            console.log('🔵 PayPal createOrder - PaymentData:', {
+              paymentData: data,
+              actions: actions ? 'available' : 'not available',
+              totalAmount,
+              currency,
+              bookingDetails: {
+                title: bookingDetails?.title,
+                activityId: bookingDetails?.activityId,
+                travelers: {
+                  adults: totalAdults,
+                  children: totalChildren,
+                  total: totalTravelers
+                }
+              },
+              description
+            });
+            
+            // Calcular precio unitario asegurando precisión
+            // PayPal requiere que la suma de items coincida exactamente con amount.value
+            const totalAmountFloat = parseFloat(totalAmount);
+            const unitPriceFloat = totalAmountFloat / totalTravelers;
+            
+            // Redondear a 2 decimales y verificar que la suma sea exacta
+            const unitPrice = Math.round(unitPriceFloat * 100) / 100;
+            const calculatedTotal = unitPrice * totalTravelers;
+            const difference = totalAmountFloat - calculatedTotal;
+            
+            // Ajustar si hay diferencia de redondeo (distribuirla en el último item si es necesario)
+            // Por simplicidad, usaremos un solo item con la cantidad total
+            const finalUnitPrice = difference !== 0 
+              ? (totalAmountFloat / totalTravelers) // Usar cálculo exacto sin redondeo
+              : unitPrice;
+            
+            // PayPal puede rechazar si items total !== amount total
+            // Por seguridad, primero intentamos sin items para ver si el error es por el cálculo
+            const orderDataSimple = {
+              purchase_units: [{
+                amount: {
+                  value: totalAmount,
+                  currency_code: currency
+                },
+                description: description
+              }],
+              application_context: {
+                brand_name: config?.business?.name || 'Viajeromap',
+                landing_page: 'NO_PREFERENCE',
+                user_action: 'PAY_NOW',
+                return_url: returnUrl,
+                cancel_url: cancelUrl
+              }
+            };
+            
+            // Intentar primero sin items para ver si el error es por el cálculo
+            console.log('📝 PayPal Order Data (simple):', {
+              totalAmount,
+              totalTravelers,
+              description,
+              orderData: orderDataSimple
+            });
+            
+            return actions.order.create(orderDataSimple).then((orderId: string) => {
+              console.log('✅ PayPal Order Created - OrderID:', orderId);
+              return orderId;
+            }).catch((error: any) => {
+              console.error('❌ PayPal createOrder Error:', {
+                error,
+                errorDetails: error?.details || error,
+                errorDetailsArray: Array.isArray(error?.details) ? error.details : [],
+                errorMessage: error?.message || String(error),
+                errorName: error?.name,
+                orderData: orderDataSimple,
+                fullError: error
+              });
+              
+              // Mostrar mensaje de error más específico
+              let errorMsg = language === 'es' 
+                ? 'Error al crear la orden de PayPal.'
+                : 'Error creating PayPal order.';
+              
+              if (error?.message) {
+                errorMsg += `\n${error.message}`;
+              }
+              
+              if (Array.isArray(error?.details) && error.details.length > 0) {
+                const detailsMsg = error.details.map((d: any) => d.issue || d.description || String(d)).join('\n');
+                errorMsg += `\n${detailsMsg}`;
+              }
+              
+              console.error('Error completo:', errorMsg);
+              throw error;
+            });
+          },
+          onApprove: async (data: any, actions: any) => {
+            try {
+              console.log('🟢 PayPal onApprove - PaymentData:', {
+                paymentData: data,
+                orderID: data.orderID,
+                payerID: data.payerID,
+                actions: actions ? 'available' : 'not available'
+              });
+              
+              // Capturar la orden con mejor manejo de errores
+              let order;
+              try {
+                console.log('⏳ Intentando capturar orden PayPal...', { orderID: data.orderID });
+                order = await actions.order.capture();
+                console.log('✅ Orden capturada exitosamente');
+              } catch (captureError: any) {
+                console.error('❌ Error al capturar la orden de PayPal:', {
+                  captureError,
+                  errorDetails: captureError?.details || captureError,
+                  errorDetailsArray: Array.isArray(captureError?.details) ? captureError.details : [],
+                  errorMessage: captureError?.message || String(captureError),
+                  errorName: captureError?.name,
+                  orderID: data.orderID,
+                  payerID: data.payerID,
+                  fullError: captureError
+                });
+                
+                // Mostrar mensaje de error más específico
+                let errorMsg = language === 'es' 
+                  ? 'Error al capturar el pago con PayPal.'
+                  : 'Error capturing PayPal payment.';
+                
+                if (captureError?.message) {
+                  errorMsg += `\n${captureError.message}`;
+                }
+                
+                alert(errorMsg);
+                throw captureError;
+              }
+              
+              console.log('✅ PayPal Payment Captured - Order Data:', {
+                orderId: order.id,
+                status: order.status,
+                createTime: order.create_time,
+                updateTime: order.update_time,
+                intent: order.intent,
+                purchaseUnits: order.purchase_units?.map((unit: any) => ({
+                  referenceId: unit.reference_id,
+                  amount: unit.amount,
+                  payee: unit.payee,
+                  paymentStatus: unit.payments?.captures?.[0]?.status,
+                  captureId: unit.payments?.captures?.[0]?.id
+                })),
+                payer: {
+                  name: order.payer?.name,
+                  email: order.payer?.email_address,
+                  payerId: order.payer?.payer_id
+                },
+                links: order.links,
+                fullOrder: order
+              });
+              
+              // Si el pago se captura directamente (sin redirección), procesar aquí
+              // Si PayPal redirige, se manejará en el useEffect de redirección
+              if (order.status === 'COMPLETED') {
+                // Función para generar un UUID corto (8 caracteres)
+                const generateShortUUID = (): string => {
+                  return Math.random().toString(36).substring(2, 10).toUpperCase();
+                };
+                
+                // Generar código de reserva UUID corto
+                const reservationCode = generateShortUUID();
+                
+                // Mensaje sobre envío de datos al backend
+                const sendToBackendMessage = language === 'es' 
+                  ? 'Se procede enviar la data del detalle de la reserva al backend para su registro.'
+                  : 'Proceeding to send reservation detail data to backend for registration.';
+                
+                // Estructura de datos de reserva a enviar al backend
+                const reservationData = {
+                  reservationCode,
+                  bookingDetails,
+                  paymentInfo: {
+                    orderId: order.id,
+                    status: order.status,
+                    payerId: order.payer?.payer_id,
+                    amount: order.purchase_units?.[0]?.amount,
+                    timestamp: new Date().toISOString(),
+                    fullOrder: order
+                  }
+                };
+                
+                console.log('📤 ' + sendToBackendMessage);
+                console.log('📋 Reservation Data to send to backend:', reservationData);
+                
+                // Capturar el pago y enviar datos al backend
+                try {
+                  // Aquí iría la llamada al backend para registrar la reserva
+                  // await sendReservationToBackend(reservationData);
+                  
+                  console.log('📤 ' + sendToBackendMessage);
+                  
+                  // Guardar datos de reserva en sessionStorage antes de limpiar (para que PaymentCompleted pueda acceder)
+                  sessionStorage.setItem('lastReservationData', JSON.stringify(reservationData));
+                  
+                  // Limpiar datos de checkout (pero mantener reservationData en sessionStorage)
+                  sessionStorage.removeItem('checkoutBookingDetails');
+                  sessionStorage.removeItem('checkoutTimeLeft');
+                  sessionStorage.removeItem('checkoutCurrentStep');
+                  sessionStorage.removeItem('checkoutFormData');
+                  
+                  // Redirigir a la página de pago completado con los datos de la reserva
+                  navigate('/payment-completed', { 
+                    state: reservationData 
+                  });
+                } catch (error) {
+                  console.error('❌ Error al procesar el pago:', error);
+                  const errorMessage = getTranslation('checkout.paymentError', language);
+                  
+                  alert(errorMessage);
+                  
+                  // Limpiar datos de checkout
+                  sessionStorage.removeItem('checkoutBookingDetails');
+                  sessionStorage.removeItem('checkoutTimeLeft');
+                  sessionStorage.removeItem('checkoutCurrentStep');
+                  sessionStorage.removeItem('checkoutFormData');
+                  
+                  // Redirigir a home
+                  navigate('/');
+                }
+              } else {
+                console.warn('⚠️ PayPal Order Status:', order.status, '- Expected: COMPLETED');
+              }
+            } catch (error) {
+              console.error('❌ Error processing PayPal payment:', {
+                error,
+                errorMessage: error instanceof Error ? error.message : String(error),
+                errorStack: error instanceof Error ? error.stack : undefined
+              });
+              alert(language === 'es' 
+                ? 'Error al procesar el pago. Por favor intenta nuevamente.'
+                : 'Error processing payment. Please try again.');
+            }
+          },
+          onCancel: (data: any) => {
+            console.log('🟡 PayPal onCancel - PaymentData:', {
+              paymentData: data,
+              orderID: data.orderID,
+              fullData: data
+            });
+            // El usuario canceló, no hacer nada o mostrar mensaje opcional
+          },
+          onError: (err: any) => {
+            console.error('🔴 PayPal onError - Error Data:', {
+              error: err,
+              errorMessage: err?.message || String(err),
+              errorDetails: err,
+              errorDetailsArray: err?.details || [],
+              stack: err?.stack,
+              fullError: err
+            });
+            
+            // Mensaje de error más descriptivo
+            let errorMessage = language === 'es' 
+              ? 'Error al procesar el pago con PayPal. Por favor intenta nuevamente.'
+              : 'Error processing PayPal payment. Please try again.';
+            
+            // Si hay detalles específicos del error, agregarlos
+            if (err?.message) {
+              errorMessage += `\n\n${err.message}`;
+            }
+            
+            alert(errorMessage);
+          }
+        }).render('#paypal-button-container').catch((err: any) => {
+          console.error('Error rendering PayPal buttons:', err);
+        });
+      } catch (error) {
+        console.error('Error loading PayPal SDK:', error);
+      }
+    };
+
+    loadPayPal();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paymentMethod, currentStep, bookingDetails]);
+
 
   // Show login modal if user is not authenticated OR if no booking details
   useEffect(() => {
@@ -650,6 +1158,81 @@ const Checkout: React.FC = () => {
     }
   };
 
+  // Calcular fecha límite para confirmar o cancelar la reserva (basado en cancelBefore)
+  const getReservationDeadline = (): string | null => {
+    // Verificar que tenemos los datos necesarios
+    if (!bookingDetails) {
+      return null;
+    }
+
+    // Obtener cancelBeforeMinutes de bookingDetails o de bookingOptionCancelInfo
+    const cancelBeforeMinutes = bookingDetails.cancelBeforeMinutes ?? bookingOptionCancelInfo?.cancelBeforeMinutes;
+    
+    // Si tenemos cancelBeforeMinutes, calcular desde fecha/hora de salida
+    if (cancelBeforeMinutes !== undefined && cancelBeforeMinutes !== null && cancelBeforeMinutes > 0) {
+      if (!bookingDetails.date || !bookingDetails.time) {
+        console.warn('No hay fecha o hora de salida para calcular la fecha límite de confirmación', {
+          date: bookingDetails.date,
+          time: bookingDetails.time
+        });
+        return null;
+      }
+
+      try {
+        // Parsear fecha y hora de salida de la actividad
+        const [year, month, day] = bookingDetails.date.split('-').map(Number);
+        const timeParts = bookingDetails.time.split(':');
+        const hours = timeParts[0] ? parseInt(timeParts[0], 10) : 0;
+        const minutes = timeParts[1] ? parseInt(timeParts[1], 10) : 0;
+        
+        // Crear fecha y hora de salida de la actividad
+        const departureDate = new Date(year, month - 1, day, hours, minutes, 0);
+        // La fecha límite es la fecha de salida menos los minutos de cancelBefore
+        const reservationDeadline = new Date(departureDate.getTime() - (cancelBeforeMinutes * 60 * 1000));
+        
+        // Verificar que la fecha es válida
+        if (isNaN(reservationDeadline.getTime())) {
+          console.error('Fecha límite de confirmación inválida');
+          return null;
+        }
+        
+        // Formatear según el idioma con formato más legible
+        const dateOptions: Intl.DateTimeFormatOptions = {
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric'
+        };
+        
+        const timeOptions: Intl.DateTimeFormatOptions = {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true
+        };
+        
+        if (language === 'es') {
+          const dateStr = reservationDeadline.toLocaleDateString('es-ES', dateOptions);
+          const timeStr = reservationDeadline.toLocaleTimeString('es-ES', timeOptions);
+          return `${dateStr} a las ${timeStr}`;
+        } else {
+          const dateStr = reservationDeadline.toLocaleDateString('en-US', dateOptions);
+          const timeStr = reservationDeadline.toLocaleTimeString('en-US', timeOptions);
+          return `${dateStr} at ${timeStr}`;
+        }
+      } catch (error) {
+        console.error('Error calculating reservation deadline:', error);
+        return null;
+      }
+    }
+
+    // Si no hay cancelBeforeMinutes pero hay cancelBefore string, intentar usarlo
+    const cancelBefore = bookingDetails.cancelBefore || bookingOptionCancelInfo?.cancelBefore;
+    if (cancelBefore) {
+      return cancelBefore;
+    }
+
+    return null;
+  };
+
   // Calcular fecha límite de cancelación
   const getCancellationDeadline = (): string | null => {
     // Verificar que tenemos los datos necesarios
@@ -754,10 +1337,18 @@ const Checkout: React.FC = () => {
     console.log('Login with email:', formData.email);
   };
 
-  const handleContinueToReservation = () => {
+  const handleContinueToPayment = () => {
+    // Validar que la fecha/hora de salida no haya pasado
+    if (isDepartureDatePast()) {
+      alert(language === 'es' 
+        ? 'La fecha y hora de salida ya pasó. Por favor modifica la fecha y hora de salida para continuar.'
+        : 'The departure date and time has already passed. Please modify the departure date and time to continue.');
+      return;
+    }
+    
     // Validate form
     if (!formData.name || !formData.lastName || !formData.email || !formData.phone || !formData.nationality || formData.nationality === 'none') {
-      alert(language === 'es' ? 'Por favor completa todos los campos obligatorios' : 'Please complete all required fields');
+      alert(getTranslation('checkout.pleaseCompleteFields', language));
       return;
     }
     
@@ -767,22 +1358,46 @@ const Checkout: React.FC = () => {
     sessionStorage.setItem('checkoutCurrentStep', '2');
   };
 
-  const handleReserveNow = () => {
-    // Process reservation
-    console.log('Processing reservation with:', {
+
+  const handlePayNow = () => {
+    // Validar que se haya seleccionado un método de pago
+    if (!paymentMethod) {
+      alert(getTranslation('checkout.pleaseSelectPaymentMethod', language));
+      return;
+    }
+
+    // Si el método de pago es PayPal, los botones ya se cargaron automáticamente
+    // No hacer nada adicional aquí, solo validar que esté seleccionado
+    if (paymentMethod === 'paypal') {
+      // PayPal manejará el pago a través de los botones de login
+      return;
+    }
+
+    // Si el método de pago es "reserveLater", procesar la reserva
+    if (paymentMethod === 'reserveLater') {
+      // Process payment or reservation
+      console.log('Processing reservation with:', {
+        formData,
+        paymentMethod
+      });
+      
+      // Limpiar datos de reserva después del pago/reserva exitoso
+      sessionStorage.removeItem('checkoutBookingDetails');
+      sessionStorage.removeItem('checkoutTimeLeft');
+      sessionStorage.removeItem('checkoutCurrentStep');
+      sessionStorage.removeItem('checkoutFormData');
+      
+      alert(getTranslation('checkout.reservationSuccess', language));
+      return;
+    }
+    
+    // Para otros métodos de pago (como Google Pay en el futuro)
+    console.log('Processing payment with:', {
       formData,
-      bookingDetails
+      paymentMethod
     });
     
-    // Aquí se procesaría la reserva (sin pago inmediato)
-    // Por ahora simulamos éxito
-    alert(language === 'es' ? '¡Reserva realizada exitosamente! Pagarás más tarde.' : 'Reservation completed successfully! You will pay later.');
-    
-    // Limpiar datos de reserva después de la reserva exitosa
-    sessionStorage.removeItem('checkoutBookingDetails');
-    sessionStorage.removeItem('checkoutTimeLeft');
-    sessionStorage.removeItem('checkoutCurrentStep');
-    sessionStorage.removeItem('checkoutFormData');
+    alert(getTranslation('checkout.paymentSuccess', language));
   };
 
   const handleBackToContact = () => {
@@ -885,11 +1500,11 @@ const Checkout: React.FC = () => {
                 <div className="step-line active"></div>
                 
                 <div className="d-flex align-items-center">
-                <div className="bg-light text-muted rounded-circle d-flex align-items-center justify-content-center" 
-                     style={{ width: '30px', height: '30px', fontSize: '0.9rem' }}>
-                  2
-                </div>
-                <span className="fw-medium text-muted ms-2">{language === 'es' ? 'Reservar' : 'Reserve'}</span>
+                  <div className="bg-light text-muted rounded-circle d-flex align-items-center justify-content-center" 
+                       style={{ width: '30px', height: '30px', fontSize: '0.9rem' }}>
+                    2
+                  </div>
+                  <span className="fw-medium text-muted ms-2">Pago</span>
                 </div>
               </div>
 
@@ -935,11 +1550,11 @@ const Checkout: React.FC = () => {
                 <div className="step-line active" style={{ width: '40px', height: '2px' }}></div>
                 
                 <div className="d-flex align-items-center">
-                <div className="bg-light text-muted rounded-circle d-flex align-items-center justify-content-center" 
-                     style={{ width: '28px', height: '28px', fontSize: '0.8rem' }}>
-                  2
-                </div>
-                <span className="fw-medium text-muted ms-2" style={{ fontSize: '0.9rem' }}>{language === 'es' ? 'Reservar' : 'Reserve'}</span>
+                  <div className="bg-light text-muted rounded-circle d-flex align-items-center justify-content-center" 
+                       style={{ width: '28px', height: '28px', fontSize: '0.8rem' }}>
+                    2
+                  </div>
+                  <span className="fw-medium text-muted ms-2" style={{ fontSize: '0.9rem' }}>Pago</span>
                 </div>
               </div>
             </div>
@@ -1200,7 +1815,7 @@ const Checkout: React.FC = () => {
                      style={{ width: '30px', height: '30px', fontSize: '0.9rem' }}>
                   {currentStep > 2 ? <i className="fas fa-check"></i> : '2'}
                 </div>
-                <span className={`fw-medium ${currentStep === 2 ? 'text-primary' : 'text-muted'} ms-2`}>{language === 'es' ? 'Reservar' : 'Reserve'}</span>
+                <span className={`fw-medium ${currentStep === 2 ? 'text-primary' : 'text-muted'} ms-2`}>Pago</span>
               </div>
             </div>
 
@@ -1250,7 +1865,7 @@ const Checkout: React.FC = () => {
                      style={{ width: '28px', height: '28px', fontSize: '0.8rem' }}>
                   {currentStep > 2 ? <i className="fas fa-check" style={{ fontSize: '0.7rem' }}></i> : '2'}
                 </div>
-                <span className={`fw-medium ${currentStep === 2 ? 'text-primary' : 'text-muted'} ms-2`} style={{ fontSize: '0.9rem' }}>{language === 'es' ? 'Reservar' : 'Reserve'}</span>
+                <span className={`fw-medium ${currentStep === 2 ? 'text-primary' : 'text-muted'} ms-2`} style={{ fontSize: '0.9rem' }}>Pago</span>
               </div>
             </div>
           </div>
@@ -1263,20 +1878,95 @@ const Checkout: React.FC = () => {
           <div className="col-lg-6">
             {currentStep === 1 ? (
               <>
-                {/* Reservation Timer */}
-                <div className="alert alert-warning mb-4" style={{ backgroundColor: '#fff3cd', borderColor: '#ffeaa7' }}>
-                  <div className="d-flex align-items-center">
-                    <i className="fas fa-clock me-2"></i>
-                    <span className="fw-medium">
-                      {getTranslation('checkout.reservationTimer', language)} {formatTime(timeLeft, language)}.
-                    </span>
+                {/* Warning if departure date is past */}
+                {isDepartureDatePast() && (
+                  <div className="alert alert-danger mb-4" style={{ backgroundColor: '#fee', borderColor: '#fcc' }}>
+                    <div className="d-flex align-items-start">
+                      <i className="fas fa-exclamation-circle me-2 mt-1"></i>
+                      <div className="flex-grow-1">
+                        <strong className="d-block mb-1">
+                          {getTranslation('checkout.departureDatePassed', language)}
+                        </strong>
+                        <div className="small">
+                          {getTranslation('checkout.departureDatePassedMessage', language)}
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                </div>
+                )}
 
-                {/* Personal Data Form */}
-                <div className="card">
-                  <div className="card-body">
-                    <h2 className="fw-bold mb-3">{getTranslation('checkout.reviewPersonalData', language)}</h2>
+                {/* Reservation Timer - Solo mostrar si la fecha de salida no ha pasado */}
+                {!isDepartureDatePast() && (
+            <div className="alert alert-warning mb-4" style={{ backgroundColor: '#fff3cd', borderColor: '#ffeaa7' }}>
+              <div className="d-flex align-items-center">
+                <i className="fas fa-clock me-2"></i>
+                <span className="fw-medium">
+                  {getTranslation('checkout.reservationTimer', language)} {formatTime(timeLeft, language)}.
+                </span>
+              </div>
+            </div>
+                )}
+
+                {/* Reservation Deadline Warning - Step 1 */}
+                {/* Solo mostrar si la fecha de salida menos hoy es mayor o igual a 24 horas */}
+                {(() => {
+                  const deadline = getReservationDeadline();
+                  
+                  // Verificar si falta menos de 24 horas hasta la salida
+                  if (!bookingDetails?.date || !bookingDetails?.time) {
+                    return null;
+                  }
+                  
+                  try {
+                    // Construir la fecha/hora de salida
+                    const [year, month, day] = bookingDetails.date.split('-').map(Number);
+                    const timeParts = bookingDetails.time.split(':');
+                    const hours = timeParts[0] ? parseInt(timeParts[0], 10) : 0;
+                    const minutes = timeParts[1] ? parseInt(timeParts[1], 10) : 0;
+                    
+                    const departureDate = new Date(year, month - 1, day, hours, minutes, 0);
+                    
+                    // Verificar que la fecha es válida
+                    if (isNaN(departureDate.getTime())) {
+                      return null;
+                    }
+                    
+                    // Calcular la diferencia en minutos entre la fecha de salida y ahora
+                    const now = new Date();
+                    const diffInMilliseconds = departureDate.getTime() - now.getTime();
+                    const diffInMinutes = diffInMilliseconds / (1000 * 60);
+                    
+                    // 24 horas = 1440 minutos
+                    // Si la diferencia es menor a 24 horas, no mostrar el mensaje
+                    if (diffInMinutes < 1440) {
+                      return null;
+                    }
+                  } catch (error) {
+                    console.error('Error calculating time until departure:', error);
+                  }
+                  
+                  // Si hay deadline y falta más de 24 horas, mostrar el mensaje
+                  return deadline ? (
+                    <div className="alert alert-warning mb-4" style={{ backgroundColor: '#fff3cd', borderColor: '#ffc107' }}>
+                      <div className="d-flex align-items-start">
+                        <i className="fas fa-exclamation-triangle me-2 mt-1"></i>
+                        <div className="flex-grow-1">
+                          <strong className="d-block mb-1">
+                            {getTranslation('checkout.deadlineConfirmCancel', language)}
+                          </strong>
+                          <div className="small">
+                            {getTranslationWithParams('checkout.deadlineMessage', language, { deadline })}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null;
+                })()}
+
+            {/* Personal Data Form */}
+            <div className="card">
+              <div className="card-body">
+                <h2 className="fw-bold mb-3">{getTranslation('checkout.reviewPersonalData', language)}</h2>
                 <div className="d-flex align-items-center mb-4">
                   <i className="fas fa-lock text-success me-2"></i>
                   <span className="text-success fw-medium">{getTranslation('checkout.fastSecureReservation', language)}</span>
@@ -1431,23 +2121,59 @@ const Checkout: React.FC = () => {
                   <button
                     type="button"
                     className="btn btn-primary btn-lg w-100 d-none d-md-block"
-                    onClick={handleContinueToReservation}
+                    onClick={handleContinueToPayment}
+                    disabled={isDepartureDatePast()}
+                    style={isDepartureDatePast() ? { opacity: 0.6, cursor: 'not-allowed' } : {}}
                   >
-                    {language === 'es' ? 'Continuar con la reserva' : 'Continue with reservation'}
+                    {getTranslation('checkout.continuePayment', language)}
                   </button>
+
+                  {/* Mostrar mensaje de fecha límite si se puede reservar y pagar después */}
+                  {canReserveAndPayLater() && (() => {
+                    const deadline = getReservationDeadline();
+                    return deadline ? (
+                      <div className="mt-3 d-flex align-items-start">
+                        <i className="fas fa-check-circle text-success me-2 mt-1"></i>
+                        <div className="flex-grow-1">
+                          <span className="fw-medium d-block mb-1">
+                            {getTranslation('checkout.reserveNowPayLater', language)}
+                          </span>
+                          <span className="small text-muted">
+                            {getTranslationWithParams('checkout.deadlineConfirmCancelInfo', language, { deadline })}
+                          </span>
+                        </div>
+                      </div>
+                    ) : null;
+                  })()}
 
                   {/* Booking Policies */}
                   <div className="mt-4">
+                    
+                    {(() => {
+                      const cancelBefore = bookingDetails?.cancelBefore || bookingOptionCancelInfo?.cancelBefore;
+                      if (cancelBefore && canReserveAndPayLater()) {
+                        const deadline = getReservationDeadline();
+                        if (deadline) {
+                          return (
+                            <>
                     <div className="d-flex align-items-center mb-2">
                       <i className="fas fa-check text-success me-2"></i>
                       <span className="fw-medium">{getTranslation('checkout.noPayToday', language)}</span>
                     </div>
                     <div className="d-flex align-items-center mb-2">
                       <i className="fas fa-check text-success me-2"></i>
-                      <span className="fw-medium">{getTranslation('checkout.bookNowPayLater', language)}</span>
+                                <span className="fw-medium">
+                                  {getTranslationWithParams('checkout.bookNowPayLater', language, { deadline })}
+                                </span>
                     </div>
+                            </>
+                          );
+                        }
+                      }
+                      return <></>;
+                    })()}
                     {!isCancellationDeadlinePassed() && (
-                    <div className="d-flex align-items-center">
+                    <div className="d-flex align-items-center mb-2">
                       <i className="fas fa-check text-success me-2"></i>
                         <span className="fw-medium">
                           {(() => {
@@ -1479,45 +2205,164 @@ const Checkout: React.FC = () => {
             <div className="alert mb-4" style={{ backgroundColor: '#fce4ec', borderColor: '#f8bbd0', color: '#880e4f' }}>
               <div className="d-flex align-items-center">
                 <span className="fw-medium">
-                  {language === 'es' ? 'Mantenemos tu lugar por' : "We'll hold your spot for"} {formatTime(timeLeft, language)}.
+                  {getTranslation('checkout.holdSpotFor', language)} {formatTime(timeLeft, language)}.
                 </span>
               </div>
             </div>
 
-            {/* Reservation Option */}
-            <div className="card">
-              <div className="card-body">
-                <h2 className="fw-bold mb-3">
-                  {language === 'es' ? 'Finaliza tu reserva' : 'Complete your reservation'}
-                </h2>
-                <div className="d-flex align-items-center mb-4">
-                  <i className="fas fa-check-circle text-success me-2"></i>
-                  <span className="text-success fw-medium">
-                    {language === 'es' ? 'Reserva ahora y paga después. Sin cargo por cancelación hasta la fecha límite.' : 'Reserve now and pay later. Free cancellation until the deadline.'}
-                  </span>
-                </div>
-
-                {/* Reservation Option */}
-                <div className="mb-4">
-                  <div className="p-4 border rounded" style={{ backgroundColor: '#f8f9fa', cursor: 'pointer' }}>
-                    <div className="d-flex align-items-center justify-content-between">
-                      <div className="d-flex align-items-center">
-                        <i className="fas fa-calendar-check me-3" style={{ fontSize: '2rem', color: '#28a745' }}></i>
-                        <div>
-                          <h5 className="fw-bold mb-1">
-                            {language === 'es' ? 'Reservar y pagar después' : 'Reserve and pay later'}
-                          </h5>
-                          <p className="text-muted mb-0 small">
-                            {language === 'es' 
-                              ? 'Tu lugar está asegurado. Puedes pagar antes de la fecha de la actividad.'
-                              : 'Your spot is secured. You can pay before the activity date.'}
-                          </p>
-                        </div>
+            {/* Reservation Deadline Warning - Step 2 */}
+            {(() => {
+              const deadline = getReservationDeadline();
+              return deadline ? (
+                <div className="alert alert-warning mb-4" style={{ backgroundColor: '#fff3cd', borderColor: '#ffc107' }}>
+                  <div className="d-flex align-items-start">
+                    <i className="fas fa-exclamation-triangle me-2 mt-1"></i>
+                    <div className="flex-grow-1">
+                      <strong className="d-block mb-1">
+                        {getTranslation('checkout.deadlineConfirmCancel', language)}
+                      </strong>
+                      <div className="small">
+                        {getTranslationWithParams('checkout.deadlineMessage', language, { deadline })}
                       </div>
-                      <i className="fas fa-check-circle text-success" style={{ fontSize: '1.5rem' }}></i>
                     </div>
                   </div>
                 </div>
+              ) : null;
+            })()}
+
+            {/* Payment Method Selection */}
+            <div className="card">
+              <div className="card-body">
+                <h2 className="fw-bold mb-3">
+                  {getTranslation('checkout.selectPaymentMethod', language)}
+                </h2>
+                <div className="d-flex align-items-center mb-4">
+                  <i className="fas fa-lock text-success me-2"></i>
+                  <span className="text-success fw-medium">
+                    {getTranslation('checkout.paymentsSecure', language)}
+                  </span>
+                </div>
+
+                {/* Payment Methods */}
+                <div className="mb-4">
+                  {/* PayPal */}
+                  <div className="form-check mb-3 p-3 border rounded" style={{ cursor: 'pointer', backgroundColor: paymentMethod === 'paypal' ? '#f8f9fa' : 'transparent', borderColor: paymentMethod === 'paypal' ? '#007bff' : '#dee2e6' }}>
+                    <input
+                      className="form-check-input"
+                      type="radio"
+                      name="paymentMethod"
+                      id="paymentPayPal"
+                      value="paypal"
+                      checked={paymentMethod === 'paypal'}
+                      onChange={(e) => setPaymentMethod(e.target.value as 'paypal')}
+                      style={{ cursor: 'pointer' }}
+                    />
+                    <label className="form-check-label d-flex align-items-center justify-content-between w-100" htmlFor="paymentPayPal" style={{ cursor: 'pointer' }}>
+                      <div className="d-flex align-items-center">
+                        <i className="fab fa-paypal me-3" style={{ fontSize: '2rem', color: '#003087' }}></i>
+                        <span className="fw-medium">PayPal</span>
+                      </div>
+                      <img 
+                        src="https://www.paypalobjects.com/webstatic/mktg/logo/pp_cc_mark_111x69.jpg" 
+                        alt="PayPal" 
+                        style={{ height: '24px', width: 'auto' }}
+                      />
+                    </label>
+                  </div>
+
+                  {/* Google Pay */}
+                  <div className="form-check mb-3 p-3 border rounded" style={{ cursor: 'not-allowed', backgroundColor: paymentMethod === 'googlepay' ? '#f8f9fa' : 'transparent', opacity: 0.6 }}>
+                    <input
+                      className="form-check-input"
+                      type="radio"
+                      name="paymentMethod"
+                      id="paymentGooglePay"
+                      value="googlepay"
+                      checked={paymentMethod === 'googlepay'}
+                      onChange={(e) => {
+                        // Deshabilitado temporalmente
+                            alert(getTranslation('checkout.googlePayComingSoon', language));
+                      }}
+                      disabled
+                      style={{ cursor: 'not-allowed' }}
+                    />
+                    <label className="form-check-label d-flex align-items-center w-100" htmlFor="paymentGooglePay" style={{ cursor: 'not-allowed' }}>
+                      <i className="fab fa-google-pay me-3" style={{ fontSize: '2rem', color: '#4285F4' }}></i>
+                      <span className="fw-medium">Google Pay</span>
+                          <span className="badge bg-secondary ms-auto small">
+                            {getTranslation('checkout.comingSoon', language)}
+                          </span>
+                    </label>
+                  </div>
+
+                  {/* Reserva ahora y paga después - Siempre disponible */}
+                  <div 
+                    className="form-check mb-3 p-3 border rounded" 
+                    style={{ cursor: 'pointer', backgroundColor: paymentMethod === 'reserveLater' ? '#f8f9fa' : 'transparent', borderColor: paymentMethod === 'reserveLater' ? '#28a745' : '#dee2e6' }}
+                    onClick={() => setPaymentMethod('reserveLater')}
+                  >
+                    <input
+                      className="form-check-input"
+                      type="radio"
+                      name="paymentMethod"
+                      id="paymentReserveLater"
+                      value="reserveLater"
+                      checked={paymentMethod === 'reserveLater'}
+                      onChange={(e) => setPaymentMethod(e.target.value as 'reserveLater')}
+                      style={{ cursor: 'pointer' }}
+                    />
+                    <label className="form-check-label d-flex align-items-center w-100" htmlFor="paymentReserveLater" style={{ cursor: 'pointer' }}>
+                      <i className="fas fa-calendar-check me-3" style={{ fontSize: '2rem', color: '#28a745' }}></i>
+                      <div className="flex-grow-1">
+                          <h5 className="fw-bold mb-1">
+                            {getTranslation('checkout.reserveNowPayLater', language)}
+                          </h5>
+                          <p className="text-muted mb-1 small">
+                            {getTranslation('checkout.reserveNowPayLaterDescription', language)}
+                          </p>
+                        {(() => {
+                          const deadline = getReservationDeadline();
+                          return deadline ? (
+                            <p className="text-muted mb-0 small fw-medium" style={{ color: '#6c757d' }}>
+                              <i className="fas fa-info-circle me-1"></i>
+                              {getTranslationWithParams('checkout.deadlineConfirmCancelInfo', language, { deadline })}
+                            </p>
+                          ) : null;
+                        })()}
+                      </div>
+                      {paymentMethod === 'reserveLater' && (
+                        <i className="fas fa-check-circle text-success ms-2" style={{ fontSize: '1.5rem' }}></i>
+                      )}
+                    </label>
+                  </div>
+                </div>
+
+                {/* PayPal Option Content - Show when PayPal is selected */}
+                {paymentMethod === 'paypal' && (
+                  <div className="mb-4 p-3 border rounded" style={{ backgroundColor: '#f8f9fa' }}>
+                    <p className="text-muted mb-3">
+                      {getTranslation('checkout.paypalRedirect', language)}
+                    </p>
+                    <div id="paypal-button-container" className="d-flex justify-content-center align-items-center" style={{ minHeight: '80px' }}>
+                      {isProcessingPayPal && (
+                        <div className="text-center">
+                          <div className="spinner-border text-primary" role="status">
+                            <span className="visually-hidden">Loading...</span>
+                          </div>
+                          <p className="mt-2 text-muted">
+                            {getTranslation('checkout.loadingPayPal', language)}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                    <div className="mt-3">
+                      <small className="text-muted">
+                        {getTranslation('checkout.termsAgreement', language)}
+                      </small>
+                    </div>
+                  </div>
+                )}
+
 
                 {/* Legal Information */}
                 <div className="mb-4">
@@ -1528,15 +2373,20 @@ const Checkout: React.FC = () => {
                   </small>
                 </div>
 
-                {/* Reserve Now Button */}
-                <button
-                  type="button"
-                  className="btn btn-primary btn-lg w-100 d-none d-md-block"
-                  onClick={handleReserveNow}
-                >
-                  <i className="fas fa-calendar-check me-2"></i>
-                  {language === 'es' ? 'Reservar ahora' : 'Reserve now'}
-                </button>
+                {/* Pay Now Button - Solo mostrar si no es PayPal (que maneja su propio flujo) */}
+                {paymentMethod !== 'paypal' && (
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-lg w-100 d-none d-md-block"
+                    onClick={handlePayNow}
+                    disabled={!paymentMethod}
+                  >
+                    <i className="fas fa-lock me-2"></i>
+                    {paymentMethod === 'reserveLater'
+                      ? getTranslation('checkout.reserveNow', language)
+                      : getTranslation('checkout.payNow', language)}
+                  </button>
+                )}
               </div>
             </div>
           </>
@@ -1587,7 +2437,7 @@ const Checkout: React.FC = () => {
                           disabled={availableGuideLanguages.length === 0}
                         >
                           {availableGuideLanguages.length === 0 ? (
-                            <option value="">{language === 'es' ? 'Sin opciones' : 'No options'}</option>
+                            <option value="">{getTranslation('checkout.noOptions', language)}</option>
                           ) : (
                             availableGuideLanguages.map((langOpt) => (
                               <option key={langOpt} value={langOpt}>
@@ -1685,7 +2535,7 @@ const Checkout: React.FC = () => {
                               }}
                             >
                               <option value="">
-                                {language === 'es' ? 'Seleccione un punto de encuentro' : 'Select a meeting point'}
+                                {getTranslation('checkout.selectMeetingPoint', language)}
                               </option>
                               {Array.isArray(currentBookingOption?.pickupPoints) && currentBookingOption.pickupPoints.map((p: any) => (
                                 <option key={p.id} value={p.id}>
@@ -1772,7 +2622,7 @@ const Checkout: React.FC = () => {
                     <div className="flex-grow-1 d-flex justify-content-between align-items-start">
                       <div className="flex-grow-1">
                         <span className="small fw-medium d-block mb-2">
-                          {language === 'es' ? 'Solicitud especial' : 'Special request'}:
+                          {getTranslation('checkout.specialRequest', language)}:
                         </span>
                         {isEditingComment ? (
                           <div>
@@ -1787,12 +2637,12 @@ const Checkout: React.FC = () => {
                                   setEditedComment(value);
                                 }
                               }}
-                              placeholder={language === 'es' ? 'Escribe tu solicitud especial...' : 'Write your special request...'}
+                              placeholder={getTranslation('checkout.specialRequestPlaceholder', language)}
                               maxLength={150}
                               style={{ fontSize: '0.875rem' }}
                             />
                             <div className="text-muted small text-end">
-                              {editedComment.length}/150 {language === 'es' ? 'caracteres' : 'characters'}
+                              {editedComment.length}/150 {getTranslation('checkout.characters', language)}
                             </div>
                             <div className="d-flex gap-2">
                               <button
@@ -1893,7 +2743,7 @@ const Checkout: React.FC = () => {
                           </div>
                           <div className="mb-2">
                             <label className="form-label small fw-medium d-block mb-1">
-                              {language === 'es' ? 'Horario de salida' : 'Departure time'}:
+                              {getTranslation('checkout.departureTime', language)}:
                             </label>
                             <select
                               className="form-select form-select-sm"
@@ -1903,7 +2753,7 @@ const Checkout: React.FC = () => {
                               style={{ fontSize: '0.875rem' }}
                             >
                               {availableTimes.length === 0 ? (
-                                <option value="">{language === 'es' ? 'No hay horarios disponibles para este día' : 'No schedules available for this day'}</option>
+                                <option value="">{getTranslation('checkout.noSchedulesForDay', language)}</option>
                               ) : (
                                 availableTimes.map((time) => (
                                   <option key={time} value={time}>
@@ -2006,30 +2856,30 @@ const Checkout: React.FC = () => {
                       ) : (
                         <div className="small">
                           <div>
-                            <span className="fw-medium">{getTranslation('checkout.departureDate', language)}: </span>
-                            {(() => {
-                              const formattedDate = getDepartureDateFormatted();
-                              if (formattedDate) {
-                                return formattedDate;
-                              }
-                              // Fallback al formato anterior si hay error
-                              return `${new Date(bookingDetails.date).toLocaleDateString(language === 'es' ? 'es-ES' : 'en-US', {
-                                weekday: 'long',
-                                year: 'numeric',
-                                month: 'long',
-                                day: 'numeric'
-                              })}, ${convertTo12HourFormat(bookingDetails.time)}`;
-                            })()}
+                          <span className="fw-medium">{getTranslation('checkout.departureDate', language)}: </span>
+                          {(() => {
+                            const formattedDate = getDepartureDateFormatted();
+                            if (formattedDate) {
+                              return formattedDate;
+                            }
+                            // Fallback al formato anterior si hay error
+                            return `${new Date(bookingDetails.date).toLocaleDateString(language === 'es' ? 'es-ES' : 'en-US', {
+                              weekday: 'long',
+                              year: 'numeric',
+                              month: 'long',
+                              day: 'numeric'
+                            })}, ${convertTo12HourFormat(bookingDetails.time)}`;
+                          })()}
                           </div>
                           {currentStep === 2 && (
                             <a href="#" className="text-primary text-decoration-none" onClick={(e) => {
                               e.preventDefault();
                               handleBackToContact();
                             }}>
-                              {language === 'es' ? 'Cambiar fecha o participantes' : 'Change date or participants'}
+                              {getTranslation('checkout.changeDateParticipants', language)}
                             </a>
-                          )}
-                        </div>
+                      )}
+                    </div>
                       )}
                     </div>
                     {!isEditingDateTime && currentStep === 1 && (
@@ -2061,24 +2911,24 @@ const Checkout: React.FC = () => {
                         {!isEditingTravelers ? (
                           <div className="small">
                             <div>
-                              {bookingDetails.travelers.adults} {language === 'es' ? 'adulto' : 'adult'} {bookingDetails.travelers.adults > 1 ? (language === 'es' ? 'adultos' : 'adults') : ''}
-                              {bookingDetails.travelers.children > 0 && (
-                                <> • {bookingDetails.travelers.children} {language === 'es' ? 'niño' : 'child'} {bookingDetails.travelers.children > 1 ? (language === 'es' ? 'niños' : 'children') : ''}</>
-                              )}
+                            {bookingDetails.travelers.adults} {bookingDetails.travelers.adults === 1 ? getTranslation('checkout.adult', language) : getTranslation('checkout.adults', language)}
+                            {bookingDetails.travelers.children > 0 && (
+                              <> • {bookingDetails.travelers.children} {bookingDetails.travelers.children === 1 ? getTranslation('checkout.child', language) : getTranslation('checkout.children', language)}</>
+                            )}
                             </div>
                             {currentStep === 2 && (
                               <a href="#" className="text-primary text-decoration-none" onClick={(e) => {
                                 e.preventDefault();
                                 handleBackToContact();
                               }}>
-                                {language === 'es' ? 'Cambiar fecha o participantes' : 'Change date or participants'}
+                                {getTranslation('checkout.changeDateParticipants', language)}
                               </a>
                             )}
                           </div>
                         ) : (
                           <div className="d-flex gap-2">
                             <div className="d-flex align-items-center">
-                              <label className="small me-2">{language === 'es' ? 'Adultos' : 'Adults'}</label>
+                              <label className="small me-2">{getTranslation('checkout.adultsLabel', language)}</label>
                               <input
                                 type="number"
                                 className="form-control form-control-sm"
@@ -2093,7 +2943,7 @@ const Checkout: React.FC = () => {
                               />
                             </div>
                             <div className="d-flex align-items-center">
-                              <label className="small me-2">{language === 'es' ? 'Niños' : 'Children'}</label>
+                              <label className="small me-2">{getTranslation('checkout.childrenLabel', language)}</label>
                               <input
                                 type="number"
                                 className="form-control form-control-sm"
@@ -2197,7 +3047,7 @@ const Checkout: React.FC = () => {
                     </div>
                     {currentBookingOption?.groupMaxSize && (
                       <div className="small text-muted mt-1">
-                        {language === 'es' ? 'Capacidad máx. del grupo: ' : 'Max group size: '}{currentBookingOption.groupMaxSize}
+                        {getTranslation('checkout.maxGroupSize', language)}{currentBookingOption.groupMaxSize}
                       </div>
                     )}
                   </div>
@@ -2208,14 +3058,14 @@ const Checkout: React.FC = () => {
                   <div className="mb-4 border-top pt-3">
                     <div className="d-flex justify-content-between align-items-start mb-3">
                       <h6 className="fw-bold mb-0">
-                        {language === 'es' ? 'Información de contacto' : 'Contact Information'}
+                        {getTranslation('checkout.contactInformation', language)}
                       </h6>
                       <button
                         className="btn btn-sm btn-link text-primary p-0"
                         onClick={handleBackToContact}
                         style={{ fontSize: '0.875rem' }}
                       >
-                        {language === 'es' ? 'Editar' : 'Edit'}
+                        {getTranslation('checkout.edit', language)}
                       </button>
                     </div>
                     <div className="small">
@@ -2291,24 +3141,24 @@ const Checkout: React.FC = () => {
                           <>
                             {showDiscount && (
                               <div className="text-muted small">
-                                {(language === 'es' ? 'Total sin descuento: ' : 'Total without discount: ')}
+                                {getTranslation('checkout.totalWithoutDiscount', language)}
                                 <span className="text-decoration-line-through">
                                   {bookingDetails.currency === 'PEN' ? 'S/ ' : '$ '}{safeOriginalTotal}
                                 </span>
                               </div>
                             )}
                             <div className="fw-bold fs-5" style={{ color: showDiscount ? '#dc3545' : 'inherit' }}>
-                              {(language === 'es' ? 'Total a pagar' : 'Total to pay')}{showDiscount ? (language === 'es' ? ' con descuento: ' : ' with discount: ') : ': '}
+                              {getTranslation('checkout.totalToPay', language)}{showDiscount ? getTranslation('checkout.withDiscount', language) : ': '}
                               {bookingDetails.currency === 'PEN' ? 'S/ ' : '$ '}{safeFinalTotal}
                             </div>
                             {showDiscount && bookingDetails.discountPercentage > 0 && (
                               <div className="text-success small">
-                                {(language === 'es' ? 'Descuento aplicado: ' : 'Discount applied: ')}-{bookingDetails.discountPercentage}%
+                                {getTranslation('checkout.discountApplied', language)}-{bookingDetails.discountPercentage}%
                               </div>
                             )}
                             {totalTravelers > 1 && (
                               <div className="text-muted small mt-1">
-                                {(language === 'es' ? 'Unitario' : 'Unit price')}{showDiscount ? (language === 'es' ? ' con descuento' : ' with discount') : ''}: {bookingDetails.currency === 'PEN' ? 'S/ ' : '$ '}{ceilFinalPrice} × {totalTravelers} {getTranslation('checkout.travelers', language) || 'viajeros'}
+                                {getTranslation('checkout.unitPrice', language)}{showDiscount ? getTranslation('checkout.unitPriceWithDiscount', language) : ''}: {bookingDetails.currency === 'PEN' ? 'S/ ' : '$ '}{ceilFinalPrice} × {totalTravelers} {getTranslation('checkout.travelers', language) || 'viajeros'}
                               </div>
                             )}
                           </>
@@ -2340,7 +3190,8 @@ const Checkout: React.FC = () => {
       </div>
 
       {/* Floating Total & Payment Button - Mobile Only */}
-      {bookingDetails && (
+      {/* No mostrar si PayPal está seleccionado (maneja su propio flujo) */}
+      {bookingDetails && (currentStep === 1 || (currentStep === 2 && paymentMethod !== 'paypal')) && (
         <div className="d-md-none checkout-floating-footer">
         <div className="checkout-floating-container">
           <div className="checkout-floating-content">
@@ -2364,7 +3215,7 @@ const Checkout: React.FC = () => {
                         </span>
                       )}
                       <div className="fw-bold checkout-floating-total-text" style={{ fontSize: '1rem', color: showDiscount ? '#dc3545' : 'inherit', lineHeight: '1.2' }}>
-                        {language === 'es' ? 'Total' : 'Total'}: {bookingDetails?.currency === 'PEN' ? 'S/ ' : '$ '}{safeFinalTotal}
+                        {getTranslation('checkout.total', language)}: {bookingDetails?.currency === 'PEN' ? 'S/ ' : '$ '}{safeFinalTotal}
                       </div>
                     </div>
                     {showDiscount && (
@@ -2374,7 +3225,7 @@ const Checkout: React.FC = () => {
                         </span>
                         <span className="text-success">
                           <i className="fas fa-piggy-bank me-1" style={{ fontSize: '0.6rem' }}></i>
-                          {language === 'es' ? 'Ahorras' : 'Save'} {bookingDetails?.currency === 'PEN' ? 'S/ ' : '$ '}{savings}
+                          {getTranslation('checkout.save', language)} {bookingDetails?.currency === 'PEN' ? 'S/ ' : '$ '}{savings}
                         </span>
                         {totalTravelers > 1 && (
                           <span className="text-muted">
@@ -2385,22 +3236,26 @@ const Checkout: React.FC = () => {
                     )}
                     {!showDiscount && totalTravelers > 1 && (
                       <div className="text-muted" style={{ fontSize: '0.65rem', lineHeight: '1.2' }}>
-                        {bookingDetails?.currency === 'PEN' ? 'S/ ' : '$ '}{ceilFinalPrice} × {totalTravelers} {language === 'es' ? 'pax' : 'pax'}
+                        {bookingDetails?.currency === 'PEN' ? 'S/ ' : '$ '}{ceilFinalPrice} × {totalTravelers} {getTranslation('checkout.pax', language)}
                       </div>
                     )}
                   </div>
                 );
               })()}
             </div>
-            {/* Botón Continuar con la reserva (Step 1) o Reserve Now (Step 2) */}
+            {/* Botón Continuar con el pago (Step 1) o Pay Now/Reserve Now (Step 2) */}
             <button
               type="button"
               className="btn btn-primary btn-lg checkout-floating-button"
-              onClick={currentStep === 1 ? handleContinueToReservation : handleReserveNow}
+              onClick={currentStep === 1 ? handleContinueToPayment : handlePayNow}
+              disabled={currentStep === 1 && isDepartureDatePast()}
+              style={currentStep === 1 && isDepartureDatePast() ? { opacity: 0.6, cursor: 'not-allowed' } : {}}
             >
               {currentStep === 1 
-                ? (language === 'es' ? 'Continuar con la reserva' : 'Continue with reservation')
-                : (language === 'es' ? 'Reservar ahora' : 'Reserve now')}
+                ? getTranslation('checkout.continuePayment', language)
+                : (paymentMethod === 'reserveLater'
+                    ? getTranslation('checkout.reserveNow', language)
+                    : getTranslation('checkout.payNow', language))}
             </button>
           </div>
         </div>

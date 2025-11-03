@@ -227,11 +227,11 @@ export const translations: Translations = {
   },
   'checkout.noPayToday': {
     es: 'No pagues nada hoy',
-    en: 'Don\'t pay anything today'
+    en: 'Don\'t pay anything today'   
   },
   'checkout.bookNowPayLater': {
-    es: 'Reserva ahora y paga después',
-    en: 'Book now and pay later'
+    es: 'Reserva ahora y paga después.',
+    en: 'Book now and pay later.'
   },
   'checkout.cancelBefore': {
     es: 'Hasta',
@@ -298,12 +298,200 @@ export const translations: Translations = {
     en: 'All taxes and fees included'
   },
   'checkout.travelers': {
-    es: 'viajeros',
-    en: 'travelers'
+    es: '{count} viajeros',
+    en: '{count} travelers'
+  },
+  'checkout.traveler': {
+    es: '1 viajero',
+    en: '1 traveler'
   },
   'checkout.saveWithOffer': {
     es: 'Ahorra con esta oferta especial',
     en: 'Save with this special offer'
+  },
+  'checkout.pleaseCompleteFields': {
+    es: 'Por favor completa todos los campos obligatorios',
+    en: 'Please complete all required fields'
+  },
+  'checkout.pleaseSelectPaymentMethod': {
+    es: 'Por favor selecciona un método de pago',
+    en: 'Please select a payment method'
+  },
+  'checkout.reservationSuccess': {
+    es: '¡Reserva realizada exitosamente! Pagarás más tarde.',
+    en: 'Reservation completed successfully! You will pay later.'
+  },
+  'checkout.paymentSuccess': {
+    es: '¡Pago procesado exitosamente!',
+    en: 'Payment processed successfully!'
+  },
+  'checkout.paymentError': {
+    es: 'Hubo un error al procesar el pago. Por favor, contacta con soporte.',
+    en: 'There was an error processing the payment. Please contact support.'
+  },
+  'checkout.departureDatePassed': {
+    es: 'Fecha de salida pasada',
+    en: 'Departure date has passed'
+  },
+  'checkout.departureDatePassedMessage': {
+    es: 'La fecha y hora de salida seleccionada ya pasó. Por favor modifica la fecha y hora de salida para continuar con la reserva.',
+    en: 'The selected departure date and time has already passed. Please modify the departure date and time to continue with the reservation.'
+  },
+  'checkout.deadlineConfirmCancel': {
+    es: 'Fecha límite para confirmar o cancelar',
+    en: 'Deadline to confirm or cancel'
+  },
+  'checkout.deadlineMessage': {
+    es: 'Debes confirmar o cancelar tu reserva antes del {deadline}. Si no tomas ninguna acción antes de esta fecha, la reserva se cancelará automáticamente.',
+    en: 'You must confirm or cancel your reservation before {deadline}. If you don\'t take any action before this date, the reservation will be automatically cancelled.'
+  },
+  'checkout.holdSpotFor': {
+    es: 'Mantenemos tu lugar por',
+    en: "We'll hold your spot for"
+  },
+  'checkout.selectPaymentMethod': {
+    es: 'Selecciona un método de pago',
+    en: 'Select a payment method'
+  },
+  'checkout.paymentsSecure': {
+    es: 'Los pagos son seguros y están encriptados.',
+    en: 'Payments are secure and encrypted.'
+  },
+  'checkout.comingSoon': {
+    es: 'Próximamente',
+    en: 'Coming soon'
+  },
+  'checkout.reserveNowPayLater': {
+    es: 'Reserva ahora y paga después',
+    en: 'Reserve now and pay later'
+  },
+  'checkout.reserveNowPayLaterDescription': {
+    es: 'Tu lugar está asegurado. Puedes pagar antes de la fecha de la actividad.',
+    en: 'Your spot is secured. You can pay before the activity date.'
+  },
+  'checkout.deadlineConfirmCancelInfo': {
+    es: 'Tienes hasta el {deadline} para confirmar o cancelar.',
+    en: 'You have until {deadline} to confirm or cancel.'
+  },
+  'checkout.loadingPayPal': {
+    es: 'Cargando PayPal...',
+    en: 'Loading PayPal...'
+  },
+  'checkout.paypalRedirect': {
+    es: 'Serás redirigido a PayPal para completar el pago.',
+    en: 'You will be redirected to PayPal to complete payment.'
+  },
+  'checkout.termsAgreement': {
+    es: 'Al continuar, aceptas los términos y condiciones generales de viajeromap. Lee más sobre el derecho de retracto y la información sobre la ley de viajes aplicable.',
+    en: "By continuing, you agree to viajeromap's general terms and conditions. Read more on the right of withdrawal and information on the applicable travel law."
+  },
+  'checkout.reserveNow': {
+    es: 'Reservar ahora',
+    en: 'Reserve now'
+  },
+  'checkout.payNow': {
+    es: 'Pagar ahora',
+    en: 'Pay now'
+  },
+  'checkout.noOptions': {
+    es: 'Sin opciones',
+    en: 'No options'
+  },
+  'checkout.selectMeetingPoint': {
+    es: 'Seleccione un punto de encuentro',
+    en: 'Select a meeting point'
+  },
+  'checkout.specialRequest': {
+    es: 'Solicitud especial',
+    en: 'Special request'
+  },
+  'checkout.specialRequestPlaceholder': {
+    es: 'Escribe tu solicitud especial...',
+    en: 'Write your special request...'
+  },
+  'checkout.characters': {
+    es: 'caracteres',
+    en: 'characters'
+  },
+  'checkout.departureTime': {
+    es: 'Horario de salida',
+    en: 'Departure time'
+  },
+  'checkout.noSchedulesForDay': {
+    es: 'No hay horarios disponibles para este día',
+    en: 'No schedules available for this day'
+  },
+  'checkout.adult': {
+    es: 'adulto',
+    en: 'adult'
+  },
+  'checkout.adults': {
+    es: 'adultos',
+    en: 'adults'
+  },
+  'checkout.child': {
+    es: 'niño',
+    en: 'child'
+  },
+  'checkout.children': {
+    es: 'niños',
+    en: 'children'
+  },
+  'checkout.adultsLabel': {
+    es: 'Adultos',
+    en: 'Adults'
+  },
+  'checkout.childrenLabel': {
+    es: 'Niños',
+    en: 'Children'
+  },
+  'checkout.maxGroupSize': {
+    es: 'Capacidad máx. del grupo: ',
+    en: 'Max group size: '
+  },
+  'checkout.contactInformation': {
+    es: 'Información de contacto',
+    en: 'Contact Information'
+  },
+  'checkout.edit': {
+    es: 'Editar',
+    en: 'Edit'
+  },
+  'checkout.totalWithoutDiscount': {
+    es: 'Total sin descuento: ',
+    en: 'Total without discount: '
+  },
+  'checkout.totalToPay': {
+    es: 'Total a pagar',
+    en: 'Total to pay'
+  },
+  'checkout.withDiscount': {
+    es: ' con descuento: ',
+    en: ' with discount: '
+  },
+  'checkout.discountApplied': {
+    es: 'Descuento aplicado: ',
+    en: 'Discount applied: '
+  },
+  'checkout.unitPrice': {
+    es: 'Unitario',
+    en: 'Unit price'
+  },
+  'checkout.unitPriceWithDiscount': {
+    es: ' con descuento',
+    en: ' with discount'
+  },
+  'checkout.save': {
+    es: 'Ahorras',
+    en: 'Save'
+  },
+  'checkout.pax': {
+    es: 'pax',
+    en: 'pax'
+  },
+  'checkout.googlePayComingSoon': {
+    es: 'Google Pay estará disponible próximamente.',
+    en: 'Google Pay will be available soon.'
   },
   'checkout.loginModal.title': {
     es: '¿Quieres iniciar sesión?',
@@ -523,6 +711,18 @@ export const translations: Translations = {
     es: 'por persona',
     en: 'per person'
   },
+  'home.activities.fromParticipants': {
+    es: 'A partir de {count} {plural}',
+    en: 'From {count} {plural}'
+  },
+  'home.activities.participantSingular': {
+    es: 'pax',
+    en: 'pax'
+  },
+  'home.activities.participantPlural': {
+    es: 'paxs',
+    en: 'paxs'
+  },
   'home.activities.priceOnRequest': {
     es: 'Precio a consultar',
     en: 'Price on request'
@@ -534,6 +734,18 @@ export const translations: Translations = {
   'home.activities.provider': {
     es: 'Proveedor de actividad:',
     en: 'Activity Provider:'
+  },
+  'home.activities.newActivity': {
+    es: 'Nueva Actividad',
+    en: 'New Activity'
+  },
+  'home.activities.verifiedProvider': {
+    es: 'Proveedor verificado',
+    en: 'Verified provider'
+  },
+  'home.activities.verifiedProviderTooltip': {
+    es: 'Proveedor verificado: cuenta con toda su documentación del gobierno local y del Ministerio de Turismo.',
+    en: 'Verified provider: holds all documentation from the local government and the Ministry of Tourism.'
   },
 
 
@@ -963,11 +1175,11 @@ export const translations: Translations = {
     en: 'No schedules available.'
   },
   'detail.booking.pickupZones': {
-    es: 'Ver zonas de recogida',
+    es: 'Ver zonas de recojo',
     en: 'View pickup zones'
   },
   'detail.booking.pickupDescription': {
-    es: 'Comprueba si tu alojamiento está dentro de la zona elegible para el servicio de recogida.',
+    es: 'Comprueba si tu alojamiento está dentro de la zona elegible para el servicio de recojo.',
     en: 'Check if your accommodation is within the eligible area for pickup service.'
   },
   'detail.booking.cancellationPolicy': {
@@ -1046,9 +1258,141 @@ export const translations: Translations = {
     es: 'por persona',
     en: 'per person'
   },
+  'detail.booking.fromParticipants': {
+    es: 'A partir de {count} {plural}',
+    en: 'From {count} {plural}'
+  },
+  'detail.booking.participantSingular': {
+    es: 'pax',
+    en: 'pax'
+  },
+  'detail.booking.participantPlural': {
+    es: 'personas',
+    en: 'people'
+  },
   'detail.booking.contactForPrice': {
     es: 'Consultar precio',
     en: 'Contact for price'
+  },
+  'detail.booking.duration.day': {
+    es: 'día',
+    en: 'day'
+  },
+  'detail.booking.duration.days': {
+    es: 'días',
+    en: 'days'
+  },
+  'detail.booking.duration.hour': {
+    es: 'hora',
+    en: 'hour'
+  },
+  'detail.booking.duration.hours': {
+    es: 'horas',
+    en: 'hours'
+  },
+  'detail.booking.duration.minute': {
+    es: 'minuto',
+    en: 'minute'
+  },
+  'detail.booking.duration.minutes': {
+    es: 'minutos',
+    en: 'minutes'
+  },
+  'detail.booking.duration.notSpecified': {
+    es: 'Duración no especificada',
+    en: 'Duration not specified'
+  },
+  'detail.booking.duration.default': {
+    es: '2 horas',
+    en: '2 hours'
+  },
+  'detail.booking.guideLanguage': {
+    es: 'Idioma del guía: ',
+    en: 'Guide language: '
+  },
+  'detail.booking.selectGuideLanguages': {
+    es: 'Selecciona idiomas del guía',
+    en: 'Select guide languages'
+  },
+  'detail.booking.selectLanguage': {
+    es: 'Selecciona un idioma',
+    en: 'Select a language'
+  },
+  'detail.booking.selectedLocation': {
+    es: 'Ubicación seleccionada:',
+    en: 'Selected location:'
+  },
+  'detail.booking.edit': {
+    es: 'Editar',
+    en: 'Edit'
+  },
+  'detail.booking.viewPickupLocations': {
+    es: 'Ver {count} ubicaciones de recogida',
+    en: 'View {count} pickup locations'
+  },
+  'detail.booking.pickupAvailableDescription': {
+    es: 'La recogida está disponible desde múltiples ubicaciones. Selecciona tu ubicación preferida.',
+    en: 'Pickup is available from multiple locations. Select your preferred location.'
+  },
+  'detail.booking.specialRequests': {
+    es: '¿Tienes alguna solicitud especial? (opcional)',
+    en: 'Do you have any special requests? (optional)'
+  },
+  'detail.booking.specialRequestsPlaceholder': {
+    es: 'Ej: Llegar 15 minutos antes, necesidades específicas, ubicación exacta...',
+    en: 'E.g.: Arrive 15 minutes early, specific needs, exact location...'
+  },
+  'detail.booking.characters': {
+    es: 'caracteres',
+    en: 'characters'
+  },
+  'detail.booking.startTime': {
+    es: 'Hora de inicio',
+    en: 'Start time'
+  },
+  'detail.booking.selectStartTime': {
+    es: 'Selecciona un horario de inicio',
+    en: 'Select a starting time'
+  },
+  'detail.booking.pickupLocations': {
+    es: 'Ubicaciones de Recogida',
+    en: 'Pickup Locations'
+  },
+  'detail.booking.close': {
+    es: 'Cerrar',
+    en: 'Close'
+  },
+  'detail.booking.confirm': {
+    es: 'Confirmar',
+    en: 'Confirm'
+  },
+  'detail.booking.activityAlreadyInCart': {
+    es: 'Esta actividad ya está en tu carrito',
+    en: 'This activity is already in your cart'
+  },
+  'detail.booking.noSchedulesForDay': {
+    es: 'No hay horarios disponibles para {day} ({date}).',
+    en: 'No schedules available for {day} ({date}).'
+  },
+  'detail.booking.selectPickupLocation': {
+    es: 'Selecciona tu ubicación de recogida preferida:',
+    en: 'Select your preferred pickup location:'
+  },
+  'detail.booking.cancelBeforeDeadline': {
+    es: 'Cancela antes del {deadline} para un reembolso completo',
+    en: 'Cancel before {deadline} for a full refund'
+  },
+  'detail.booking.provider': {
+    es: 'Proveedor',
+    en: 'Provider'
+  },
+  'detail.booking.verified': {
+    es: 'Verificado',
+    en: 'Verified'
+  },
+  'detail.review': {
+    es: 'reseña',
+    en: 'review'
   },
 
   // About page
@@ -1993,7 +2337,7 @@ export const translations: Translations = {
   'stepItinerary.continueCreating': { es: 'Seguir creando', en: 'Continue creating' },
   'stepItinerary.example.title': { es: 'Ejemplo de cómo ven los clientes un itinerario visual.', en: 'Example of how clients see a visual itinerary.' },
   'stepItinerary.day.title': { es: 'Día {dayNumber}', en: 'Day {dayNumber}' },
-  'stepItinerary.day.titlePlaceholder': { es: 'Ej: Lugar de recogida: Edinburgh', en: 'Ex: Pickup location: Edinburgh' },
+  'stepItinerary.day.titlePlaceholder': { es: 'Ej: Lugar de recojo: Edinburgh', en: 'Ex: Pickup location: Edinburgh' },
   'stepItinerary.day.descriptionPlaceholder': { es: 'Ej: Bus ride (1h30min)', en: 'Ex: Bus ride (1h30min)' },
   'stepItinerary.addDay': { es: 'Añadir día', en: 'Add day' },
   'stepItinerary.removeDay': { es: 'Eliminar día', en: 'Remove day' },
@@ -2111,24 +2455,24 @@ export const translations: Translations = {
   'stepMeetingPickup.arrivalMethod.title': { es: 'Método de llegada', en: 'Arrival method' },
   'stepMeetingPickup.arrivalMethod.description': { es: 'Describe el punto de encuentro (opcional)', en: 'Describe the meeting point (optional)' },
   'stepMeetingPickup.arrivalMethod.meetingPoint': { es: 'Punto de encuentro', en: 'Meeting point' },
-  'stepMeetingPickup.arrivalMethod.pickupService': { es: 'Servicio de recogida', en: 'Pickup service' },
+  'stepMeetingPickup.arrivalMethod.pickupService': { es: 'Servicio de recojo', en: 'Pickup service' },
   'stepMeetingPickup.meetingPoint.title': { es: 'Punto de encuentro', en: 'Meeting point' },
   'stepMeetingPickup.meetingPoint.description': { es: 'Especifica dónde se reunirán los clientes para comenzar la actividad.', en: 'Specify where clients will meet to start the activity.' },
   'stepMeetingPickup.meetingPoint.addAddress': { es: 'Añadir dirección del punto de encuentro', en: 'Add meeting point address' },
-  'stepMeetingPickup.pickupService.title': { es: 'Servicio de recogida', en: 'Pickup service' },
-  'stepMeetingPickup.pickupService.description': { es: '¿Cómo funciona tu servicio de recogida?', en: 'How does your pickup service work?' },
-  'stepMeetingPickup.pickupType.title': { es: 'Tipo de recogida', en: 'Pickup type' },
+  'stepMeetingPickup.pickupService.title': { es: 'Servicio de recojo', en: 'Pickup service' },
+  'stepMeetingPickup.pickupService.description': { es: '¿Cómo funciona tu servicio de recojo?', en: 'How does your pickup service work?' },
+  'stepMeetingPickup.pickupType.title': { es: 'Tipo de recojo', en: 'Pickup type' },
   'stepMeetingPickup.pickupType.zones': { es: 'Zonas', en: 'Zones' },
   'stepMeetingPickup.pickupType.specificPlaces': { es: 'Lugares específicos', en: 'Specific places' },
   'stepMeetingPickup.pickupType.zonesDescription': { es: 'Define zonas generales donde puedes recoger a los clientes.', en: 'Define general zones where you can pick up clients.' },
   'stepMeetingPickup.pickupType.specificPlacesDescription': { es: 'Define lugares específicos donde puedes recoger a los clientes.', en: 'Define specific places where you can pick up clients.' },
-  'stepMeetingPickup.pickupAddresses.title': { es: 'Direcciones de recogida', en: 'Pickup addresses' },
+  'stepMeetingPickup.pickupAddresses.title': { es: 'Direcciones de recojo', en: 'Pickup addresses' },
   'stepMeetingPickup.pickupAddresses.description': { es: 'Añade las direcciones o zonas donde puedes recoger a los clientes.', en: 'Add the addresses or zones where you can pick up clients.' },
-  'stepMeetingPickup.pickupAddresses.added': { es: 'Direcciones de recogida añadidas:', en: 'Added pickup addresses:' },
-  'stepMeetingPickup.pickupDescription.title': { es: 'Descripción del servicio de recogida', en: 'Pickup service description' },
-  'stepMeetingPickup.pickupDescription.description': { es: 'Explica a los clientes cómo funciona el servicio de recogida.', en: 'Explain to clients how the pickup service works.' },
+  'stepMeetingPickup.pickupAddresses.added': { es: 'Direcciones de recojo añadidas:', en: 'Added pickup addresses:' },
+  'stepMeetingPickup.pickupDescription.title': { es: 'Descripción del servicio de recojo', en: 'Pickup service description' },
+  'stepMeetingPickup.pickupDescription.description': { es: 'Explica a los clientes cómo funciona el servicio de recojo.', en: 'Explain to clients how the pickup service works.' },
   'stepMeetingPickup.pickupTiming.title': { es: '¿Cuándo sueles recoger a los clientes?', en: 'When do you usually pick up clients?' },
-  'stepMeetingPickup.pickupTiming.description': { es: 'Ten en cuenta que tendrás que comunicar la hora exacta de recogida para cada reserva.', en: 'Keep in mind that you will have to communicate the exact pickup time for each booking.' },
+  'stepMeetingPickup.pickupTiming.description': { es: 'Ten en cuenta que tendrás que comunicar la hora exacta de recojo para cada reserva.', en: 'Keep in mind that you will have to communicate the exact pickup time for each booking.' },
   'stepMeetingPickup.pickupTiming.0-30': { es: 'De 0 a 30 min antes del inicio de la actividad', en: 'From 0 to 30 min before the start of the activity' },
   'stepMeetingPickup.pickupTiming.30-60': { es: 'De 30 a 60 min antes del inicio de la actividad', en: 'From 30 to 60 min before the start of the activity' },
   'stepMeetingPickup.pickupTiming.60-90': { es: 'De 60 a 90 min antes del inicio de la actividad', en: 'From 60 to 90 min before the start of the activity' },
@@ -2139,7 +2483,7 @@ export const translations: Translations = {
   'stepMeetingPickup.pickupTiming.customHelp': { es: 'Describe cuánto tiempo antes del inicio de la actividad sueles recoger a los clientes.', en: 'Describe how long before the start of the activity you usually pick up clients.' },
 
   'stepMeetingPickup.transport.title': { es: 'Transporte', en: 'Transport' },
-  'stepMeetingPickup.transport.description': { es: '¿Cuál es el medio de transporte utilizado para el servicio de recogida y regreso?', en: 'What is the means of transport used for pickup and return service?' },
+  'stepMeetingPickup.transport.description': { es: '¿Cuál es el medio de transporte utilizado para el servicio de recojo y regreso?', en: 'What is the means of transport used for pickup and return service?' },
   'stepMeetingPickup.transport.car': { es: 'Coche', en: 'Car' },
   'stepMeetingPickup.transport.van': { es: 'Furgoneta', en: 'Van' },
   'stepMeetingPickup.transport.bus': { es: 'Autobús', en: 'Bus' },
@@ -2152,8 +2496,8 @@ export const translations: Translations = {
   'stepMeetingPickup.transport.error': { es: 'Error al cargar los modos de transporte disponibles. Por favor, recarga la página.', en: 'Error loading available transport modes. Please reload the page.' },
   'stepMeetingPickup.transport.retry': { es: 'Reintentar', en: 'Retry' },
   'stepMeetingPickup.validation.meetingPoint': { es: 'Debes añadir la dirección del punto de encuentro.', en: 'You must add the meeting point address.' },
-  'stepMeetingPickup.validation.pickupAddresses': { es: 'Debes añadir al menos una dirección o zona de recogida.', en: 'You must add at least one pickup address or zone.' },
-  'stepMeetingPickup.validation.customPickupTiming': { es: 'Debes especificar el horario personalizado de recogida.', en: 'You must specify the custom pickup timing.' },
+  'stepMeetingPickup.validation.pickupAddresses': { es: 'Debes añadir al menos una dirección o zona de recojo.', en: 'You must add at least one pickup address or zone.' },
+  'stepMeetingPickup.validation.customPickupTiming': { es: 'Debes especificar el horario personalizado de recojo.', en: 'You must specify the custom pickup timing.' },
   'stepMeetingPickup.validation.returnAddresses': { es: 'Debes añadir al menos una dirección de regreso.', en: 'You must add at least one return address.' },
   'stepMeetingPickup.loading.config': { es: 'Cargando configuración del punto de encuentro...', en: 'Loading meeting point configuration...' },
   'stepMeetingPickup.loading.cities': { es: 'Cargando ciudades disponibles...', en: 'Loading available cities...' },
@@ -2173,11 +2517,11 @@ export const translations: Translations = {
   'stepMeetingPickup.originCity.error': { es: 'Error al cargar las ciudades disponibles. Por favor, recarga la página.', en: 'Error loading available cities. Please reload the page.' },
   'stepMeetingPickup.meetingPoint.current': { es: 'Punto de encuentro:', en: 'Meeting point:' },
 
-  // Traducciones para descripción del servicio de recogida (punto de encuentro)
-  'stepMeetingPickup.pickupServiceDescription.title': { es: 'Describe tu servicio de recogida', en: 'Describe your pickup service' },
+  // Traducciones para descripción del servicio de recojo (punto de encuentro)
+  'stepMeetingPickup.pickupServiceDescription.title': { es: 'Describe tu servicio de recojo', en: 'Describe your pickup service' },
   'stepMeetingPickup.pickupServiceDescription.optional': { es: 'opcional', en: 'optional' },
-  'stepMeetingPickup.pickupServiceDescription.description': { es: 'Si tus zonas/lugares de recogida son muy específicos, descríbelos con más detalle.', en: 'If your pickup zones/places are very specific, describe them in more detail.' },
-  'stepMeetingPickup.pickupServiceDescription.placeholder': { es: 'Describe los detalles del servicio de recogida...', en: 'Describe the details of the pickup service...' },
+  'stepMeetingPickup.pickupServiceDescription.description': { es: 'Si tus zonas/lugares de recojo son muy específicos, descríbelos con más detalle.', en: 'If your pickup zones/places are very specific, describe them in more detail.' },
+  'stepMeetingPickup.pickupServiceDescription.placeholder': { es: 'Describe los detalles del servicio de recojo...', en: 'Describe the details of the pickup service...' },
   
   // Nuevas traducciones para la descripción del punto de encuentro
   'stepMeetingPickup.meetingPointDescription.title': { es: 'Describe el punto de encuentro', en: 'Describe the meeting point' },
@@ -2186,9 +2530,9 @@ export const translations: Translations = {
   'stepMeetingPickup.meetingPointDescription.question2': { es: '¿Cómo reconocerán los clientes al guía?', en: 'How will clients recognize the guide?' },
   'stepMeetingPickup.meetingPointDescription.placeholder': { es: 'Please insert your text in English', en: 'Please insert your text in English' },
 
-  'stepMeetingPickup.pickupDescription.optional': { es: 'Describe tu servicio de recogida (opcional)', en: 'Describe your pickup service (optional)' },
-  'stepMeetingPickup.pickupDescription.placeholder': { es: 'Describe los detalles del servicio de recogida...', en: 'Describe the details of the pickup service...' },
-  'stepMeetingPickup.pickupDescription.help': { es: 'Si tus zonas/lugares de recogida son muy específicos, descríbelos con más detalle.', en: 'If your pickup zones/places are very specific, describe them in more detail.' },
+  'stepMeetingPickup.pickupDescription.optional': { es: 'Describe tu servicio de recojo (opcional)', en: 'Describe your pickup service (optional)' },
+  'stepMeetingPickup.pickupDescription.placeholder': { es: 'Describe los detalles del servicio de recojo...', en: 'Describe the details of the pickup service...' },
+  'stepMeetingPickup.pickupDescription.help': { es: 'Si tus zonas/lugares de recojo son muy específicos, descríbelos con más detalle.', en: 'If your pickup zones/places are very specific, describe them in more detail.' },
 
   // Traducciones para la sección de regreso
   'stepMeetingPickup.return.title': { es: 'Regreso', en: 'Return' },
@@ -2215,9 +2559,9 @@ export const translations: Translations = {
   // Traducciones adicionales para pickupType
   'stepMeetingPickup.pickupType.zones.description': { es: 'La recogida se realizará en cualquier dirección de las zonas que especifiques', en: 'Pickup will be made at any address in the zones you specify' },
   'stepMeetingPickup.pickupType.specificPlaces.description': { es: 'La recogida se realizará en las direcciones específicas que añadas', en: 'Pickup will be made at the specific addresses you add' },
-  'stepMeetingPickup.pickupType.zones.addMessage': { es: 'Añade las zonas en las que ofreces el servicio de recogida', en: 'Add the zones where you offer pickup service' },
-  'stepMeetingPickup.pickupType.specificPlaces.addMessage': { es: 'Añade al menos 2 direcciones donde ofreces el servicio de recogida', en: 'Add at least 2 addresses where you offer pickup service' },
-  'stepMeetingPickup.pickupType.zones.mapDescription': { es: 'Selecciona las zonas en el mapa donde ofreces el servicio de recogida.', en: 'Select the zones on the map where you offer pickup service.' },
+  'stepMeetingPickup.pickupType.zones.addMessage': { es: 'Añade las zonas en las que ofreces el servicio de recojo', en: 'Add the zones where you offer pickup service' },
+  'stepMeetingPickup.pickupType.specificPlaces.addMessage': { es: 'Añade al menos 2 direcciones donde ofreces el servicio de recojo', en: 'Add at least 2 addresses where you offer pickup service' },
+  'stepMeetingPickup.pickupType.zones.mapDescription': { es: 'Selecciona las zonas en el mapa donde ofreces el servicio de recojo.', en: 'Select the zones on the map where you offer pickup service.' },
   'stepMeetingPickup.pickupType.zones.added': { es: 'Zonas añadidas:', en: 'Added zones:' },
   'stepMeetingPickup.pickupType.specificPlaces.added': { es: 'Direcciones añadidas:', en: 'Added addresses:' },
 
@@ -2257,7 +2601,7 @@ export const translations: Translations = {
   'stepMeetingPickup.notes.modal.save': { es: 'Guardar', en: 'Save' },
   'stepMeetingPickup.notes.modal.cancel': { es: 'Cancelar', en: 'Cancel' },
   'stepMeetingPickup.notes.modal.placeholder': { es: 'Escribe una nota específica para esta dirección...', en: 'Write a specific note for this address...' },
-  'stepMeetingPickup.notes.modal.description': { es: 'Agrega información adicional específica para esta dirección de recogida.', en: 'Add additional information specific to this pickup address.' },
+  'stepMeetingPickup.notes.modal.description': { es: 'Agrega información adicional específica para esta dirección de recojo.', en: 'Add additional information specific to this pickup address.' },
   'stepMeetingPickup.notes.modal.title': { es: 'Nota para la dirección', en: 'Note for address' },
   'stepMeetingPickup.notes.button': { es: 'Agregar/Editar nota', en: 'Add/Edit note' },
 
@@ -2408,8 +2752,15 @@ export const getTranslation = (key: string, language: 'es' | 'en'): string => {
 export const getTranslationWithParams = (key: string, language: 'es' | 'en', params: Record<string, string | number>): string => {
   let translation = getTranslation(key, language);
   
+  // Reemplazar cada parámetro en la traducción
   Object.entries(params).forEach(([param, value]) => {
-    translation = translation.replace(`{${param}}`, String(value));
+    const valueStr = String(value || '').trim();
+    
+    if (valueStr) {
+      // Método simple y seguro: usar split y join para reemplazar todas las ocurrencias
+      const placeholder = `{${param}}`;
+      translation = translation.split(placeholder).join(valueStr);
+    }
   });
   
   return translation;

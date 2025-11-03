@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useLanguage } from '../context/LanguageContext';
-import { getTranslation } from '../utils/translations';
+import { getTranslation, getTranslationWithParams } from '../utils/translations';
 import { useConfig } from '../context/ConfigContext';
 import { useUrlParams } from '../hooks/useUrlParams';
 import { usePageTitle } from '../hooks/usePageTitle';
@@ -110,22 +110,51 @@ const Search: React.FC = () => {
             let hasActiveOffer = false;
             let discountPercent = 0;
 
+            let minParticipants: number | null = null;
+            
             if (bookingOption) {
               // Obtener precio base
               if (bookingOption.pricingMode === 'PER_PERSON' && bookingOption.priceTiers && bookingOption.priceTiers.length > 0) {
                 currency = bookingOption.priceTiers[0].currency || 'PEN';
                 
+                // Calcular el precio mínimo y encontrar el tier correspondiente
+                let minPrice = Infinity;
+                let minParticipantsValue = Infinity;
+                
+                bookingOption.priceTiers.forEach((tier: any) => {
+                  const tierTotalPrice = tier.totalPrice || 0;
+                  const tierMinParticipants = tier.minParticipants || 1;
+                  
+                  // Aplicar descuento si existe
+                  let finalPrice = tierTotalPrice;
+                  if (bookingOption.specialOfferPercentage && bookingOption.specialOfferPercentage > 0) {
+                    finalPrice = tierTotalPrice - (tierTotalPrice * (bookingOption.specialOfferPercentage / 100));
+                  }
+                  
+                  if (finalPrice < minPrice) {
+                    minPrice = finalPrice;
+                    minParticipantsValue = tierMinParticipants;
+                  } else if (finalPrice === minPrice && tierMinParticipants < minParticipantsValue) {
+                    minParticipantsValue = tierMinParticipants;
+                  }
+                });
+                
+                price = minPrice === Infinity ? 0 : minPrice;
+                minParticipants = minParticipantsValue === Infinity ? null : minParticipantsValue;
+                
                 if (bookingOption.priceTiers.length > 1) {
-                  price = Math.min(...bookingOption.priceTiers.map((tier: any) => tier.totalPrice));
                   isFrom = true;
+                  // Solo calcular minParticipants si hay más de un tier
+                  minParticipants = minParticipantsValue === Infinity ? null : minParticipantsValue;
                 } else {
-                  price = bookingOption.priceTiers[0].totalPrice;
                   isFrom = false;
+                  minParticipants = null; // No mostrar mensaje si solo hay un tier
                 }
               } else {
                 currency = bookingOption.currency || 'PEN';
                 price = bookingOption.pricePerPerson || 0;
                 isFrom = false;
+                minParticipants = null;
               }
 
               // Verificar specialOfferPercentage
@@ -186,6 +215,7 @@ const Search: React.FC = () => {
               includes: activity.includes || [],
               currency: currency,
               isFromPrice: isFrom,
+              minParticipants: minParticipants,
               supplierName: activity.supplier?.name?.split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(' ') || '',
               supplierVerified: Boolean(activity.supplier?.isVerified),
               hasActiveOffer: hasActiveOffer,
@@ -666,7 +696,7 @@ const Search: React.FC = () => {
                       {activity.isNew && (
                         <div className="position-absolute top-0 start-0 m-2">
                           <span className="badge bg-light text-dark">
-                            {language === 'es' ? 'Nueva Actividad' : 'New Activity'}
+                            {getTranslation('home.activities.newActivity', language)}
                           </span>
                         </div>
                       )}
@@ -702,14 +732,12 @@ const Search: React.FC = () => {
                               <span 
                                 className="badge fw-semibold"
                                 style={{ fontSize: '0.6rem', backgroundColor: '#191970', color: '#fff', lineHeight: 1, padding: '0.25rem 0.4rem', display: 'inline-flex', alignItems: 'center' }}
-                                aria-label={language === 'es' ? 'Proveedor verificado' : 'Verified provider'}
+                                aria-label={getTranslation('home.activities.verifiedProvider', language)}
                               >
-                                <i className="fas fa-check-circle me-1"></i>{language === 'es' ? 'Verificado' : 'Verified'}
+                                <i className="fas fa-check-circle me-1"></i>{getTranslation('detail.booking.verified', language)}
                               </span>
                               <span className="verified-tooltip">
-                                {language === 'es' 
-                                  ? 'Proveedor verificado: cuenta con toda su documentación del gobierno local y del Ministerio de Turismo.'
-                                  : 'Verified provider: holds all documentation from the local government and the Ministry of Tourism.'}
+                                {getTranslation('home.activities.verifiedProviderTooltip', language)}
                               </span>
                             </span>
                           )}
@@ -762,9 +790,19 @@ const Search: React.FC = () => {
                                   <span className="fs-5 fw-bold" style={{ fontSize: '1rem', margin: '0px', padding: '0px' }}>
                                     {activity.currency === 'PEN' ? 'S/' : '$'}{Math.ceil(getPriceValue(activity.price))}
                                   </span>
-                                  <small className="text-muted" style={{ fontSize: '0.6rem', marginLeft: '0.25rem', margin: '0px', padding: '0px' }}>
-                                    {getTranslation('home.activities.perPerson', language)}
-                                  </small>
+                                    <small className="text-muted" style={{ fontSize: '0.6rem', marginLeft: '0.25rem', margin: '0px', padding: '0px' }}>
+                                      {getTranslation('home.activities.perPerson', language)}
+                                    </small>
+                                    {activity.minParticipants !== null && activity.minParticipants !== undefined && (
+                                      <small className="text-muted d-block" style={{ fontSize: '0.6rem', marginTop: '2px' }}>
+                                        {getTranslationWithParams('home.activities.fromParticipants', language, {
+                                          count: activity.minParticipants,
+                                          plural: activity.minParticipants === 1 
+                                            ? getTranslation('home.activities.participantSingular', language)
+                                            : getTranslation('home.activities.participantPlural', language)
+                                        })}
+                                      </small>
+                                    )}
                                 </div>
                               </>
                             ) : (
@@ -832,7 +870,7 @@ const Search: React.FC = () => {
                           {activity.isNew && (
                             <div className="mb-1">
                               <span className="badge bg-light text-dark" style={{ fontSize: '0.65rem' }}>
-                                {language === 'es' ? 'Nueva Actividad' : 'New Activity'}
+                                {getTranslation('home.activities.newActivity', language)}
                               </span>
                             </div>
                           )}
@@ -853,14 +891,12 @@ const Search: React.FC = () => {
                                   <span 
                                     className="badge"
                                     style={{ fontSize: '0.55rem', backgroundColor: '#191970', color: '#fff', lineHeight: 1, padding: '0.2rem 0.35rem', display: 'inline-flex', alignItems: 'center' }}
-                                    aria-label={language === 'es' ? 'Proveedor verificado' : 'Verified provider'}
+                                    aria-label={getTranslation('home.activities.verifiedProvider', language)}
                                   >
-                                    <i className="fas fa-check-circle me-1"></i>{language === 'es' ? 'Verificado' : 'Verified'}
+                                    <i className="fas fa-check-circle me-1"></i>{getTranslation('detail.booking.verified', language)}
                                   </span>
                                   <span className="verified-tooltip">
-                                    {language === 'es' 
-                                      ? 'Proveedor verificado: cuenta con toda su documentación del gobierno local y del Ministerio de Turismo.'
-                                      : 'Verified provider: holds all documentation from the local government and the Ministry of Tourism.'}
+                                    {getTranslation('home.activities.verifiedProviderTooltip', language)}
                                   </span>
                                 </span>
                               )}
@@ -915,6 +951,16 @@ const Search: React.FC = () => {
                                       <small className="text-muted" style={{ fontSize: '0.55rem', marginLeft: '0.25rem', margin: '0px', padding: '0px' }}>
                                         {getTranslation('home.activities.perPerson', language)}
                                       </small>
+                                      {activity.minParticipants !== null && activity.minParticipants !== undefined && (
+                                        <small className="text-muted d-block" style={{ fontSize: '0.55rem', marginTop: '2px' }}>
+                                          {getTranslationWithParams('home.activities.fromParticipants', language, {
+                                            count: activity.minParticipants,
+                                            plural: activity.minParticipants === 1 
+                                              ? getTranslation('home.activities.participantSingular', language)
+                                              : getTranslation('home.activities.participantPlural', language)
+                                          })}
+                                        </small>
+                                      )}
                                     </div>
                                   </>
                                 ) : (
