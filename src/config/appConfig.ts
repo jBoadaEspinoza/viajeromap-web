@@ -24,6 +24,13 @@ export interface AppConfig {
     baseUrl?: string;
     redirectBaseUrl?: string;
   };
+  googlePay: {
+    merchantId: string;
+    merchantName: string;
+    environment: string;
+    currency: string;
+    publicKey?: string; // Para DIRECT tokenization
+  };
   pricing: {
     defaultCommissionPercentage: number;
   };
@@ -65,6 +72,12 @@ export const appConfig: AppConfig = {
         ? `${window.location.protocol}//${window.location.hostname}:3000`
         : window.location.origin
     ) : ''
+  },
+  googlePay: {
+    merchantId: "BCR2DN4T26O57HLH",
+    merchantName: "ViajeroMap",
+    environment: "TEST", // TEST para sandbox, PRODUCTION para producción
+    currency: "USD",
   },
   pricing: {
     defaultCommissionPercentage: 15

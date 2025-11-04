@@ -325,6 +325,10 @@ export const translations: Translations = {
     es: '¡Pago procesado exitosamente!',
     en: 'Payment processed successfully!'
   },
+  'checkout.cardPayment': { 
+    es: 'Pago con tarjeta de crédito o débito',
+    en: 'Payment with credit or debit card'
+  },
   'checkout.paymentError': {
     es: 'Hubo un error al procesar el pago. Por favor, contacta con soporte.',
     en: 'There was an error processing the payment. Please contact support.'

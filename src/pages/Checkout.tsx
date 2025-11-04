@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useLanguage } from '../context/LanguageContext';
 import { useCurrency } from '../context/CurrencyContext';
@@ -11,6 +11,7 @@ import { useCart } from '../context/CartContext';
 import type { CartItem } from '../context/CartContext';
 import RatingStars from '../components/RatingStars';
 import { apiConfig } from '../utils/apiConfig';
+import GooglePayButton from '@google-pay/button-react';
 
 interface BookingDetails {
   activityId: string;
@@ -340,29 +341,129 @@ const Checkout: React.FC = () => {
     });
   };
 
-  // Función auxiliar para calcular el precio total con descuento
+  // Función auxiliar para calcular el precio total con descuento para PayPal
   const calculatePayPalAmount = () => {
+    const paypalConfig = config?.paypal || apiConfig.paypal;
+    const currency = bookingDetails?.currency || paypalConfig?.currency || 'USD';
+    
     const totalAdults = bookingDetails?.travelers?.adults || 1;
     const totalChildren = bookingDetails?.travelers?.children || 0;
     const totalTravelers = totalAdults + totalChildren;
     
-    let pricePerPerson = (bookingDetails as any)?.finalPrice || bookingDetails?.price || 0;
+    // Calcular precio unitario
+    const unitPrice = bookingDetails?.price || 0;
     
-    // Verificar si hay descuento activo y asegurar que se aplique correctamente
+    // Calcular total sin descuento
+    let totalAmount = unitPrice * totalTravelers;
+    
+    // Aplicar descuento si existe
     if (bookingDetails?.hasDiscount && bookingDetails?.discountPercentage > 0) {
-      const originalPrice = bookingDetails?.originalPrice || 0;
-      
-      if (originalPrice > 0 && Math.abs(pricePerPerson - originalPrice) < 0.01) {
-        const discountAmount = originalPrice * (bookingDetails.discountPercentage / 100);
-        pricePerPerson = Math.round((originalPrice - discountAmount) * 100) / 100;
-      }
+      const discount = totalAmount * (bookingDetails.discountPercentage / 100);
+      totalAmount = Math.ceil(totalAmount - discount);
+    } else {
+      totalAmount = Math.ceil(totalAmount);
     }
     
-    const totalAmount = (pricePerPerson * totalTravelers).toFixed(2);
-    const paypalConfig = config?.paypal || apiConfig.paypal;
-    const currency = bookingDetails?.currency || paypalConfig?.currency || 'USD';
+    return {
+      totalAmount: totalAmount.toFixed(2),
+      currency
+    };
+  };
+
+
+  const calculateGooglePayAmount = () => {
+    // Similar a PayPal, calcular el total con descuentos
+    const googlePayConfig = config?.googlePay || apiConfig.googlePay;
+    const currency = bookingDetails?.currency || googlePayConfig?.currency || 'USD';
     
-    return { totalAmount, currency };
+    const totalAdults = bookingDetails?.travelers?.adults || 1;
+    const totalChildren = bookingDetails?.travelers?.children || 0;
+    const totalTravelers = totalAdults + totalChildren;
+    
+    // Calcular precio unitario
+    const unitPrice = bookingDetails?.price || 0;
+    
+    // Calcular total sin descuento
+    let totalAmount = unitPrice * totalTravelers;
+    
+    // Aplicar descuento si existe
+    if (bookingDetails?.hasDiscount && bookingDetails?.discountPercentage > 0) {
+      const discount = totalAmount * (bookingDetails.discountPercentage / 100);
+      totalAmount = Math.ceil(totalAmount - discount);
+    } else {
+      totalAmount = Math.ceil(totalAmount);
+    }
+    
+    return {
+      totalAmount: totalAmount.toFixed(2),
+      currency
+    };
+  };
+
+  // Función para generar UUID corto (usado en PayPal y Google Pay)
+  const generateShortUUID = (): string => {
+    return Math.random().toString(36).substring(2, 10).toUpperCase();
+  };
+
+  // Función para procesar el pago completado (compartida entre PayPal y Google Pay)
+  const processCompletedPayment = (paymentInfo: any, paymentMethod: 'paypal' | 'googlepay') => {
+    // Generar código de reserva UUID corto
+    const reservationCode = generateShortUUID();
+    
+    // Mensaje sobre envío de datos al backend
+    const sendToBackendMessage = language === 'es' 
+      ? 'Se procede enviar la data del detalle de la reserva al backend para su registro.'
+      : 'Proceeding to send reservation detail data to backend for registration.';
+    
+    // Estructura de datos de reserva a enviar al backend
+    const reservationData = {
+      reservationCode,
+      bookingDetails,
+      paymentInfo: {
+        ...paymentInfo,
+        paymentMethod,
+        timestamp: new Date().toISOString()
+      }
+    };
+    
+    console.log('📤 ' + sendToBackendMessage);
+    console.log('📋 Reservation Data to send to backend:', reservationData);
+    
+    // Capturar el pago y enviar datos al backend
+    try {
+      // Aquí iría la llamada al backend para registrar la reserva
+      // await sendReservationToBackend(reservationData);
+      
+      console.log('📤 ' + sendToBackendMessage);
+      
+      // Guardar datos de reserva en sessionStorage antes de limpiar
+      sessionStorage.setItem('lastReservationData', JSON.stringify(reservationData));
+      
+      // Limpiar datos de checkout (pero mantener reservationData en sessionStorage)
+      sessionStorage.removeItem('checkoutBookingDetails');
+      sessionStorage.removeItem('checkoutTimeLeft');
+      sessionStorage.removeItem('checkoutCurrentStep');
+      sessionStorage.removeItem('checkoutFormData');
+      
+      // Redirigir a la página de pago completado con los datos de la reserva
+      navigate('/payment-completed', { 
+        state: reservationData 
+      });
+    } catch (error) {
+      console.error('❌ Error al procesar el pago:', error);
+      const errorMessage = getTranslation('checkout.paymentError', language);
+      
+      alert(errorMessage);
+      
+      // Limpiar datos de checkout
+      sessionStorage.removeItem('checkoutBookingDetails');
+      sessionStorage.removeItem('checkoutTimeLeft');
+      sessionStorage.removeItem('checkoutCurrentStep');
+      sessionStorage.removeItem('checkoutFormData');
+      
+      // Redirigir a home
+      navigate('/');
+    }
   };
 
 
@@ -615,71 +716,17 @@ const Checkout: React.FC = () => {
               // Si el pago se captura directamente (sin redirección), procesar aquí
               // Si PayPal redirige, se manejará en el useEffect de redirección
               if (order.status === 'COMPLETED') {
-                // Función para generar un UUID corto (8 caracteres)
-                const generateShortUUID = (): string => {
-                  return Math.random().toString(36).substring(2, 10).toUpperCase();
+                // Procesar el pago completado usando la función compartida
+                const paymentInfo = {
+                  orderId: order.id,
+                  status: order.status,
+                  payerId: order.payer?.payer_id,
+                  amount: order.purchase_units?.[0]?.amount,
+                  fullOrder: order,
+                  paymentMethod: 'paypal'
                 };
                 
-                // Generar código de reserva UUID corto
-                const reservationCode = generateShortUUID();
-                
-                // Mensaje sobre envío de datos al backend
-                const sendToBackendMessage = language === 'es' 
-                  ? 'Se procede enviar la data del detalle de la reserva al backend para su registro.'
-                  : 'Proceeding to send reservation detail data to backend for registration.';
-                
-                // Estructura de datos de reserva a enviar al backend
-                const reservationData = {
-                  reservationCode,
-                  bookingDetails,
-                  paymentInfo: {
-                    orderId: order.id,
-                    status: order.status,
-                    payerId: order.payer?.payer_id,
-                    amount: order.purchase_units?.[0]?.amount,
-                    timestamp: new Date().toISOString(),
-                    fullOrder: order
-                  }
-                };
-                
-                console.log('📤 ' + sendToBackendMessage);
-                console.log('📋 Reservation Data to send to backend:', reservationData);
-                
-                // Capturar el pago y enviar datos al backend
-                try {
-                  // Aquí iría la llamada al backend para registrar la reserva
-                  // await sendReservationToBackend(reservationData);
-                  
-                  console.log('📤 ' + sendToBackendMessage);
-                  
-                  // Guardar datos de reserva en sessionStorage antes de limpiar (para que PaymentCompleted pueda acceder)
-                  sessionStorage.setItem('lastReservationData', JSON.stringify(reservationData));
-                  
-                  // Limpiar datos de checkout (pero mantener reservationData en sessionStorage)
-                  sessionStorage.removeItem('checkoutBookingDetails');
-                  sessionStorage.removeItem('checkoutTimeLeft');
-                  sessionStorage.removeItem('checkoutCurrentStep');
-                  sessionStorage.removeItem('checkoutFormData');
-                  
-                  // Redirigir a la página de pago completado con los datos de la reserva
-                  navigate('/payment-completed', { 
-                    state: reservationData 
-                  });
-                } catch (error) {
-                  console.error('❌ Error al procesar el pago:', error);
-                  const errorMessage = getTranslation('checkout.paymentError', language);
-                  
-                  alert(errorMessage);
-                  
-                  // Limpiar datos de checkout
-                  sessionStorage.removeItem('checkoutBookingDetails');
-                  sessionStorage.removeItem('checkoutTimeLeft');
-                  sessionStorage.removeItem('checkoutCurrentStep');
-                  sessionStorage.removeItem('checkoutFormData');
-                  
-                  // Redirigir a home
-                  navigate('/');
-                }
+                processCompletedPayment(paymentInfo, 'paypal');
               } else {
                 console.warn('⚠️ PayPal Order Status:', order.status, '- Expected: COMPLETED');
               }
@@ -735,6 +782,40 @@ const Checkout: React.FC = () => {
     loadPayPal();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paymentMethod, currentStep, bookingDetails]);
+
+  // Función para obtener la configuración de Google Pay
+  const getGooglePayConfig = () => {
+    const googlePayConfig = config?.googlePay || apiConfig.googlePay;
+    const { totalAmount, currency } = calculateGooglePayAmount();
+    const merchantId = googlePayConfig?.merchantId || '';
+    const merchantName = googlePayConfig?.merchantName || config?.business?.name || 'ViajeroMap';
+
+    // Calcular cantidad total de viajeros
+    const totalAdults = bookingDetails?.travelers?.adults || 1;
+    const totalChildren = bookingDetails?.travelers?.children || 0;
+    const totalTravelers = totalAdults + totalChildren;
+    
+    // Preparar descripción con título y cantidad de viajeros
+    const activityTitle = bookingDetails?.title || 'Reserva de actividad';
+    const travelersDescription = totalTravelers === 1 
+      ? getTranslation('checkout.traveler', language)
+      : getTranslationWithParams('checkout.travelers', language, { count: totalTravelers });
+    
+    const description = `${activityTitle} - ${travelersDescription}`;
+
+    return {
+      googlePayConfig,
+      totalAmount,
+      currency,
+      merchantId,
+      merchantName,
+      totalAdults,
+      totalChildren,
+      totalTravelers,
+      description
+    };
+  };
+
 
 
   // Show login modal if user is not authenticated OR if no booking details
@@ -2271,7 +2352,7 @@ const Checkout: React.FC = () => {
                   </div>
 
                   {/* Google Pay */}
-                  <div className="form-check mb-3 p-3 border rounded" style={{ cursor: 'not-allowed', backgroundColor: paymentMethod === 'googlepay' ? '#f8f9fa' : 'transparent', opacity: 0.6 }}>
+                  <div className="form-check mb-3 p-3 border rounded" style={{ cursor: 'pointer', backgroundColor: paymentMethod === 'googlepay' ? '#f8f9fa' : 'transparent', borderColor: paymentMethod === 'googlepay' ? '#007bff' : '#dee2e6' }}>
                     <input
                       className="form-check-input"
                       type="radio"
@@ -2279,19 +2360,15 @@ const Checkout: React.FC = () => {
                       id="paymentGooglePay"
                       value="googlepay"
                       checked={paymentMethod === 'googlepay'}
-                      onChange={(e) => {
-                        // Deshabilitado temporalmente
-                            alert(getTranslation('checkout.googlePayComingSoon', language));
-                      }}
-                      disabled
-                      style={{ cursor: 'not-allowed' }}
+                      onChange={(e) => setPaymentMethod(e.target.value as 'googlepay')}
+                      style={{ cursor: 'pointer' }}
                     />
-                    <label className="form-check-label d-flex align-items-center w-100" htmlFor="paymentGooglePay" style={{ cursor: 'not-allowed' }}>
+                    <label className="form-check-label d-flex align-items-center w-100" htmlFor="paymentGooglePay" style={{ cursor: 'pointer' }}>
                       <i className="fab fa-google-pay me-3" style={{ fontSize: '2rem', color: '#4285F4' }}></i>
                       <span className="fw-medium">Google Pay</span>
-                          <span className="badge bg-secondary ms-auto small">
-                            {getTranslation('checkout.comingSoon', language)}
-                          </span>
+                      {paymentMethod === 'googlepay' && (
+                        <i className="fas fa-check-circle text-success ms-auto" style={{ fontSize: '1.5rem' }}></i>
+                      )}
                     </label>
                   </div>
 
@@ -2363,6 +2440,107 @@ const Checkout: React.FC = () => {
                   </div>
                 )}
 
+                {/* Google Pay Option Content - Show when Google Pay is selected */}
+                {paymentMethod === 'googlepay' && bookingDetails && (() => {
+                  const gpConfig = getGooglePayConfig();
+                  const googlePayConfig = config?.googlePay || apiConfig.googlePay;
+                  
+                  return (
+                    <div className="mb-4 p-3 border rounded" style={{ backgroundColor: '#f8f9fa' }}>
+                      <p className="text-muted mb-3">
+                        {language === 'es' 
+                          ? 'Completa el pago con Google Pay.'
+                          : 'Complete payment with Google Pay.'}
+                      </p>
+                      <div className="d-flex justify-content-center align-items-center" style={{ minHeight: '80px' }}>
+                        <GooglePayButton
+                          environment="TEST"
+                          paymentRequest={{
+                            apiVersion: 2,
+                            apiVersionMinor: 0,
+                            allowedPaymentMethods: [
+                              {
+                                type: 'CARD',
+                                parameters: {
+                                  allowedAuthMethods: ['PAN_ONLY', 'CRYPTOGRAM_3DS'],
+                                  allowedCardNetworks: ['MASTERCARD', 'VISA'],
+                                },
+                                tokenizationSpecification: {
+                                  type: 'PAYMENT_GATEWAY',
+                                  parameters: {
+                                    gateway: 'example',
+                                    gatewayMerchantId: googlePayConfig?.merchantId || '',
+                                  },
+                                },
+                              },
+                            ],
+                            merchantInfo: {
+                              merchantId: googlePayConfig?.merchantId || '',
+                              merchantName: googlePayConfig?.merchantName || config?.business?.name || 'ViajeroMap',
+                            },
+                            transactionInfo: {
+                              totalPriceStatus: 'FINAL',
+                              totalPriceLabel: 'Total',
+                              totalPrice: gpConfig.totalAmount,
+                              currencyCode: gpConfig.currency,
+                              countryCode: 'PE',
+                            },
+                          }}
+                          onLoadPaymentData={(paymentData) => {
+                            console.log('✅ Google Pay - Pago exitoso:', paymentData);
+                            
+                            try {
+                              // Extraer el token
+                              const token = paymentData?.paymentMethodData?.tokenizationData?.token || '';
+                              
+                              // Procesar el pago completado usando la función existente
+                              const paymentInfo = {
+                                paymentMethod: 'googlepay',
+                                paymentData: paymentData,
+                                transactionId: token,
+                                description: gpConfig.description,
+                                amount: {
+                                  total: gpConfig.totalAmount,
+                                  currency: gpConfig.currency
+                                },
+                                bookingDetails: {
+                                  title: bookingDetails?.title,
+                                  activityId: bookingDetails?.activityId,
+                                  travelers: {
+                                    adults: gpConfig.totalAdults,
+                                    children: gpConfig.totalChildren,
+                                    total: gpConfig.totalTravelers
+                                  }
+                                }
+                              };
+                              
+                              // Mostrar alerta de éxito
+                              alert('✅ Pago simulado con Google Pay completado.');
+                              
+                              processCompletedPayment(paymentInfo, 'googlepay');
+                            } catch (error) {
+                              console.error('❌ Google Pay - Error:', error);
+                              alert(language === 'es' 
+                                ? 'Error al procesar el pago con Google Pay. Por favor intenta nuevamente.'
+                                : 'Error processing Google Pay payment. Please try again.');
+                            }
+                          }}
+                          onError={(error) => {
+                            console.error('❌ Google Pay - Error:', error);
+                            alert(language === 'es' 
+                              ? 'Error al procesar el pago con Google Pay. Por favor intenta nuevamente.'
+                              : 'Error processing Google Pay payment. Please try again.');
+                          }}
+                        />
+                      </div>
+                      <div className="mt-3">
+                        <small className="text-muted">
+                          {getTranslation('checkout.termsAgreement', language)}
+                        </small>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* Legal Information */}
                 <div className="mb-4">
@@ -2373,8 +2551,8 @@ const Checkout: React.FC = () => {
                   </small>
                 </div>
 
-                {/* Pay Now Button - Solo mostrar si no es PayPal (que maneja su propio flujo) */}
-                {paymentMethod !== 'paypal' && (
+                {/* Pay Now Button - Solo mostrar si no es PayPal o Google Pay (que manejan su propio flujo) */}
+                {paymentMethod !== 'paypal' && paymentMethod !== 'googlepay' && (
                   <button
                     type="button"
                     className="btn btn-primary btn-lg w-100 d-none d-md-block"
@@ -3191,7 +3369,7 @@ const Checkout: React.FC = () => {
 
       {/* Floating Total & Payment Button - Mobile Only */}
       {/* No mostrar si PayPal está seleccionado (maneja su propio flujo) */}
-      {bookingDetails && (currentStep === 1 || (currentStep === 2 && paymentMethod !== 'paypal')) && (
+      {bookingDetails && (currentStep === 1 || (currentStep === 2 && paymentMethod !== 'paypal' && paymentMethod !== 'googlepay')) && (
         <div className="d-md-none checkout-floating-footer">
         <div className="checkout-floating-container">
           <div className="checkout-floating-content">

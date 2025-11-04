@@ -24,7 +24,10 @@ export const apiConfig = {
   },
   
   // Configuración de PayPal (obtenida de appConfig)
-  paypal: appConfig.paypal
+  paypal: appConfig.paypal,
+  
+  // Configuración de Google Pay (obtenida de appConfig)
+  googlePay: appConfig.googlePay
 };
 
 // Función para crear configuración de request
