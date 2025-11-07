@@ -7,6 +7,8 @@ import { CurrencyProvider } from './context/CurrencyContext';
 import { ConfigProvider } from './context/ConfigContext';
 import { AuthProvider } from './context/AuthContext';
 import { CartProvider } from './context/CartContext';
+import { CookieConsentProvider } from './context/CookieConsentContext';
+import CookieConsentBanner from './components/CookieConsentBanner';
 import ConditionalLayout from './components/ConditionalLayout';
 import UrlParamsSync from './components/UrlParamsSync';
 import AppRoutes from './routes/AppRoutes';
@@ -18,17 +20,21 @@ function App() {
       <ConfigProvider>
         <LanguageProvider>
           <CurrencyProvider>
-            <AuthProvider>
-              <CartProvider>
-                <Router>
-                  <UrlParamsSync>
-                    <ConditionalLayout>
-                      <AppRoutes />
-                    </ConditionalLayout>
-                  </UrlParamsSync>
-                </Router>
-              </CartProvider>
-            </AuthProvider>
+            <CookieConsentProvider>
+              <AuthProvider>
+                <CartProvider>
+                  <Router>
+                    <UrlParamsSync>
+                      <ConditionalLayout>
+                        <AppRoutes />
+                      </ConditionalLayout>
+                    </UrlParamsSync>
+                    {/* Banner de consentimiento de cookies */}
+                    <CookieConsentBanner />
+                  </Router>
+                </CartProvider>
+              </AuthProvider>
+            </CookieConsentProvider>
           </CurrencyProvider>
         </LanguageProvider>
       </ConfigProvider>

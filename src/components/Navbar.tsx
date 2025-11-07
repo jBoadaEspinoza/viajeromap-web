@@ -7,9 +7,6 @@ import { useCart } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
 import { getTranslation } from '../utils/translations';
 import LanguageCurrencyModal from './LanguageCurrencyModal';
-import { signInWithPopup } from 'firebase/auth';
-import { auth, googleProvider } from '../config/firebase';
-import { authApi } from '../api/auth';
 
 const Navbar: React.FC = () => {
   const location = useLocation();
@@ -18,37 +15,21 @@ const Navbar: React.FC = () => {
   const { currency, setCurrency, getCurrencySymbol } = useCurrency();
   const { config } = useConfig();
   const { getTotalItems } = useCart();
-  const { isAuthenticated, login, validateToken } = useAuth();
+  
+  // Usar el nuevo AuthContext simplificado
+  const { user, firebaseUser, isAuthenticated, loading: authLoading, loginWithGoogle, logout } = useAuth();
+  
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isLanguagePageViewOpen, setIsLanguagePageViewOpen] = useState(false);
   const [isCurrencyPageViewOpen, setIsCurrencyPageViewOpen] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false); // Estado para el menú contextual de perfil
-  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false); // Estado para el modal de login (desktop)
-  const [isLoginPageViewOpen, setIsLoginPageViewOpen] = useState(false); // Estado para el page view de login (mobile)
-  const [loginPhone, setLoginPhone] = useState(''); // Estado para el teléfono del login
-  const [isGoogleLoading, setIsGoogleLoading] = useState(false); // Estado para loading de Google
-  const [firebaseUser, setFirebaseUser] = useState<any>(null); // Estado para el usuario de Firebase
-  const profileMenuTimeoutRef = useRef<NodeJS.Timeout | null>(null); // Ref para el timeout del menú de perfil
+  const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  const [isLoginPageViewOpen, setIsLoginPageViewOpen] = useState(false);
+  const [loginPhone, setLoginPhone] = useState('');
+  const profileMenuTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   const cartItems = getTotalItems();
-
-  // Obtener información del usuario de Firebase si está autenticado
-  useEffect(() => {
-    const currentUser = auth.currentUser;
-    if (currentUser) {
-      // Si hay un usuario de Firebase, actualizar el estado
-      const userData = {
-        email: currentUser.email || '',
-        displayName: currentUser.displayName || '',
-        photoURL: currentUser.photoURL || '',
-        uid: currentUser.uid
-      };
-      setFirebaseUser(userData);
-    } else {
-      setFirebaseUser(null);
-    }
-  }, [isAuthenticated]);
 
   // Limpiar timeout al desmontar el componente
   useEffect(() => {
@@ -196,176 +177,59 @@ const Navbar: React.FC = () => {
     setLoginPhone('');
   };
 
+  /**
+   * Login con Google usando el nuevo AuthContext
+   * Ya no necesitamos toda la lógica aquí, el contexto lo maneja
+   */
   const handleLoginWithGoogle = async () => {
     try {
+      const success = await loginWithGoogle();
       
-      // Activar loading
-      setIsGoogleLoading(true);
-      
-      // Autenticar con Google usando Firebase
-      const result = await signInWithPopup(auth, googleProvider);
-      const user = result.user;
-      
-      // Obtener el ID token de Firebase para enviarlo al backend
-      const idToken = await user.getIdToken();
-      console.log('idToken', idToken);
-      // Llamar al backend para obtener información del usuario y token
-      try {
-        const backendResponse = await authApi.getInfoByTokenTravelerByGoogle(idToken);
-        
-        if (backendResponse.success) {
-          // Guardar el token de autenticación (del backend o Firebase token como fallback)
-          if (backendResponse.token) {
-            authApi.saveToken(backendResponse.token);
-          } else {
-            // Si no hay token del backend, guardar el token de Firebase
-            authApi.saveToken(idToken);
-          }
-          
-          // Actualizar información del usuario con la respuesta del backend
-          if (backendResponse.data) {
-            const userData = {
-              email: backendResponse.data.email || user.email || '',
-              displayName: backendResponse.data.nickname || backendResponse.data.username || user.displayName || '',
-              photoURL: backendResponse.data.profileImageUrl || user.photoURL || '',
-              uid: backendResponse.data.uid || user.uid,
-              username: backendResponse.data.username,
-              nickname: backendResponse.data.nickname,
-              firstname: backendResponse.data.firstname,
-              surname: backendResponse.data.surname,
-              roleId: backendResponse.data.roleId,
-              roleCode: backendResponse.data.roleCode
-            };
-            
-            // Guardar información del usuario usando authApi (solo guarda en contexto, no en localStorage)
-            authApi.saveUserInfo({
-              user: {
-                id: backendResponse.data.roleId,
-                username: backendResponse.data.username,
-                nickname: backendResponse.data.nickname,
-                profileImageUrl: backendResponse.data.profileImageUrl,
-                isActive: true,
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString()
-              },
-              role: {
-                id: backendResponse.data.roleId,
-                code: backendResponse.data.roleCode,
-                name: backendResponse.data.roleCode,
-                isActive: true
-              },
-              lang: language
-            });
-            
-            // Actualizar el estado del usuario (solo en estado de React)
-            setFirebaseUser(userData);
-          } else {
-            // Si no hay data en la respuesta, usar datos de Firebase
-            const userData = {
-              email: user.email || '',
-              displayName: user.displayName || '',
-              photoURL: user.photoURL || '',
-              uid: user.uid
-            };
-            
-            setFirebaseUser(userData);
-          }
-          
-          // Validar el token para actualizar el contexto de autenticación
-          await validateToken(language);
-          
-          // Cerrar modales solo si todo fue exitoso
-          setIsLoginModalOpen(false);
-          setIsLoginPageViewOpen(false);
-        } else {
-          // Error en la respuesta del backend
-          throw new Error(backendResponse.message || 'Error al obtener información del usuario');
-        }
-      } catch (backendError: any) {
-        // Error al obtener información del backend - Cerrar sesión y mostrar error
-        try {
-          // Cerrar sesión de Firebase
-          await auth.signOut();
-        } catch (signOutError) {
-          // Error al cerrar sesión de Firebase, continuar
-        }
-        
-        // Limpiar token (no se guardan datos del usuario en localStorage)
-        localStorage.removeItem('authToken');
-        localStorage.removeItem('userInfo');
-        authApi.logout();
-        setFirebaseUser(null);
-        
-        // Desactivar loading
-        setIsGoogleLoading(false);
-        
+      if (success) {
+        console.log('✅ Login con Google exitoso');
         // Cerrar modales
         setIsLoginModalOpen(false);
         setIsLoginPageViewOpen(false);
-        
-        // Mostrar mensaje de error
-        const errorMessage = backendError?.response?.data?.message || 
-                            backendError?.message || 
-                            (language === 'es' 
-                              ? 'Error al obtener información del usuario desde el servidor. Por favor, intenta nuevamente.' 
-                              : 'Error getting user information from server. Please try again.');
-        
-        alert(errorMessage);
-        
-        return; // Salir de la función
+      } else {
+        console.error('❌ Error en login con Google');
+        alert(language === 'es' 
+          ? 'Error al iniciar sesión con Google. Por favor, intenta nuevamente.'
+          : 'Error signing in with Google. Please try again.');
       }
-      
-      // Desactivar loading después de cerrar modales
-      setIsGoogleLoading(false);
-      
     } catch (error: any) {
-      // Error en Firebase o en el proceso general
+      console.error('❌ Error en handleLoginWithGoogle:', error);
       
-      // Cerrar sesión de Firebase si está autenticado
-      try {
-        await auth.signOut();
-      } catch (signOutError) {
-        // Error al cerrar sesión, continuar
+      // Solo mostrar error si no fue cancelado por el usuario
+      if (error?.code !== 'auth/popup-closed-by-user' && error?.code !== 'auth/cancelled-popup-request') {
+        alert(language === 'es' 
+          ? 'Error al iniciar sesión con Google. Por favor, intenta nuevamente.'
+          : 'Error signing in with Google. Please try again.');
       }
-      
-      // Limpiar token (no se guardan datos del usuario en localStorage)
-      localStorage.removeItem('authToken');
-      localStorage.removeItem('userInfo');
-      authApi.logout();
-      setFirebaseUser(null);
-      
-      // Desactivar loading
-      setIsGoogleLoading(false);
       
       // Cerrar modales
       setIsLoginModalOpen(false);
       setIsLoginPageViewOpen(false);
-      
-      // Mostrar mensaje de error al usuario
-      alert(language === 'es' 
-        ? 'Error al iniciar sesión con Google. Por favor, intenta nuevamente.' 
-        : 'Error signing in with Google. Please try again.'
-      );
     }
   };
 
-  const handleLogout = () => {
-    // Limpiar token (no se guardan datos del usuario en localStorage)
-    localStorage.removeItem('authToken');
-    localStorage.removeItem('userInfo');
-    authApi.logout();
-    
-    // Cerrar sesión de Firebase
-    auth.signOut().catch(() => {
-      // Error al cerrar sesión
-    });
-    
-    // Limpiar estado
-    setFirebaseUser(null);
-    
-    // Cerrar menús
-    setIsProfileMenuOpen(false);
-    setIsMobileMenuOpen(false);
+  /**
+   * Logout usando el nuevo AuthContext
+   * Ya no necesitamos manejar Firebase manualmente
+   */
+  const handleLogout = async () => {
+    try {
+      await logout();
+      console.log('✅ Logout exitoso');
+      
+      // Cerrar menús
+      setIsProfileMenuOpen(false);
+      setIsMobileMenuOpen(false);
+      
+      // Redirigir a home
+      navigate('/');
+    } catch (error) {
+      console.error('❌ Error en logout:', error);
+    }
   };
 
 
@@ -1101,12 +965,12 @@ const Navbar: React.FC = () => {
                 <button
                   className="btn btn-outline-primary w-100"
                   onClick={handleLoginWithGoogle}
-                  disabled={isGoogleLoading}
+                  disabled={authLoading}
                 >
-                  {isGoogleLoading ? (
+                  {authLoading ? (
                     <>
                       <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-                      {language === 'es' ? 'Iniciando sesión...' : 'Signing in...'}
+                      {getTranslation('common.signingIn', language)}
                     </>
                   ) : (
                     <>
@@ -1173,12 +1037,12 @@ const Navbar: React.FC = () => {
                   <button
                     className="btn btn-outline-primary flex-fill"
                     onClick={handleLoginWithGoogle}
-                    disabled={isGoogleLoading}
+                    disabled={authLoading}
                   >
-                    {isGoogleLoading ? (
+                    {authLoading ? (
                       <>
                         <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-                        {language === 'es' ? 'Iniciando...' : 'Signing in...'}
+                        {getTranslation('common.signingIn', language)}
                       </>
                     ) : (
                       <>

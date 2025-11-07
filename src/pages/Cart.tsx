@@ -11,20 +11,6 @@ const Cart: React.FC = () => {
   // Validar token de Google si el usuario está conectado con Google
   useGoogleTokenValidation();
   
-  // Debug: mostrar items del carrito
-  useEffect(() => {
-    console.log('🛒 Items en el carrito:', items);
-    items.forEach((item, index) => {
-      console.log(`Item ${index + 1}:`, {
-        title: item.title,
-        meetingPoint: item.activityDetails?.meetingPoint,
-        pickupPoint: item.activityDetails?.pickupPoint,
-        comment: item.activityDetails?.comment,
-        guideLanguage: item.activityDetails?.guideLanguage
-      });
-    });
-  }, [items]);
-  
   // Calcular ahorro total de todos los items con descuento
   // NOTA: Los datos de descuento (discountPercentage, originalPrice) deben obtenerse de la API de la actividad
   const getTotalSavings = () => {
@@ -52,7 +38,7 @@ const Cart: React.FC = () => {
     return false;
   };
 
-  // Función para convertir formato de 24 horas a AM/PM
+  // Función auxiliar para convertir formato de 24 horas a AM/PM
   const convertTo12HourFormat = (time24: string): string => {
     if (!time24 || !time24.includes(':')) return time24;
     
@@ -71,10 +57,10 @@ const Cart: React.FC = () => {
     }
   };
   
-  // Referencia al primer item del carrito
+  // Referencia al primer item del carrito (para scroll automático en móvil)
   const firstItemRef = useRef<HTMLDivElement>(null);
   
-  // Estados para edición individual
+  // Estados para edición individual de campos del carrito
   const [editingField, setEditingField] = useState<{itemId: string, field: string} | null>(null);
   const [editDate, setEditDate] = useState('');
   const [editTime, setEditTime] = useState('');
@@ -84,7 +70,7 @@ const Cart: React.FC = () => {
   const [editMeetingPoint, setEditMeetingPoint] = useState('');
   const [editComment, setEditComment] = useState('');
 
-  // Funciones para manejar la edición individual
+  // Iniciar edición de un campo específico de un item del carrito
   const startEditingField = (itemId: string, field: string, currentValue: any) => {
     setEditingField({ itemId, field });
     
@@ -112,6 +98,7 @@ const Cart: React.FC = () => {
     }
   };
 
+  // Cancelar edición y limpiar todos los campos de edición
   const cancelEditing = () => {
     setEditingField(null);
     setEditDate('');
@@ -123,6 +110,7 @@ const Cart: React.FC = () => {
     setEditComment('');
   };
 
+  // Guardar cambios en un campo editado del item del carrito
   const saveFieldChange = () => {
     if (!editingField) return;
 
@@ -134,11 +122,11 @@ const Cart: React.FC = () => {
         break;
       case 'time':
         // Para hora necesitaríamos una función específica o actualizar activityDetails
-        console.log('Time update not implemented yet');
+        // TODO: Implementar actualización de hora
         break;
       case 'language':
         // Para idioma necesitaríamos una función específica o actualizar activityDetails
-        console.log('Language update not implemented yet');
+        // TODO: Implementar actualización de idioma
         break;
       case 'travelers':
         updateItemDetails(itemId, {
@@ -159,34 +147,38 @@ const Cart: React.FC = () => {
     setEditingField(null);
   };
 
+  // Manejar cambio en número de adultos durante la edición
   const handleAdultsChange = (increment: boolean) => {
     if (increment) {
       setEditAdults(prev => prev + 1);
     } else {
+      // No permitir menos de 1 adulto
       setEditAdults(prev => Math.max(1, prev - 1));
     }
   };
 
+  // Manejar cambio en número de niños durante la edición
   const handleChildrenChange = (increment: boolean) => {
     if (increment) {
       setEditChildren(prev => prev + 1);
     } else {
+      // No permitir menos de 0 niños
       setEditChildren(prev => Math.max(0, prev - 1));
     }
   };
 
-  // Effect para posicionar el foco en el primer item en móvil
+  // Efecto para posicionar el foco en el primer item en móvil cuando cambia el número de items
   useEffect(() => {
     const isMobile = window.innerWidth < 768;
     
     if (isMobile) {
       if (items.length > 0 && firstItemRef.current) {
-        // Scroll al primer item
+        // Hacer scroll al primer item del carrito
         setTimeout(() => {
           firstItemRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }, 100);
       } else {
-        // Scroll al inicio de la página si no hay items
+        // Si no hay items, hacer scroll al inicio de la página
         setTimeout(() => {
           window.scrollTo({ top: 0, behavior: 'smooth' });
         }, 100);

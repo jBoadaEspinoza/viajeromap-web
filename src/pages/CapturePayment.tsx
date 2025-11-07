@@ -19,23 +19,13 @@ const CapturePayment: React.FC = () => {
     const paymentId = searchParams.get('paymentId');
     const orderId = searchParams.get('token'); // PayPal puede usar 'token' como orderId
     
-    // Obtener todos los parámetros disponibles
+    // Obtener todos los parámetros disponibles de la URL
     const allParams: Record<string, string> = {};
     searchParams.forEach((value, key) => {
       allParams[key] = value;
     });
-
-    console.log('✅ Capture Payment - PayPal redirect detected:', {
-      token,
-      payerId,
-      paymentId,
-      orderId,
-      search: window.location.search,
-      allParams,
-      fullUrl: window.location.href
-    });
     
-    // Función para procesar el pago con los datos obtenidos
+    // Función para procesar el pago con los datos obtenidos de PayPal
     const processPayment = async (paymentInfoData: any = {}) => {
       // Obtener detalles de reserva antes de limpiarlos
       const bookingDetailsJson = sessionStorage.getItem('checkoutBookingDetails');
@@ -45,16 +35,13 @@ const CapturePayment: React.FC = () => {
         try {
           bookingDetails = JSON.parse(bookingDetailsJson);
         } catch (error) {
-          console.error('Error parsing booking details:', error);
+          // Si hay error al parsear los detalles de reserva, continuar sin ellos
         }
       }
 
-      // Limpiar parámetros de URL
+      // Limpiar parámetros de URL para mantener la URL limpia
       window.history.replaceState({}, '', window.location.pathname);
 
-      // Procesar el pago exitoso
-      console.log('✅ Procesando pago exitoso de PayPal...');
-      
       // Generar código de reserva UUID corto
       const reservationCode = generateShortUUID();
       
@@ -77,15 +64,10 @@ const CapturePayment: React.FC = () => {
         }
       };
       
-      console.log('📤 ' + sendToBackendMessage);
-      console.log('📋 Reservation Data to send to backend:', reservationData);
-      
       // Capturar el pago y enviar datos al backend
       try {
         // Aquí iría la llamada al backend para registrar la reserva
         // await sendReservationToBackend(reservationData);
-        
-        console.log('📤 ' + sendToBackendMessage);
         
         // Guardar datos de reserva en sessionStorage antes de limpiar (para que PaymentCompleted pueda acceder)
         sessionStorage.setItem('lastReservationData', JSON.stringify(reservationData));
@@ -101,7 +83,7 @@ const CapturePayment: React.FC = () => {
           state: reservationData 
         });
       } catch (error) {
-        console.error('❌ Error al procesar el pago:', error);
+        // Si hay error al procesar el pago, mostrar mensaje y redirigir
         const errorMessage = language === 'es' 
           ? 'Hubo un error al procesar el pago. Por favor, contacta con soporte.'
           : 'There was an error processing the payment. Please contact support.';
@@ -119,29 +101,12 @@ const CapturePayment: React.FC = () => {
       }
     };
 
-    // Si tenemos un orderID, intentar obtener los detalles de la orden
+    // Si tenemos un orderID, intentar obtener los detalles de la orden desde PayPal
     if (orderId && (window as any).paypal) {
       try {
         const paypal = (window as any).paypal;
+        // Obtener detalles completos de la orden desde PayPal
         paypal.orders().get(orderId).then((order: any) => {
-          console.log('📦 PayPal Order Details Retrieved:', {
-            orderId: order.id,
-            status: order.status,
-            createTime: order.create_time,
-            updateTime: order.update_time,
-            intent: order.intent,
-            purchaseUnits: order.purchase_units?.map((unit: any) => ({
-              referenceId: unit.reference_id,
-              amount: unit.amount,
-              payee: unit.payee,
-              paymentStatus: unit.payments,
-              captures: unit.payments?.captures
-            })),
-            payer: order.payer,
-            links: order.links,
-            fullOrder: order
-          });
-          
           // Procesar el pago con los detalles de la orden
           processPayment({
             orderId: order.id,
@@ -152,13 +117,11 @@ const CapturePayment: React.FC = () => {
             fullOrder: order
           });
         }).catch((error: any) => {
-          console.warn('⚠️ Could not retrieve order details:', error);
-          // Procesar el pago sin los detalles completos
+          // Si no se pueden obtener los detalles de la orden, procesar el pago sin ellos
           processPayment();
         });
       } catch (error) {
-        console.warn('⚠️ PayPal SDK not available for order retrieval:', error);
-        // Procesar el pago sin los detalles completos
+        // Si el SDK de PayPal no está disponible, procesar el pago sin los detalles completos
         processPayment();
       }
     } else {
@@ -168,13 +131,16 @@ const CapturePayment: React.FC = () => {
 
   }, [searchParams, navigate, language]);
 
+  // Mostrar pantalla de carga mientras se procesa el pago
   return (
     <div className="container py-5">
       <div className="row justify-content-center">
         <div className="col-md-6 text-center">
+          {/* Spinner de carga */}
           <div className="spinner-border text-primary mb-3" role="status">
             <span className="visually-hidden">Loading...</span>
           </div>
+          {/* Mensaje de procesamiento */}
           <p className="text-muted">
             {language === 'es' 
               ? 'Procesando pago...'

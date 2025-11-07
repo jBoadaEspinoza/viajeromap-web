@@ -15,7 +15,7 @@ import GooglePayButton from '@google-pay/button-react';
 import { signInWithPopup, onAuthStateChanged } from 'firebase/auth';
 import { auth, googleProvider } from '../config/firebase';
 import { authApi } from '../api/auth';
-import { useGoogleTokenValidation } from '../hooks/useGoogleTokenValidation';
+import { getAuthToken } from '../utils/cookieHelper';
 
 interface BookingDetails {
   activityId: string;
@@ -50,11 +50,9 @@ const Checkout: React.FC = () => {
   const { language } = useLanguage();
   const { currency } = useCurrency();
   const { config } = useConfig();
-  const { user, isAuthenticated, validateToken } = useAuth();
+  // Usar el nuevo AuthContext
+  const { user, firebaseUser, isAuthenticated, loading: authLoading, loginWithGoogle, logout } = useAuth();
   const { addItem } = useCart();
-  
-  // Validar token de Google si el usuario está conectado con Google
-  useGoogleTokenValidation();
   
   // Función para navegar a home
   const handleLogoClick = () => {
@@ -118,182 +116,65 @@ const Checkout: React.FC = () => {
     return sessionStorage.getItem('checkoutLoginDismissed') === '1';
   });
   
-  // Estados para autenticación (siguiendo el mismo flujo que Navbar)
-  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  // Estados para autenticación
   const [loginEmail, setLoginEmail] = useState('');
-  const [firebaseUser, setFirebaseUser] = useState<any>(null);
-  const [isValidatingAuth, setIsValidatingAuth] = useState(true); // Loading mientras valida autenticación
   
   // Ref para controlar la verificación inicial de autenticación (evitar parpadeo del modal)
-  const authCheckCompleted = useRef(false);
   const modalShownOnce = useRef(false);
+  const authCheckCompleted = useRef(false);
+  
+  // Estados temporales para compatibilidad durante la migración
+  const [isValidatingAuth, setIsValidatingAuth] = useState(false);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
 
-  // Obtener información del usuario desde el backend cuando está autenticado con Google
+  // Declarar phoneCodes antes del useEffect que lo usa
+  const [phoneCodes, setPhoneCodes] = useState<PhoneCode[]>([]);
+  
+  // El nuevo AuthContext ya maneja la carga de datos del usuario
+  // Solo cargar datos del usuario en el formulario cuando estén disponibles
   useEffect(() => {
-    const loadUserDataFromBackend = async (user: any) => {
-      if (!user) {
-        setFirebaseUser(null);
-        return;
-      }
-
-      try {
-        // Obtener token de Firebase
-        const idToken = await user.getIdToken();
+    if (user && phoneCodes.length > 0) {
+      // Cargar datos del usuario en el formulario
+      setFormData(prev => ({
+        ...prev,
+        email: user.email || prev.email,
+        name: user.firstname || prev.name,
+        lastName: user.surname || prev.lastName,
+        phoneNumber: user.phoneNumber || prev.phoneNumber,
+        phonePostalCode: user.phonePostalCode || prev.phonePostalCode,
+        phonePostalId: user.phonePostalId || prev.phonePostalId || 0,
+        phoneCodeId: user.phoneCodeId || user.phonePostalId || prev.phoneCodeId || 0,
+        countryBirthCode2: user.countryBirthCode2 || prev.countryBirthCode2,
+        nationality: user.countryBirthCode2 || prev.nationality,
+        phone: user.phoneNumber || prev.phone
+      }));
+      
+      // Buscar y establecer el código telefónico
+      if (user.phonePostalCode) {
+        const foundPhoneCode = phoneCodes.find(pc => {
+          const postalCodeClean = user.phonePostalCode!.replace(/[()]/g, '').replace('+', '').trim();
+          const codeClean = pc.code?.replace(/[()]/g, '').replace('+', '').trim();
+          return codeClean === postalCodeClean || pc.code === user.phonePostalCode;
+        });
         
-        // Llamar al backend para obtener información del usuario
-        const backendResponse = await authApi.getInfoByTokenTravelerByGoogle(idToken);
-        
-        if (backendResponse.success && backendResponse.data) {
-          // Actualizar estado del usuario con datos del backend
-          const userData = {
-            email: backendResponse.data.email || user.email || '',
-            displayName: backendResponse.data.nickname || backendResponse.data.username || user.displayName || '',
-            photoURL: backendResponse.data.profileImageUrl || user.photoURL || '',
-            uid: backendResponse.data.uid || user.uid,
-            username: backendResponse.data.username,
-            nickname: backendResponse.data.nickname,
-            firstname: backendResponse.data.firstname,
-            surname: backendResponse.data.surname,
-            roleId: backendResponse.data.roleId,
-            roleCode: backendResponse.data.roleCode
-          };
-          
-          setFirebaseUser(userData);
-          
-          // Extraer y cargar datos de contacto del backend al formulario
+        if (foundPhoneCode) {
           setFormData(prev => ({
             ...prev,
-            email: backendResponse.data?.email || prev.email,
-            name: backendResponse.data?.firstname || prev.name,
-            lastName: backendResponse.data?.surname || prev.lastName,
-            phoneNumber: backendResponse.data?.phoneNumber || prev.phoneNumber,
-            phonePostalCode: backendResponse.data?.phonePostalCode || prev.phonePostalCode,
-            phonePostalId: backendResponse.data?.phonePostalId || prev.phonePostalId || 0,
-            phoneCodeId: backendResponse.data?.phoneCodeId || backendResponse.data?.phonePostalId || prev.phoneCodeId || 0,
-            countryBirthCode2: backendResponse.data?.countryBirthCode2 || prev.countryBirthCode2
+            phoneCode: `(${foundPhoneCode!.code})`,
+            phonePostalCode: foundPhoneCode!.code,
+            phoneCodeId: foundPhoneCode!.id || prev.phoneCodeId || 0
           }));
-          
-          // Buscar el código telefónico asociado al usuario
-          let foundPhoneCode: PhoneCode | undefined = undefined;
-          const phonePostalCode = backendResponse.data?.phonePostalCode;
-          
-          // Si phonePostalCode existe, buscar el código telefónico que coincida
-          if (phonePostalCode && phoneCodes.length > 0) {
-            foundPhoneCode = phoneCodes.find(pc => {
-              // Comparar phonePostalCode con phoneCode.code (normalizando formatos)
-              const postalCodeClean = phonePostalCode.replace(/[()]/g, '').replace('+', '').trim();
-              const codeClean = pc.code?.replace(/[()]/g, '').replace('+', '').trim();
-              return codeClean === postalCodeClean || pc.code === phonePostalCode;
-            });
-            
-            // Si se encuentra, establecerlo
-            if (foundPhoneCode) {
-              setFormData(prev => ({
-                ...prev,
-                phoneCode: `(${foundPhoneCode!.code})`,
-                phonePostalCode: foundPhoneCode!.code,
-                phoneCodeId: foundPhoneCode!.id || prev.phoneCodeId || 0
-              }));
-            }
-          }
-          
-          // Si phonePostalCode es null, no establecer ningún código (mostrará "Seleccione un código telefónico")
-          // Si phonePostalCode existe pero no se encontró, usar +51 (Perú) como predeterminado
-          if (phonePostalCode && !foundPhoneCode) {
-            const defaultPeruCode = phoneCodes.find(pc => {
-              const codeClean = pc.code?.replace(/[()]/g, '').replace('+', '');
-              return codeClean === '51' || pc.code === '+51' || pc.code === '51';
-            });
-            
-            if (defaultPeruCode) {
-              setFormData(prev => ({
-                ...prev,
-                phoneCode: `(${defaultPeruCode.code})`,
-                phonePostalCode: defaultPeruCode.code,
-                phoneCodeId: defaultPeruCode.id || prev.phoneCodeId || 0
-              }));
-            }
-          } else if (!phonePostalCode) {
-            // Si phonePostalCode es null, limpiar el código seleccionado para mostrar el option por defecto
-            setFormData(prev => ({
-              ...prev,
-              phoneCode: '',
-              phonePostalCode: ''
-            }));
-          }
-          
-          // Actualizar phone (compatibilidad) si phoneNumber está disponible
-          if (backendResponse.data?.phoneNumber) {
-            setFormData(prev => ({
-              ...prev,
-              phone: backendResponse.data?.phoneNumber || prev.phone
-            }));
-          }
-          
-          // Actualizar nationality si countryBirthCode2 está disponible
-          if (backendResponse.data?.countryBirthCode2) {
-            setFormData(prev => ({
-              ...prev,
-              nationality: backendResponse.data?.countryBirthCode2 || prev.nationality
-            }));
-          }
-        } else {
-          // Si falla el backend, usar datos básicos de Firebase
-          const userData = {
-            email: user.email || '',
-            displayName: user.displayName || '',
-            photoURL: user.photoURL || '',
-            uid: user.uid
-          };
-          setFirebaseUser(userData);
-          
-          // Cargar datos básicos de Firebase al formulario
-          if (user.email) {
-            let firstName = '';
-            let lastName = '';
-            
-            if (user.displayName) {
-              const nameParts = user.displayName.trim().split(/\s+/);
-              if (nameParts.length > 0) {
-                firstName = nameParts[0];
-                if (nameParts.length > 1) {
-                  lastName = nameParts.slice(1).join(' ');
-                }
-              }
-            }
-            
-            setFormData(prev => ({
-              ...prev,
-              email: user.email || prev.email,
-              name: prev.name || firstName,
-              lastName: prev.lastName || lastName
-            }));
-          }
         }
-      } catch (error) {
-        // Error al obtener datos del backend, usar datos básicos de Firebase
-        const userData = {
-          email: user.email || '',
-          displayName: user.displayName || '',
-          photoURL: user.photoURL || '',
-          uid: user.uid
-        };
-        setFirebaseUser(userData);
-      }
-    };
-
-    // Escuchar cambios en el estado de autenticación de Firebase
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (user) {
-        loadUserDataFromBackend(user);
       } else {
-        setFirebaseUser(null);
+        // Si phonePostalCode es null, limpiar
+        setFormData(prev => ({
+          ...prev,
+          phoneCode: '',
+          phonePostalCode: ''
+        }));
       }
-    });
-
-    // Limpiar suscripción al desmontar
-    return () => unsubscribe();
-  }, []);
+    }
+  }, [user, phoneCodes]);
 
   // Función para validar formato de correo electrónico
   const isValidEmail = (email: string): boolean => {
@@ -315,7 +196,6 @@ const Checkout: React.FC = () => {
     countryBirthCode2: '',
     nationality: 'none'
   });
-  const [phoneCodes, setPhoneCodes] = useState<PhoneCode[]>([]);
   const [loadingPhoneCodes, setLoadingPhoneCodes] = useState(true);
   const [nationalities, setNationalities] = useState<Nationality[]>([]);
   const [loadingNationalities, setLoadingNationalities] = useState(true);
@@ -429,17 +309,14 @@ const Checkout: React.FC = () => {
     sessionStorage.removeItem('checkoutCurrentStep');
   }, []);
 
-  // Get booking details from location state, localStorage, or sessionStorage
+  // Obtener detalles de reserva desde location.state, localStorage o sessionStorage
   useEffect(() => {
-    console.log('📍 Checkout: location.state recibido:', location.state);
-    
     // Pequeño delay para asegurar que el estado esté disponible
     const timer = setTimeout(() => {
       let details = null;
       
       // Intentar obtener desde location.state primero
       if (location.state?.bookingDetails) {
-        console.log('✅ Checkout: bookingDetails encontrados en location.state:', location.state.bookingDetails);
         details = location.state.bookingDetails;
         // Guardar en sessionStorage para persistencia
         sessionStorage.setItem('checkoutBookingDetails', JSON.stringify(details));
@@ -448,14 +325,12 @@ const Checkout: React.FC = () => {
       else {
         const sessionDetails = sessionStorage.getItem('checkoutBookingDetails');
         if (sessionDetails) {
-          console.log('✅ Checkout: bookingDetails encontrados en sessionStorage:', sessionDetails);
           details = JSON.parse(sessionDetails);
         }
         // Si tampoco hay en sessionStorage, intentar desde localStorage (respaldo)
         else {
           const storedDetails = localStorage.getItem('checkoutBookingDetails');
           if (storedDetails) {
-            console.log('✅ Checkout: bookingDetails encontrados en localStorage:', storedDetails);
             details = JSON.parse(storedDetails);
             // Mover a sessionStorage para mejor persistencia
             sessionStorage.setItem('checkoutBookingDetails', storedDetails);
@@ -467,14 +342,14 @@ const Checkout: React.FC = () => {
       
       if (details) {
         setBookingDetails(details);
-        // Prefill travelers edit fields
+        // Prellenar campos de edición de viajeros
         try {
           const ad = Number(details?.travelers?.adults ?? 1);
           const ch = Number(details?.travelers?.children ?? 0);
           setEditedAdults(isNaN(ad) ? 1 : ad);
           setEditedChildren(isNaN(ch) ? 0 : ch);
         } catch {}
-        // Prefill pickup point selector if available
+        // Prellenar selector de punto de recogida si está disponible
         try {
           if (details?.pickupPoint && Array.isArray(currentBookingOption?.pickupPoints)) {
             const found = currentBookingOption.pickupPoints.find((p: any) => p?.name === details.pickupPoint?.name);
@@ -484,7 +359,6 @@ const Checkout: React.FC = () => {
           }
         } catch {}
       } else {
-        console.log('⚠️ Checkout: No hay bookingDetails, pero manteniendo en checkout');
         // Si no está autenticado, mostrar modal de login (obligatorio)
         // Pero esperar a que se complete la verificación inicial para evitar parpadeo
         setTimeout(() => {
@@ -503,7 +377,7 @@ const Checkout: React.FC = () => {
     return () => clearTimeout(timer);
   }, [location.state, navigate, isAuthenticated, firebaseUser]);
 
-  // Load form data from sessionStorage if in step 2 and auto-select reserve option if applicable
+  // Cargar datos del formulario desde sessionStorage si está en el paso 2 y auto-seleccionar opción de reserva si aplica
   useEffect(() => {
     if (currentStep === 2) {
       const savedFormData = sessionStorage.getItem('checkoutFormData');
@@ -650,15 +524,10 @@ const Checkout: React.FC = () => {
       }
     };
     
-    console.log('📤 ' + sendToBackendMessage);
-    console.log('📋 Reservation Data to send to backend:', reservationData);
-    
     // Capturar el pago y enviar datos al backend
     try {
       // Aquí iría la llamada al backend para registrar la reserva
       // await sendReservationToBackend(reservationData);
-      
-      console.log('📤 ' + sendToBackendMessage);
       
       // Guardar datos de reserva en sessionStorage antes de limpiar
       sessionStorage.setItem('lastReservationData', JSON.stringify(reservationData));
@@ -754,7 +623,7 @@ const Checkout: React.FC = () => {
           const url = new URL(appRedirectBaseUrl || window.location.origin);
           if (!url.port || url.port !== '3000') {
             url.port = '3000';
-            appRedirectBaseUrl = url.toString().replace(/\/$/, ''); // Remover trailing slash
+            appRedirectBaseUrl = url.toString().replace(/\/$/, ''); // Remover barra diagonal final
           }
         }
         
@@ -769,14 +638,6 @@ const Checkout: React.FC = () => {
         
         // La baseUrl de PayPal es solo informativa (para logging), las redirecciones usan appRedirectBaseUrl
         const baseUrl = paypalBaseUrl;
-        
-        console.log('🔗 PayPal URLs configuradas:', {
-          paypalBaseUrl: baseUrl,
-          appRedirectBaseUrl,
-          returnUrl,
-          cancelUrl,
-          paypalConfig: config?.paypal,
-        });
 
         const paypal = (window as any).paypal;
         paypal.Buttons({
@@ -793,23 +654,6 @@ const Checkout: React.FC = () => {
               : getTranslationWithParams('checkout.travelers', language, { count: totalTravelers });
             
             const description = `${activityTitle} - ${travelersDescription}`;
-            
-            console.log('🔵 PayPal createOrder - PaymentData:', {
-              paymentData: data,
-              actions: actions ? 'available' : 'not available',
-              totalAmount,
-              currency,
-              bookingDetails: {
-                title: bookingDetails?.title,
-                activityId: bookingDetails?.activityId,
-                travelers: {
-                  adults: totalAdults,
-                  children: totalChildren,
-                  total: totalTravelers
-                }
-              },
-              description
-            });
             
             // Calcular precio unitario asegurando precisión
             // PayPal requiere que la suma de items coincida exactamente con amount.value
@@ -846,16 +690,7 @@ const Checkout: React.FC = () => {
               }
             };
             
-            // Intentar primero sin items para ver si el error es por el cálculo
-            console.log('📝 PayPal Order Data (simple):', {
-              totalAmount,
-              totalTravelers,
-              description,
-              orderData: orderDataSimple
-            });
-            
             return actions.order.create(orderDataSimple).then((orderId: string) => {
-              console.log('✅ PayPal Order Created - OrderID:', orderId);
               return orderId;
             }).catch((error: any) => {
               console.error('❌ PayPal createOrder Error:', {
@@ -899,22 +734,11 @@ const Checkout: React.FC = () => {
                 setShowLoginModal(true);
                 return;
               }
-
-              console.log('🟢 PayPal onApprove - PaymentData:', {
-                paymentData: data,
-                orderID: data.orderID,
-                payerID: data.payerID,
-                actions: actions ? 'available' : 'not available',
-                userId: user?.id,
-                token: localStorage.getItem('authToken') ? 'present' : 'missing'
-              });
               
               // Capturar la orden con mejor manejo de errores
               let order;
               try {
-                console.log('⏳ Intentando capturar orden PayPal...', { orderID: data.orderID });
                 order = await actions.order.capture();
-                console.log('✅ Orden capturada exitosamente');
               } catch (captureError: any) {
                 console.error('❌ Error al capturar la orden de PayPal:', {
                   captureError,
@@ -939,28 +763,6 @@ const Checkout: React.FC = () => {
                 alert(errorMsg);
                 throw captureError;
               }
-              
-              console.log('✅ PayPal Payment Captured - Order Data:', {
-                orderId: order.id,
-                status: order.status,
-                createTime: order.create_time,
-                updateTime: order.update_time,
-                intent: order.intent,
-                purchaseUnits: order.purchase_units?.map((unit: any) => ({
-                  referenceId: unit.reference_id,
-                  amount: unit.amount,
-                  payee: unit.payee,
-                  paymentStatus: unit.payments?.captures?.[0]?.status,
-                  captureId: unit.payments?.captures?.[0]?.id
-                })),
-                payer: {
-                  name: order.payer?.name,
-                  email: order.payer?.email_address,
-                  payerId: order.payer?.payer_id
-                },
-                links: order.links,
-                fullOrder: order
-              });
               
               // Si el pago se captura directamente (sin redirección), procesar aquí
               // Si PayPal redirige, se manejará en el useEffect de redirección
@@ -991,11 +793,6 @@ const Checkout: React.FC = () => {
             }
           },
           onCancel: (data: any) => {
-            console.log('🟡 PayPal onCancel - PaymentData:', {
-              paymentData: data,
-              orderID: data.orderID,
-              fullData: data
-            });
             // El usuario canceló, no hacer nada o mostrar mensaje opcional
           },
           onError: (err: any) => {
@@ -1067,7 +864,7 @@ const Checkout: React.FC = () => {
 
 
 
-  // Show login modal if user is not authenticated (obligatorio)
+  // Mostrar modal de login si el usuario no está autenticado (obligatorio)
   // Verificar tanto isAuthenticated como firebaseUser (mismo flujo que Navbar)
   // Con control para evitar parpadeo del modal
   useEffect(() => {
@@ -1091,11 +888,11 @@ const Checkout: React.FC = () => {
         // Usuario autenticado O tiene token válido, cerrar modal y marcar verificación como completada
         setShowLoginModal(false);
         setLoginDismissed(false);
-        authCheckCompleted.current = true;
+        // authCheckCompleted ya no es necesario
       }
       
       // Finalizar validación
-      setIsValidatingAuth(false);
+      // setIsValidatingAuth ya no es necesario, usamos authLoading del contexto
     }, 500); // Esperar 500ms para que se estabilicen los estados
 
     return () => clearTimeout(timer);
@@ -1115,17 +912,8 @@ const Checkout: React.FC = () => {
       const token = localStorage.getItem('authToken');
       const hasFirebaseUser = firebaseUser !== null || auth.currentUser !== null;
 
-      console.log('🔍 Validación en paso 2:', {
-        currentStep,
-        hasToken: !!token,
-        hasFirebaseUser,
-        isAuthenticated,
-        authCurrentUser: !!auth.currentUser
-      });
-
       // Si está autenticado por el contexto O tiene token O tiene usuario, permitir continuar
       if (isAuthenticated || token || hasFirebaseUser) {
-        console.log('✅ Usuario autenticado, permitiendo continuar en paso 2');
         isValidating = false;
         return;
       }
@@ -1154,7 +942,7 @@ const Checkout: React.FC = () => {
     return () => clearTimeout(timer);
   }, [currentStep, isAuthenticated, firebaseUser]);
 
-  // Load phone codes
+  // Cargar códigos telefónicos
   useEffect(() => {
     const loadPhoneCodes = async () => {
       setLoadingPhoneCodes(true);
@@ -1265,7 +1053,7 @@ const Checkout: React.FC = () => {
     }
   }, [phoneCodes, formData.phonePostalCode, loadingPhoneCodes, formData.phoneCode]);
 
-  // Load nationalities
+  // Cargar nacionalidades
   useEffect(() => {
     const loadNationalities = async () => {
       setLoadingNationalities(true);
@@ -1289,7 +1077,7 @@ const Checkout: React.FC = () => {
     loadNationalities();
   }, [language]);
 
-  // Load activity title by language
+  // Cargar título de actividad por idioma
   useEffect(() => {
     if (!bookingDetails) {
       // Si no hay bookingDetails, limpiar el título, rating y commentsCount
@@ -1341,10 +1129,6 @@ const Checkout: React.FC = () => {
               setBookingOptionCancelInfo({
                 cancelBefore: bookingOption.cancelBefore ? String(bookingOption.cancelBefore) : undefined,
                 cancelBeforeMinutes: bookingOption.cancelBeforeMinutes || undefined
-              });
-              console.log('📋 Información de cancelación obtenida:', {
-                cancelBefore: bookingOption.cancelBefore,
-                cancelBeforeMinutes: bookingOption.cancelBeforeMinutes
               });
 
               // Establecer lenguajes disponibles del guía si existen en el bookingOption
@@ -1431,12 +1215,6 @@ const Checkout: React.FC = () => {
         try {
           const cartItem = convertBookingDetailsToCartItem(bookingDetails);
           const itemAdded = addItem(cartItem);
-          
-          if (itemAdded) {
-            console.log('✅ Actividad enviada al carrito después de expirar el tiempo');
-          } else {
-            console.log('⚠️ La actividad ya estaba en el carrito');
-          }
         } catch (error) {
           console.error('❌ Error al enviar actividad al carrito:', error);
         }
@@ -1837,8 +1615,6 @@ const Checkout: React.FC = () => {
   // Login con Google (mismo flujo que Navbar)
   const handleLoginWithGoogle = async () => {
     try {
-      console.log('Iniciando login con Google...');
-      
       // Activar loading
       setIsGoogleLoading(true);
       
@@ -1846,16 +1622,8 @@ const Checkout: React.FC = () => {
       const result = await signInWithPopup(auth, googleProvider);
       const user = result.user;
       
-      console.log('✅ Login exitoso con Google:', {
-        email: user.email,
-        displayName: user.displayName,
-        photoURL: user.photoURL,
-        uid: user.uid
-      });
-      
       // Obtener el ID token de Firebase para enviarlo al backend
       const idToken = await user.getIdToken();
-      console.log('🔑 ID Token obtenido de Firebase');
       
       // Llamar al backend para obtener el token de autenticación
       try {
@@ -1885,7 +1653,7 @@ const Checkout: React.FC = () => {
               roleCode: backendResponse.data.roleCode
             };
             
-            setFirebaseUser(userData);
+            // firebaseUser ahora viene del AuthContext
             
             // Extraer y cargar datos de contacto del backend al formulario
             setFormData(prev => ({
@@ -1973,7 +1741,7 @@ const Checkout: React.FC = () => {
               uid: user.uid
             };
             
-            setFirebaseUser(userData);
+            // firebaseUser ahora viene del AuthContext
             
             // Cargar datos básicos de Firebase al formulario
             if (user.email) {
@@ -1999,8 +1767,7 @@ const Checkout: React.FC = () => {
             }
           }
           
-          // Validar el token para actualizar el contexto de autenticación
-          await validateToken(language);
+          // Ya no necesitamos validar manualmente, el AuthContext lo hace automáticamente
         } else {
           // Guardar token de Firebase como fallback
           authApi.saveToken(idToken);
@@ -2013,7 +1780,7 @@ const Checkout: React.FC = () => {
             uid: user.uid
           };
           
-          setFirebaseUser(userData);
+          // firebaseUser ahora viene del AuthContext
           
           // Cargar datos en el formulario
           if (user.email) {
@@ -2050,7 +1817,7 @@ const Checkout: React.FC = () => {
           uid: user.uid
         };
         
-        setFirebaseUser(userData);
+        // firebaseUser ahora viene del AuthContext
         
         // Cargar datos en el formulario
         if (user.email) {
@@ -2090,7 +1857,6 @@ const Checkout: React.FC = () => {
     
     try {
       // Aquí implementar la lógica de login por correo electrónico
-      console.log('Login with email:', loginEmail);
       
       // Guardar el email en estado (no en localStorage)
       const userData = {
@@ -2100,15 +1866,13 @@ const Checkout: React.FC = () => {
         uid: null
       };
       
-      setFirebaseUser(userData);
+      // firebaseUser ahora viene del AuthContext
       
       // Cargar email en el formulario de contacto
       setFormData(prev => ({
         ...prev,
         email: loginEmail || prev.email
       }));
-      
-      console.log('📝 Email cargado en formulario:', loginEmail);
       
       setShowLoginModal(false);
       authCheckCompleted.current = true;
@@ -2172,7 +1936,7 @@ const Checkout: React.FC = () => {
       return;
     }
     
-    // Validate form
+    // Validar formulario
     if (!formData.name || !formData.lastName || !formData.email || !formData.phoneNumber || !formData.nationality || formData.nationality === 'none') {
       alert(getTranslation('checkout.pleaseCompleteFields', language));
       return;
@@ -2281,13 +2045,7 @@ const Checkout: React.FC = () => {
 
     // Si el método de pago es "reserveLater", procesar la reserva
     if (paymentMethod === 'reserveLater') {
-      // Process payment or reservation con token de autenticación
-      console.log('Processing reservation with token:', {
-        formData,
-        paymentMethod,
-        token: token ? 'present' : 'missing',
-        userId: user?.id
-      });
+      // Procesar pago o reserva con token de autenticación
       
       // Limpiar datos de reserva después del pago/reserva exitoso
       sessionStorage.removeItem('checkoutBookingDetails');
@@ -2300,12 +2058,6 @@ const Checkout: React.FC = () => {
     }
     
     // Para otros métodos de pago (como Google Pay)
-    console.log('Processing payment with token:', {
-      formData,
-      paymentMethod,
-      token: token ? 'present' : 'missing',
-      userId: user?.id
-    });
     
     alert(getTranslation('checkout.paymentSuccess', language));
   };
@@ -2872,7 +2624,7 @@ const Checkout: React.FC = () => {
               <div className="card-body">
                 <h2 className="fw-bold mb-3">
                   {firebaseUser && !isEditingContactInfo 
-                    ? (language === 'es' ? 'Check your personal details' : 'Check your personal details')
+                    ? getTranslation('checkout.reviewPersonalData', language)
                     : getTranslation('checkout.reviewPersonalData', language)
                   }
                 </h2>
@@ -2888,7 +2640,7 @@ const Checkout: React.FC = () => {
                       <div className="d-flex justify-content-between align-items-start">
                         <div className="flex-grow-1">
                           <div className="mb-2">
-                            <strong className="d-block">{formData.name && formData.lastName ? `${formData.name} ${formData.lastName}` : firebaseUser.displayName || firebaseUser.nickname || firebaseUser.username || 'Usuario'}</strong>
+                            <strong className="d-block">{formData.name && formData.lastName ? `${formData.name} ${formData.lastName}` : (user?.nickname || user?.username || firebaseUser?.displayName || 'Usuario')}</strong>
                           </div>
                           <div className="mb-2">
                             <span>{formData.email || firebaseUser.email || ''}</span>
@@ -3262,19 +3014,8 @@ const Checkout: React.FC = () => {
                         type="button"
                         className="btn btn-primary btn-lg flex-fill d-none d-md-block"
                         onClick={() => {
-                          // Actualizar firebaseUser con los nuevos datos del formulario
-                          const updatedUser = {
-                            ...firebaseUser,
-                            email: formData.email || firebaseUser.email,
-                            displayName: formData.name && formData.lastName 
-                              ? `${formData.name} ${formData.lastName}` 
-                              : firebaseUser.displayName,
-                            firstname: formData.name || firebaseUser.firstname,
-                            surname: formData.lastName || firebaseUser.surname
-                          };
-                          
-                          // Actualizar estado (no se guarda en localStorage)
-                          setFirebaseUser(updatedUser);
+                          // Ya no necesitamos actualizar firebaseUser manualmente
+                          // El AuthContext maneja el estado del usuario
                           
                           // Cerrar el modo de edición y limpiar datos originales
                           setIsEditingContactInfo(false);
@@ -3665,8 +3406,6 @@ const Checkout: React.FC = () => {
                             },
                           }}
                           onLoadPaymentData={(paymentData) => {
-                            console.log('✅ Google Pay - Pago exitoso:', paymentData);
-                            
                             try {
                               // Extraer el token
                               const token = paymentData?.paymentMethodData?.tokenizationData?.token || '';
@@ -3949,7 +3688,7 @@ const Checkout: React.FC = () => {
                           style={{ alignSelf: 'center', whiteSpace: 'nowrap' }}
                           onClick={(e) => {
                             e.preventDefault();
-                            // Prefill selected id con la selección actual si existe
+                            // Prellenar id seleccionado con la selección actual si existe
                             try {
                               if (bookingDetails?.pickupPoint && Array.isArray(currentBookingOption?.pickupPoints)) {
                                 const found = currentBookingOption.pickupPoints.find((p: any) => p?.name === bookingDetails.pickupPoint?.name);

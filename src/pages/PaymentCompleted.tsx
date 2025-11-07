@@ -53,28 +53,32 @@ const PaymentCompleted: React.FC = () => {
   const [reservationData, setReservationData] = useState<ReservationData | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
 
+  // Efecto para obtener datos de la reserva al montar el componente
   useEffect(() => {
-    // Obtener datos de la reserva desde location.state o sessionStorage
+    // Intentar obtener datos de la reserva desde location.state primero
     const stateData = location.state as ReservationData;
     
     if (stateData) {
+      // Si hay datos en location.state, usarlos y guardarlos en sessionStorage
       setReservationData(stateData);
-      // Guardar en sessionStorage para persistencia
+      // Guardar en sessionStorage para persistencia durante la sesión
       sessionStorage.setItem('lastReservationData', JSON.stringify(stateData));
     } else {
-      // Intentar obtener desde sessionStorage
+      // Intentar obtener desde sessionStorage si no hay datos en location.state
       const storedData = sessionStorage.getItem('lastReservationData');
       if (storedData) {
         try {
           setReservationData(JSON.parse(storedData));
         } catch (error) {
-          console.error('Error parsing stored reservation data:', error);
+          // Si hay error al parsear los datos almacenados, continuar sin ellos
         }
       }
     }
   }, [location.state]);
 
+  // Manejar cancelación de reserva
   const handleCancelReservation = async () => {
+    // Validar que exista código de reserva
     if (!reservationData?.reservationCode) {
       alert(language === 'es' 
         ? 'No se puede cancelar la reserva. Código de reserva no encontrado.'
@@ -82,11 +86,13 @@ const PaymentCompleted: React.FC = () => {
       return;
     }
 
+    // Confirmar cancelación con el usuario
     const confirmMessage = language === 'es'
       ? `¿Estás seguro de que deseas cancelar la reserva ${reservationData.reservationCode}?`
       : `Are you sure you want to cancel reservation ${reservationData.reservationCode}?`;
 
     if (!window.confirm(confirmMessage)) {
+      // Si el usuario cancela, no hacer nada
       return;
     }
 
@@ -96,9 +102,7 @@ const PaymentCompleted: React.FC = () => {
       // Aquí iría la llamada al backend para cancelar la reserva
       // await cancelReservation(reservationData.reservationCode);
       
-      console.log('🚫 Cancelling reservation:', reservationData.reservationCode);
-      
-      // Limpiar datos
+      // Limpiar datos de la reserva del sessionStorage
       sessionStorage.removeItem('lastReservationData');
       
       alert(language === 'es'
@@ -107,7 +111,7 @@ const PaymentCompleted: React.FC = () => {
       
       navigate('/');
     } catch (error) {
-      console.error('Error cancelling reservation:', error);
+      // Si hay error al cancelar la reserva, mostrar mensaje de error
       alert(language === 'es'
         ? 'Error al cancelar la reserva. Por favor, contacta con soporte.'
         : 'Error cancelling reservation. Please contact support.');
@@ -116,20 +120,24 @@ const PaymentCompleted: React.FC = () => {
     }
   };
 
+  // Función auxiliar para formatear fecha según el idioma
   const formatDate = (dateString?: string): string => {
     if (!dateString) return '-';
     try {
       const [year, month, day] = dateString.split('-');
+      // Crear fecha y formatearla según el idioma (mes es 0-indexed, por eso month - 1)
       return new Date(parseInt(year), parseInt(month) - 1, parseInt(day)).toLocaleDateString(language === 'es' ? 'es-ES' : 'en-US', {
         year: 'numeric',
         month: 'long',
         day: 'numeric'
       });
     } catch {
+      // Si hay error al formatear, retornar la fecha original
       return dateString;
     }
   };
 
+  // Función auxiliar para formatear precio según la moneda y el idioma
   const formatPrice = (price?: number, currency?: string): string => {
     if (!price) return '-';
     const currencyCode = currency || 'USD';
@@ -139,14 +147,17 @@ const PaymentCompleted: React.FC = () => {
     }).format(price);
   };
 
+  // Mostrar pantalla de carga si no hay datos de reserva aún
   if (!reservationData) {
     return (
       <div className="container py-5">
         <div className="row justify-content-center">
           <div className="col-md-8 text-center">
+            {/* Spinner de carga */}
             <div className="spinner-border text-primary mb-3" role="status">
               <span className="visually-hidden">Loading...</span>
             </div>
+            {/* Mensaje de carga */}
             <p className="text-muted">
               {language === 'es' ? 'Cargando información de la reserva...' : 'Loading reservation information...'}
             </p>

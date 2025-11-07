@@ -87,27 +87,6 @@ const ActivityDetail: React.FC = () => {
   // Currency y Lang desde URL (ya están disponibles desde context, pero registramos los de URL)
   const urlCurrency = searchParams.get('currency');
   const urlLang = searchParams.get('lang');
-  
-  console.log('📋 Parámetros recibidos en ActivityDetail:', {
-    date: {
-      fromURL: searchParams.get('date'),
-      used: selectedDate,
-      isToday: !searchParams.get('date')
-    },
-    currency: {
-      fromURL: urlCurrency,
-      fromContext: currency,
-      used: currency
-    },
-    lang: {
-      fromURL: urlLang,
-      fromContext: language,
-      used: language
-    },
-    destination: searchParams.get('destination'),
-    adults: searchParams.get('adults'),
-    children: searchParams.get('children')
-  });
 
 
   // Función para obtener el texto completo de la descripción
@@ -165,16 +144,12 @@ const ActivityDetail: React.FC = () => {
       return schedule.dayOfWeek === customDayOfWeek && schedule.isActive;
     }) || [];
     
+    // Seleccionar automáticamente el primer horario disponible del día específico
     if (availableSchedules.length > 0) {
       setSelectedTimeSlot(availableSchedules[0].startTime);
-      console.log('🔄 Nuevo horario seleccionado al cambiar opción:', {
-        selectedDate,
-        dayName: selectedDate ? getDayName(getCustomDayOfWeekFromDate(selectedDate)) : 'No date',
-        selectedTime: availableSchedules[0].startTime
-      });
     } else {
+      // Si no hay horarios para el día seleccionado, limpiar la selección
       setSelectedTimeSlot(null);
-      console.log('⚠️ No hay horarios disponibles para el día al cambiar opción');
     }
   };
 
@@ -215,37 +190,17 @@ const ActivityDetail: React.FC = () => {
       if (matchingTier) {
         // Si el tier tiene totalPrice, usarlo; si no, calcular desde pricePerParticipant
         basePrice = matchingTier.totalPrice || (matchingTier.pricePerParticipant * totalPeople);
-        
-        console.log('💰 Precio calculado con priceTiers:', {
-          numberOfAdults,
-          numberOfChildren,
-          totalPeople,
-          matchingTier,
-          basePrice
-        });
       }
     }
     
+    // Obtener porcentaje de descuento si existe
     const discountPercent = selectedBookingOption.specialOfferPercentage || 0;
-    
-    console.log('💰 Verificando descuento:', {
-      selectedBookingOption: selectedBookingOption?.id,
-      specialOfferPercentage: selectedBookingOption?.specialOfferPercentage,
-      discountPercent,
-      basePrice
-    });
     
     // Aplicar descuento automáticamente si existe specialOfferPercentage
     if (discountPercent > 0) {
+      // Calcular monto de descuento y precio final
       const discountAmount = basePrice * (discountPercent / 100);
       const finalPrice = Math.round((basePrice - discountAmount) * 100) / 100;
-      
-      console.log('🎁 Descuento aplicado:', {
-        basePrice,
-        discountPercent,
-        discountAmount,
-        finalPrice
-      });
       
       return finalPrice;
     }
@@ -360,9 +315,6 @@ const ActivityDetail: React.FC = () => {
       // Simular delay para mostrar loading
       await new Promise(resolve => setTimeout(resolve, 1000));
 
-      // Debug: mostrar el item que se va a agregar
-      console.log('✅ Item que se va a agregar al carrito:', cartItem);
-
       // Agregar al carrito
       const itemAdded = addItem(cartItem);
       
@@ -376,7 +328,7 @@ const ActivityDetail: React.FC = () => {
       navigate('/cart');
 
     } catch (error) {
-      console.error('❌ Error al agregar al carrito:', error);
+      // Si hay error al agregar al carrito, continuar sin navegar
     } finally {
       setIsAddingToCart(false);
     }
@@ -448,11 +400,10 @@ const ActivityDetail: React.FC = () => {
       sessionStorage.setItem('checkoutBookingDetails', JSON.stringify(bookingDetails));
       
       // Navegar al checkout con los detalles de reserva
-      console.log('🚀 Navegando al checkout con detalles:', bookingDetails);
       navigate('/checkout', { state: { bookingDetails } });
 
     } catch (error) {
-      console.error('❌ Error al procesar reserva:', error);
+      // Si hay error al procesar reserva, continuar sin navegar
     } finally {
       setIsBooking(false);
     }
@@ -468,13 +419,13 @@ const ActivityDetail: React.FC = () => {
 
   // Función para obtener horarios según el día seleccionado
   const getSchedulesForSelectedDate = () => {
+    // Si no hay schedules disponibles, retornar lista vacía
     if (!selectedBookingOption?.schedules) {
-      console.log('⚠️ No hay schedules en selectedBookingOption');
       return [];
     }
     
+    // Si no hay fecha seleccionada, mostrar todos los horarios activos
     if (!selectedDate) {
-      console.log('⚠️ No hay fecha de salida seleccionada, mostrando todos los horarios activos');
       return selectedBookingOption.schedules.filter((schedule: Schedule) => schedule.isActive);
     }
 
@@ -485,37 +436,10 @@ const ActivityDetail: React.FC = () => {
     const jsDayOfWeek = selectedDateObj.getDay(); // 0-6 (Domingo-Sábado)
     const customDayOfWeek = convertToCustomDayOfWeek(jsDayOfWeek); // 0-6 (Lunes-Domingo)
 
-    // Log detallado de todos los schedules disponibles
-    console.log('📅 FILTRADO DE HORARIOS POR DÍA DE SALIDA:', {
-      fechaSalida: selectedDate,
-      jsDayOfWeek: jsDayOfWeek,
-      customDayOfWeek: customDayOfWeek,
-      diaNombre: getDayName(customDayOfWeek),
-      totalSchedules: selectedBookingOption.schedules.length,
-      allSchedules: selectedBookingOption.schedules.map((s: Schedule) => ({
-        id: s.id,
-        dayOfWeek: s.dayOfWeek,
-        dayName: getDayName(s.dayOfWeek),
-        startTime: s.startTime,
-        endTime: s.endTime,
-        isActive: s.isActive,
-        matches: s.dayOfWeek === customDayOfWeek && s.isActive ? '✅' : '❌'
-      }))
-    });
-
     // Filtrar horarios que coincidan con el día de la semana y estén activos
     const filteredSchedules = selectedBookingOption.schedules.filter((schedule: Schedule) => 
       schedule.dayOfWeek === customDayOfWeek && schedule.isActive
     );
-
-    console.log('✅ HORARIOS FILTRADOS:', {
-      cantidad: filteredSchedules.length,
-      horarios: filteredSchedules.map((s: Schedule) => ({
-        startTime: s.startTime,
-        endTime: s.endTime,
-        dayName: getDayName(s.dayOfWeek)
-      }))
-    });
 
     return filteredSchedules;
   };
@@ -600,7 +524,7 @@ const ActivityDetail: React.FC = () => {
         
         // Verificar que la fecha es válida
         if (isNaN(cancellationDeadline.getTime())) {
-          console.error('Fecha de cancelación inválida');
+          // Si la fecha de cancelación es inválida, retornar null
           return null;
         }
         
@@ -629,7 +553,7 @@ const ActivityDetail: React.FC = () => {
           return result;
         }
       } catch (error) {
-        console.error('Error calculating cancellation deadline:', error);
+        // Si hay error al calcular fecha límite de cancelación, retornar null
         return null;
       }
     }
@@ -677,10 +601,9 @@ const ActivityDetail: React.FC = () => {
       
       if (response.success && response.data) {
         setSpecialOffers(response.data);
-        console.log('🎁 Ofertas especiales cargadas:', response.data);
       }
     } catch (error) {
-      console.error('Error al cargar ofertas especiales:', error);
+      // Si hay error al cargar ofertas especiales, continuar sin ellas
     }
   };
 
@@ -698,12 +621,7 @@ const ActivityDetail: React.FC = () => {
       );
       
       if (matchingOffer) {
-        console.log('🎁 Aplicando oferta especial:', {
-          optionId: option.id,
-          optionTitle: option.title,
-          discountPercent: matchingOffer.discountPercent,
-          offerName: matchingOffer.offerName
-        });
+        // Aplicar oferta especial a la opción de reserva
         return {
           ...option,
           specialOfferPercentage: matchingOffer.discountPercent
@@ -946,10 +864,11 @@ const ActivityDetail: React.FC = () => {
       try {
         await withLoading(async () => {
           setError(null);
-          //Debe mandar la fecha de la url seleccionada
+          // Obtener fecha de salida desde la URL (si existe)
           const departureDate = searchParams.get('date') || undefined;
+          // Obtener datos de la actividad desde la API
           const activityData = await activitiesApi.getById(id, language, currency, departureDate);
-          //console.log('🎯 CHECCCCKKEKEKKA:', activityData);
+          
           // Cargar ofertas especiales
           await loadSpecialOffers();
           
@@ -969,7 +888,6 @@ const ActivityDetail: React.FC = () => {
             // Seleccionar automáticamente el primer idioma disponible
             if (firstOption.languages && firstOption.languages.length > 0) {
               setSelectedLanguage(firstOption.languages[0]);
-              console.log('✅ Idioma seleccionado automáticamente:', firstOption.languages[0]);
             }
             
             // Seleccionar automáticamente el primer horario disponible del día específico
@@ -980,47 +898,16 @@ const ActivityDetail: React.FC = () => {
             }) || [];
             
             if (availableSchedules.length > 0) {
+              // Si hay horarios para el día seleccionado, usar el primero
               setSelectedTimeSlot(availableSchedules[0].startTime);
-              console.log('✅ Horario seleccionado automáticamente:', {
-                selectedDate,
-                dayName: selectedDate ? getDayName(getCustomDayOfWeekFromDate(selectedDate)) : 'No date',
-                selectedTime: availableSchedules[0].startTime
-              });
             } else if (firstOption.schedules && firstOption.schedules.length > 0) {
-              // Si no hay horarios para el día específico, usar el primer horario disponible
+              // Si no hay horarios para el día específico, usar el primer horario disponible como fallback
               setSelectedTimeSlot(firstOption.schedules[0].startTime);
-              console.log('⚠️ Usando horario por defecto (no hay horarios para el día específico):', {
-                selectedDate,
-                dayName: selectedDate ? getDayName(getCustomDayOfWeekFromDate(selectedDate)) : 'No date',
-                defaultTime: firstOption.schedules[0].startTime
-              });
             }
           }
-          
-          // Log detallado de los bookingOptions y schedules
-          console.log('🎯 ACTIVIDAD CARGADA:', {
-            activityId: activityData.id,
-            activityTitle: activityData.title,
-            totalBookingOptions: activityData.bookingOptions?.length || 0,
-            bookingOptions: activityData.bookingOptions?.map(option => ({
-              id: option.id,
-              title: option.title,
-              pricePerPerson: option.pricePerPerson,
-              specialOfferPercentage: option.specialOfferPercentage,
-              totalSchedules: option.schedules?.length || 0,
-              schedules: option.schedules?.map(s => ({
-                id: s.id,
-                dayOfWeek: s.dayOfWeek,
-                dayName: getDayName(s.dayOfWeek),
-                startTime: s.startTime,
-                endTime: s.endTime,
-                isActive: s.isActive
-              }))
-            }))
-          });
         }, 'activity-detail');
       } catch (err) {
-        console.error('Error fetching activity:', err);
+        // Si hay error al obtener la actividad, mostrar mensaje de error
         setError(err instanceof Error ? err.message : 'Error al cargar la actividad');
       }
     };
@@ -1041,13 +928,9 @@ const ActivityDetail: React.FC = () => {
       const bookingSection = document.getElementById('booking-section');
       if (bookingSection) {
         const rect = bookingSection.getBoundingClientRect();
-        const isInView = rect.top <= 100 && rect.bottom >= 100; // 100px de margen
-        console.log('🔍 Scroll detection:', {
-          rectTop: rect.top,
-          rectBottom: rect.bottom,
-          isInView,
-          showAvailabilitySection: !isInView
-        });
+        // Verificar si la sección de reserva está visible en la pantalla (con margen de 100px)
+        const isInView = rect.top <= 100 && rect.bottom >= 100;
+        // Mostrar/ocultar sección de disponibilidad según si la sección de reserva está visible
         setShowAvailabilitySection(!isInView);
       }
     };
@@ -1063,8 +946,8 @@ const ActivityDetail: React.FC = () => {
   useEffect(() => {
     const handleMobileMenuToggle = (event: CustomEvent) => {
       const { isOpen } = event.detail;
+      // Actualizar estado del menú móvil cuando cambie
       setIsMobileMenuOpen(isOpen);
-      console.log('📱 Mobile menu toggle:', { isOpen });
     };
 
     window.addEventListener('mobileMenuToggle', handleMobileMenuToggle as EventListener);

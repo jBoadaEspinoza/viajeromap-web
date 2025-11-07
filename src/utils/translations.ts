@@ -1596,6 +1596,32 @@ export const translations: Translations = {
     es: 'Más',
     en: 'More'
   },
+
+  // Cookie Consent
+  'cookies.title': {
+    es: '🍪 Uso de Cookies',
+    en: '🍪 Cookie Usage'
+  },
+  'cookies.message': {
+    es: 'Utilizamos cookies para mejorar tu experiencia, personalizar contenido y analizar el tráfico del sitio. Al hacer clic en "Aceptar", aceptas el uso de cookies según nuestra política de privacidad.',
+    en: 'We use cookies to improve your experience, personalize content, and analyze site traffic. By clicking "Accept", you agree to the use of cookies according to our privacy policy.'
+  },
+  'cookies.accept': {
+    es: 'Aceptar',
+    en: 'Accept'
+  },
+  'cookies.reject': {
+    es: 'Rechazar',
+    en: 'Reject'
+  },
+  'cookies.learnMore': {
+    es: 'Más información',
+    en: 'Learn more'
+  },
+  'cookies.moreInfoText': {
+    es: 'Las cookies son pequeños archivos de texto que se almacenan en tu dispositivo. Utilizamos cookies esenciales para el funcionamiento del sitio y cookies analíticas para mejorar nuestro servicio. Puedes gestionar tus preferencias en cualquier momento.',
+    en: 'Cookies are small text files stored on your device. We use essential cookies for site functionality and analytics cookies to improve our service. You can manage your preferences at any time.'
+  },
   'cart.editDetails': {
     es: 'Editar detalles',
     en: 'Edit details'

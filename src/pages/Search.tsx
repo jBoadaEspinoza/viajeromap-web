@@ -37,18 +37,18 @@ const Search: React.FC = () => {
   const [showDateTooltip, setShowDateTooltip] = useState(false);
   const [showAllActivities, setShowAllActivities] = useState(false);
 
-  // Set page title dynamically
+  // Establecer título de página dinámicamente
   usePageTitle('nav.search', language);
 
-  // Helper function to parse date in local timezone (America/Lima)
+  // Función auxiliar para parsear fecha en timezone local (America/Lima)
   const parseLocalDate = (dateString: string): Date => {
     // dateString formato: "YYYY-MM-DD"
     const [year, month, day] = dateString.split('-').map(Number);
-    // Crear fecha en timezone local (mes es 0-indexed)
+    // Crear fecha en timezone local (mes es 0-indexed, por eso month - 1)
     return new Date(year, month - 1, day, 12, 0, 0, 0);
   };
 
-  // Helper function to format date for display
+  // Función auxiliar para formatear fecha para mostrar
   const formatDateForDisplay = (dateString: string): string => {
     if (!dateString) return '';
     const date = parseLocalDate(dateString);
@@ -60,18 +60,13 @@ const Search: React.FC = () => {
     });
   };
 
-  // Fetch activities from API based on search params
+  // Obtener actividades desde la API basado en los parámetros de búsqueda
   useEffect(() => {
     const fetchActivities = async () => {
       try {
         setLoadingActivities(true);
         
-        console.log('🚀 Enviando búsqueda al API (Search):');
-        console.log('   📅 departureDate:', dates || 'sin fecha');
-        console.log('   📍 destinationCity:', destination || 'sin destino');
-        console.log('   💱 currency:', currency.toUpperCase());
-        console.log('   🌐 lang:', language);
-        
+        // Realizar búsqueda de actividades con los filtros aplicados
         const response = await activitiesApi.search({
           lang: language,
           currency: currency.toUpperCase(),
@@ -82,29 +77,15 @@ const Search: React.FC = () => {
           active: true
         });
         
-        // LOG 1: Verificar datos crudos del API
+        // Verificar que la respuesta sea exitosa y contenga datos
         if (response.success && response.data && response.data.length > 0) {
-          console.log('\n🔍 ========================================');
-          console.log('📡 DATOS DESDE API (Search):');
-          console.log('========================================');
-          console.log(`📦 Total actividades recibidas: ${response.data.length}`);
-          
+          // Filtrar actividades que tienen ofertas especiales desde la API
           const activitiesWithOfferFromAPI = response.data.filter(activity => {
             const bookingOption = activity.bookingOptions?.[0];
             return bookingOption?.specialOfferPercentage && bookingOption.specialOfferPercentage > 0;
           });
           
-          console.log(`🎁 Actividades con descuento desde API: ${activitiesWithOfferFromAPI.length}`);
-          console.log(`📊 Porcentaje con descuento: ${((activitiesWithOfferFromAPI.length / response.data.length) * 100).toFixed(1)}%`);
-          
-          if (activitiesWithOfferFromAPI.length > 0) {
-            console.log('\n📋 Lista de actividades con descuento desde API:');
-            activitiesWithOfferFromAPI.forEach(activity => {
-              const bookingOption = activity.bookingOptions?.[0];
-              console.log(`   ✅ ${activity.title} → ${bookingOption?.specialOfferPercentage}% OFF`);
-            });
-          }
-          console.log('========================================\n');
+          // Mapear Activity a ActivityCardData para mostrar en la interfaz
           const mappedActivities = response.data.map(activity => {
             const bookingOption = activity.bookingOptions?.[0];
             let price = 0;
@@ -114,27 +95,33 @@ const Search: React.FC = () => {
             let hasActiveOffer = false;
             let discountPercent = 0;
 
+            // Aplicar la lógica de precios según el modo de precios
             let minParticipants: number | null = null;
             
             if (bookingOption) {
-              // Obtener precio base
+              // Obtener el precio base (el API ya devuelve precios en la moneda solicitada)
+              // Si el modo de precios es por persona y hay niveles de precio (tiers)
               if (bookingOption.pricingMode === 'PER_PERSON' && bookingOption.priceTiers && bookingOption.priceTiers.length > 0) {
+                // Usar la moneda del primer priceTier (asumiendo que todos tienen la misma moneda)
                 currency = bookingOption.priceTiers[0].currency || 'PEN';
                 
                 // Calcular el precio mínimo y encontrar el tier correspondiente
+                // Esto permite mostrar el precio más bajo disponible
                 let minPrice = Infinity;
                 let minParticipantsValue = Infinity;
                 
+                // Iterar sobre todos los niveles de precio para encontrar el más bajo
                 bookingOption.priceTiers.forEach((tier: any) => {
                   const tierTotalPrice = tier.totalPrice || 0;
                   const tierMinParticipants = tier.minParticipants || 1;
                   
-                  // Aplicar descuento si existe
+                  // Aplicar descuento si existe una oferta especial
                   let finalPrice = tierTotalPrice;
                   if (bookingOption.specialOfferPercentage && bookingOption.specialOfferPercentage > 0) {
                     finalPrice = tierTotalPrice - (tierTotalPrice * (bookingOption.specialOfferPercentage / 100));
                   }
                   
+                  // Actualizar precio mínimo y participantes mínimos
                   if (finalPrice < minPrice) {
                     minPrice = finalPrice;
                     minParticipantsValue = tierMinParticipants;
@@ -146,6 +133,7 @@ const Search: React.FC = () => {
                 price = minPrice === Infinity ? 0 : minPrice;
                 minParticipants = minParticipantsValue === Infinity ? null : minParticipantsValue;
                 
+                // Si hay múltiples niveles de precio, mostrar "Desde"
                 if (bookingOption.priceTiers.length > 1) {
                   isFrom = true;
                   // Solo calcular minParticipants si hay más de un tier
@@ -155,20 +143,14 @@ const Search: React.FC = () => {
                   minParticipants = null; // No mostrar mensaje si solo hay un tier
                 }
               } else {
+                // Fallback: usar precio por persona directo si no hay tiers
                 currency = bookingOption.currency || 'PEN';
                 price = bookingOption.pricePerPerson || 0;
                 isFrom = false;
                 minParticipants = null;
               }
 
-              // Verificar specialOfferPercentage
-              console.log(`📊 Actividad: "${activity.title}"`);
-              console.log(`   💰 Precio base: ${currency} ${price}`);
-              console.log(`   🎁 specialOfferPercentage: ${bookingOption.specialOfferPercentage ?? 'null/undefined'}`);
-              console.log(`   🎁 Tipo de dato: ${typeof bookingOption.specialOfferPercentage}`);
-              console.log(`   🎁 Valor absoluto: ${bookingOption.specialOfferPercentage !== null && bookingOption.specialOfferPercentage !== undefined ? Math.abs(bookingOption.specialOfferPercentage) : 'null/undefined'}`);
-
-              // Aplicar descuento si existe specialOfferPercentage
+              // Aplicar descuento si existe una oferta especial (specialOfferPercentage)
               // Verificar que no sea null, undefined, y sea mayor que 0
               const hasValidDiscount = bookingOption.specialOfferPercentage !== null && 
                                       bookingOption.specialOfferPercentage !== undefined && 
@@ -176,18 +158,12 @@ const Search: React.FC = () => {
               
               if (hasValidDiscount && bookingOption.specialOfferPercentage !== null) {
                 hasActiveOffer = true;
-                originalPrice = price;
+                originalPrice = price; // Guardar precio original antes del descuento
                 discountPercent = bookingOption.specialOfferPercentage;
                 
-                // Calcular precio con descuento
+                // Calcular precio final con descuento aplicado
                 const discountAmount = price * (bookingOption.specialOfferPercentage / 100);
                 price = price - discountAmount;
-                
-                console.log(`   ✅ Descuento aplicado: ${discountPercent}%`);
-                console.log(`   💵 Precio original: ${currency} ${originalPrice}`);
-                console.log(`   💲 Precio final: ${currency} ${price}`);
-              } else {
-                console.log(`   ❌ Sin descuento (condición no cumplida)`);
               }
             }
 
@@ -229,52 +205,17 @@ const Search: React.FC = () => {
             };
           });
           
-          // Resumen de descuentos después de filtros
-          console.log('\n🔍 ========================================');
-          console.log('📋 RESUMEN DESPUÉS DE FILTROS (Search):');
-          console.log('========================================');
-          
-          // Información de filtros aplicados
-          console.log('🔧 Filtros aplicados:');
-          if (destination) {
-            console.log(`   📍 Destino: ${destination}`);
-          } else {
-            console.log(`   📍 Destino: Todos`);
-          }
-          if (dates) {
-            console.log(`   📅 Fecha: ${dates}`);
-          }
-          if (adults > 1 || children > 0) {
-            console.log(`   👥 Viajeros: ${adults} adultos, ${children} niños`);
-          }
-          
-          console.log('\n📊 Resultados:');
+          // Filtrar actividades con y sin descuento para referencia
           const withDiscount = mappedActivities.filter(a => a.hasActiveOffer);
           const withoutDiscount = mappedActivities.filter(a => !a.hasActiveOffer);
-          console.log(`   📦 Total actividades después de filtros: ${mappedActivities.length}`);
-          console.log(`   ✅ Con descuento: ${withDiscount.length}`);
-          console.log(`   ❌ Sin descuento: ${withoutDiscount.length}`);
-          console.log(`   📈 Porcentaje con descuento: ${mappedActivities.length > 0 ? ((withDiscount.length / mappedActivities.length) * 100).toFixed(1) : 0}%`);
           
-          // Comparación con datos del API
-          console.log('\n🔄 Comparación:');
-          console.log(`   Desde API: ${activitiesWithOfferFromAPI.length} con descuento de ${response.data.length} totales`);
-          console.log(`   Después filtros: ${withDiscount.length} con descuento de ${mappedActivities.length} totales`);
-          
-          if (withDiscount.length > 0) {
-            console.log('\n🎁 Actividades con descuento (final):');
-            withDiscount.forEach(a => {
-              console.log(`   - ${a.title}: ${a.discountPercent}% OFF`);
-            });
-          }
-          console.log('========================================\n');
-          
+          // Establecer las actividades mapeadas en el estado
           setActivities(mappedActivities);
         } else {
           setActivities([]);
         }
       } catch (error) {
-        console.error('Error fetching activities:', error);
+        // Si hay error al obtener actividades, establecer lista vacía
         setActivities([]);
       } finally {
         setLoadingActivities(false);
@@ -284,7 +225,7 @@ const Search: React.FC = () => {
     fetchActivities();
   }, [language, currency, destination, dates]);
 
-  // Fetch destinations from API
+  // Obtener destinos desde la API
   useEffect(() => {
     const fetchDestinations = async () => {
       try {
@@ -297,7 +238,7 @@ const Search: React.FC = () => {
           setDestinations(response.data);
         }
       } catch (error) {
-        console.error('Error fetching destinations:', error);
+        // Si hay error al obtener destinos, establecer lista vacía
         setDestinations([]);
       } finally {
         setLoadingDestinations(false);
@@ -321,38 +262,48 @@ const Search: React.FC = () => {
     };
   }, []);
 
+  // Manejar cambio en número de adultos (incrementar o decrementar)
   const handleAdultsChange = (increment: boolean) => {
     if (increment) {
       setAdults(prev => prev + 1);
     } else {
+      // No permitir menos de 1 adulto
       setAdults(prev => Math.max(1, prev - 1));
     }
   };
 
+  // Manejar cambio en número de niños (incrementar o decrementar)
   const handleChildrenChange = (increment: boolean) => {
     if (increment) {
       setChildren(prev => prev + 1);
     } else {
+      // No permitir menos de 0 niños
       setChildren(prev => Math.max(0, prev - 1));
     }
   };
 
+  // Manejar búsqueda: validar y actualizar parámetros de búsqueda en la URL
   const handleSearch = () => {
+    // Validar que se haya seleccionado una fecha (obligatorio)
     if (!dates) {
       setShowDateTooltip(true);
+      // Ocultar el tooltip después de 3 segundos
       setTimeout(() => setShowDateTooltip(false), 3000);
       return;
     }
 
+    // Construir parámetros de búsqueda para la URL
     const params = new URLSearchParams();
     if (destination) params.set('destination', destination);
     if (dates) params.set('date', dates);
     if (adults > 1) params.set('adults', adults.toString());
     if (children > 0) params.set('children', children.toString());
     
+    // Actualizar los parámetros de búsqueda en la URL (esto disparará el useEffect que obtiene actividades)
     setSearchParams(params);
   };
 
+  // Limpiar todos los filtros de búsqueda
   const handleClearFilters = () => {
     setDestination('');
     setDates('');
@@ -361,12 +312,14 @@ const Search: React.FC = () => {
     setSearchParams({});
   };
 
+  // Obtener texto formateado para mostrar número de viajeros
   const getTravelersText = () => {
     const total = adults + children;
     if (total === 1) return `1 ${getTranslation('home.search.travelers', language).toLowerCase()}`;
     return `${total} ${getTranslation('home.search.travelers', language).toLowerCase()}`;
   };
 
+  // Obtener actividades a mostrar (limitar a 10 inicialmente, mostrar todas si showAllActivities es true)
   const getActivitiesToShow = () => {
     if (showAllActivities || activities.length <= 10) {
       return activities;
@@ -374,6 +327,7 @@ const Search: React.FC = () => {
     return activities.slice(0, 10);
   };
 
+  // Convertir precio a número si es string
   const getPriceValue = (price: number | string): number => {
     return typeof price === 'string' ? parseFloat(price) : price;
   };

@@ -55,27 +55,18 @@ const Home: React.FC = () => {
   const [scrollLeft, setScrollLeft] = useState(0);
   const [hasMoved, setHasMoved] = useState(false);
 
-  // Set page title dynamically
+  // Establecer título de página dinámicamente
   usePageTitle('nav.home', language);
 
-  // Debug: Verificar currency al cargar
-  useEffect(() => {
-    console.log('🏠 Home - Currency desde URL:', {
-      currencyFromURL: searchParams.get('currency'),
-      currencyFromHook: currency,
-      language
-    });
-  }, [currency, searchParams, language]);
-
-  // Helper function to parse date in local timezone (America/Lima)
+  // Función auxiliar para parsear fecha en timezone local (America/Lima)
   const parseLocalDate = (dateString: string): Date => {
     // dateString formato: "YYYY-MM-DD"
     const [year, month, day] = dateString.split('-').map(Number);
-    // Crear fecha en timezone local (mes es 0-indexed)
+    // Crear fecha en timezone local (mes es 0-indexed, por eso month - 1)
     return new Date(year, month - 1, day, 12, 0, 0, 0);
   };
 
-  // Helper function to format date for display
+  // Función auxiliar para formatear fecha para mostrar
   const formatDateForDisplay = (dateString: string): string => {
     if (!dateString) return '';
     const date = parseLocalDate(dateString);
@@ -88,11 +79,13 @@ const Home: React.FC = () => {
   };
 
   // Manejadores para arrastre del carrusel con mouse
+  // Permiten al usuario arrastrar el carrusel horizontalmente con el mouse
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!carouselRef.current) return;
-    // Solo iniciar drag si no es un click en un elemento interactivo
+    // Solo iniciar arrastre si no es un click en un elemento interactivo (botón o enlace)
     if ((e.target as HTMLElement).closest('button, a')) return;
     
+    // Iniciar el arrastre: guardar posición inicial y estado del scroll
     setIsDown(true);
     setHasMoved(false);
     const slider = carouselRef.current;
@@ -100,31 +93,36 @@ const Home: React.FC = () => {
     setScrollLeft(slider.scrollLeft);
   };
 
+  // Cuando el mouse sale del carrusel, cancelar el arrastre
   const handleMouseLeave = () => {
     setIsDown(false);
     setHasMoved(false);
   };
 
+  // Cuando se suelta el mouse, finalizar el arrastre
   const handleMouseUp = () => {
     setIsDown(false);
-    // Si no hubo movimiento, es un click
+    // Si no hubo movimiento durante el arrastre, es un click normal
+    // Permitir que el click llegue al elemento debajo
     if (!hasMoved) {
       // Permitir que el click llegue al elemento
     }
     setHasMoved(false);
   };
 
+  // Mover el carrusel mientras se arrastra el mouse
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!isDown || !carouselRef.current) return;
     e.preventDefault();
-    setHasMoved(true); // Marcar que hubo movimiento
+    setHasMoved(true); // Marcar que hubo movimiento para distinguir de un click
     const slider = carouselRef.current;
     const x = e.pageX - slider.offsetLeft;
-    const walk = (x - startX) * 2; // Velocidad del scroll
-    slider.scrollLeft = scrollLeft - walk;
+    const walk = (x - startX) * 2; // Calcular distancia a mover (multiplicado por 2 para velocidad)
+    slider.scrollLeft = scrollLeft - walk; // Aplicar el scroll
   };
 
-  // Efecto para carrusel infinito
+  // Efecto para crear un carrusel infinito de destinos
+  // Duplica los destinos y ajusta el scroll para crear efecto de bucle infinito
   useEffect(() => {
     const carousel = carouselRef.current;
     if (!carousel || destinations.length === 0) return;
@@ -132,37 +130,39 @@ const Home: React.FC = () => {
     let scrollTimeout: NodeJS.Timeout;
     let isScrolling = false;
 
+    // Manejar el scroll para crear efecto infinito
     const handleScroll = () => {
-      if (isScrolling) return;
+      if (isScrolling) return; // Evitar múltiples ajustes simultáneos
       
       clearTimeout(scrollTimeout);
       
+      // Esperar un momento después de que el usuario termine de scrollear
       scrollTimeout = setTimeout(() => {
-        const scrollWidth = carousel.scrollWidth;
-        const clientWidth = carousel.clientWidth;
-        const scrollLeft = carousel.scrollLeft;
-        const halfWidth = scrollWidth / 2;
+        const scrollWidth = carousel.scrollWidth; // Ancho total del contenido
+        const clientWidth = carousel.clientWidth; // Ancho visible del contenedor
+        const scrollLeft = carousel.scrollLeft; // Posición actual del scroll
+        const halfWidth = scrollWidth / 2; // Mitad del ancho total (donde empieza el segundo set duplicado)
 
-        // Si estamos en el último cuarto del scroll, volver al inicio (sutilmente)
+        // Si estamos cerca del final, saltar sutilmente al inicio del segundo set
         if (scrollLeft >= scrollWidth - clientWidth - 50) {
           isScrolling = true;
           const offset = scrollLeft - halfWidth;
-          carousel.style.scrollBehavior = 'auto';
-          carousel.scrollLeft = halfWidth + (offset % halfWidth);
+          carousel.style.scrollBehavior = 'auto'; // Cambiar a scroll instantáneo
+          carousel.scrollLeft = halfWidth + (offset % halfWidth); // Ajustar posición
           setTimeout(() => {
-            carousel.style.scrollBehavior = 'smooth';
+            carousel.style.scrollBehavior = 'smooth'; // Volver a scroll suave
             isScrolling = false;
           }, 50);
         }
         
-        // Si estamos muy al inicio, saltar al medio
+        // Si estamos muy al inicio, saltar al medio (inicio del segundo set)
         if (scrollLeft <= 50) {
           isScrolling = true;
           const offset = halfWidth - scrollLeft;
-          carousel.style.scrollBehavior = 'auto';
-          carousel.scrollLeft = halfWidth - (offset % halfWidth);
+          carousel.style.scrollBehavior = 'auto'; // Cambiar a scroll instantáneo
+          carousel.scrollLeft = halfWidth - (offset % halfWidth); // Ajustar posición
           setTimeout(() => {
-            carousel.style.scrollBehavior = 'smooth';
+            carousel.style.scrollBehavior = 'smooth'; // Volver a scroll suave
             isScrolling = false;
           }, 50);
         }
@@ -171,19 +171,21 @@ const Home: React.FC = () => {
 
     carousel.addEventListener('scroll', handleScroll);
     
-    // Inicializar en la posición del medio (inicio del segundo set)
+    // Inicializar el carrusel en la posición del medio (inicio del segundo set duplicado)
+    // Esto permite scrollear hacia atrás y hacia adelante infinitamente
     setTimeout(() => {
       const halfWidth = carousel.scrollWidth / 2;
       carousel.scrollLeft = halfWidth;
     }, 100);
 
+    // Limpiar event listener al desmontar el componente
     return () => {
       carousel.removeEventListener('scroll', handleScroll);
       clearTimeout(scrollTimeout);
     };
   }, [destinations]);
 
-  // Fetch activities from API
+  // Obtener actividades desde la API
   useEffect(() => {
     const fetchActivities = async () => {
       try {
@@ -198,19 +200,15 @@ const Home: React.FC = () => {
           active: true
         });
         
-        // LOG 1: Verificar datos crudos del API
+        // Verificar que la respuesta sea exitosa y contenga datos
         if (response.success && response.data && response.data.length > 0) {
+          // Filtrar actividades que tienen ofertas especiales desde la API
           const activitiesWithOfferFromAPI = response.data.filter(activity => {
             const bookingOption = activity.bookingOptions?.[0];
             return bookingOption?.specialOfferPercentage && bookingOption.specialOfferPercentage > 0;
           });
           
-          if (activitiesWithOfferFromAPI.length > 0) {
-            activitiesWithOfferFromAPI.forEach(activity => {
-              const bookingOption = activity.bookingOptions?.[0];
-            });
-          }
-          // Mapear Activity a ActivityCardData
+          // Mapear Activity a ActivityCardData para mostrar en la interfaz
           const mappedActivities = response.data.map(activity => {
             const bookingOption = activity.bookingOptions?.[0];
             let price = 0;
@@ -220,29 +218,33 @@ const Home: React.FC = () => {
             let hasActiveOffer = false;
             let discountPercent = 0;
 
-            // Aplicar la lógica de precios
+            // Aplicar la lógica de precios según el modo de precios
             let minParticipants: number | null = null;
             
             if (bookingOption) {
               // Obtener el precio base (el API ya devuelve precios en la moneda solicitada)
+              // Si el modo de precios es por persona y hay niveles de precio (tiers)
               if (bookingOption.pricingMode === 'PER_PERSON' && bookingOption.priceTiers && bookingOption.priceTiers.length > 0) {
-                // Usar la moneda del priceTier (asumiendo que todos tienen la misma moneda)
+                // Usar la moneda del primer priceTier (asumiendo que todos tienen la misma moneda)
                 currency = bookingOption.priceTiers[0].currency || 'PEN';
                 
                 // Calcular el precio mínimo y encontrar el tier correspondiente
+                // Esto permite mostrar el precio más bajo disponible
                 let minPrice = Infinity;
                 let minParticipantsValue = Infinity;
                 
+                // Iterar sobre todos los niveles de precio para encontrar el más bajo
                 bookingOption.priceTiers.forEach((tier: any) => {
                   const tierTotalPrice = tier.totalPrice || 0;
                   const tierMinParticipants = tier.minParticipants || 1;
                   
-                  // Aplicar descuento si existe
+                  // Aplicar descuento si existe una oferta especial
                   let finalPrice = tierTotalPrice;
                   if (bookingOption.specialOfferPercentage && bookingOption.specialOfferPercentage > 0) {
                     finalPrice = tierTotalPrice - (tierTotalPrice * (bookingOption.specialOfferPercentage / 100));
                   }
                   
+                  // Actualizar precio mínimo y participantes mínimos
                   if (finalPrice < minPrice) {
                     minPrice = finalPrice;
                     minParticipantsValue = tierMinParticipants;
@@ -254,6 +256,7 @@ const Home: React.FC = () => {
                 price = minPrice === Infinity ? 0 : minPrice;
                 minParticipants = minParticipantsValue === Infinity ? null : minParticipantsValue;
                 
+                // Si hay múltiples niveles de precio, mostrar "Desde"
                 if (bookingOption.priceTiers.length > 1) {
                   isFrom = true;
                   // Solo calcular minParticipants si hay más de un tier
@@ -263,23 +266,21 @@ const Home: React.FC = () => {
                   minParticipants = null; // No mostrar mensaje si solo hay un tier
                 }
               } else {
-                // Fallback al precio por persona y su moneda
+                // Fallback: usar precio por persona directo si no hay tiers
                 currency = bookingOption.currency || 'PEN';
                 price = bookingOption.pricePerPerson || 0;
                 isFrom = false;
                 minParticipants = null;
               }
-              // Aplicar descuento si existe specialOfferPercentage
+              // Aplicar descuento si existe una oferta especial (specialOfferPercentage)
               if (bookingOption.specialOfferPercentage && bookingOption.specialOfferPercentage > 0) {
                 hasActiveOffer = true;
-                originalPrice = price; // Guardar precio original
+                originalPrice = price; // Guardar precio original antes del descuento
                 discountPercent = bookingOption.specialOfferPercentage;
                 
-                // Calcular precio con descuento
+                // Calcular precio final con descuento aplicado
                 const discountAmount = price * (bookingOption.specialOfferPercentage / 100);
                 price = price - discountAmount;
-              } else {
-                console.log(`   ❌ Sin descuento`);
               }
             }
 
@@ -322,22 +323,17 @@ const Home: React.FC = () => {
           });
           
           
+          // Filtrar actividades con y sin descuento para referencia
           const withDiscount = mappedActivities.filter(a => a.hasActiveOffer);
           const withoutDiscount = mappedActivities.filter(a => !a.hasActiveOffer);
           
-          if (withDiscount.length > 0) {
-            console.log('\n🎁 Actividades con descuento (final):');
-            withDiscount.forEach(a => {
-              console.log(`   - ${a.title}: ${a.discountPercent}% OFF`);
-            });
-          }
-          
+          // Establecer las actividades mapeadas en el estado
           setActivities(mappedActivities);
         } else {
           setActivities([]);
         }
       } catch (error) {
-        console.error('Error fetching activities:', error);
+        // Si hay error al obtener actividades, establecer lista vacía
         setActivities([]);
       } finally {
         setLoadingActivities(false);
@@ -345,9 +341,9 @@ const Home: React.FC = () => {
     };
 
     fetchActivities();
-  }, [language, currency, activeDestination, activeDates]); // Depende de los filtros ACTIVOS, no del formulario
+  }, [language, currency, activeDestination, activeDates]); // Depende de los filtros ACTIVOS (desde URL), no del formulario
 
-  // Fetch destinations from API
+  // Obtener destinos desde la API
   useEffect(() => {
     const fetchDestinations = async () => {
       try {
@@ -362,7 +358,7 @@ const Home: React.FC = () => {
           setDestinations(response.data);
         }
       } catch (error) {
-        console.error('Error fetching destinations:', error);
+        // Si hay error al obtener destinos, mostrar mensaje y establecer lista vacía
         setError('Error al cargar los destinos. Por favor, inténtelo de nuevo.');
         setDestinations([]);
       } finally {
@@ -413,24 +409,29 @@ const Home: React.FC = () => {
     };
   }, []);
 
+  // Manejar cambio en número de adultos (incrementar o decrementar)
   const handleAdultsChange = (increment: boolean) => {
     if (increment) {
       setAdults(prev => prev + 1);
     } else {
+      // No permitir menos de 1 adulto
       setAdults(prev => Math.max(1, prev - 1));
     }
   };
 
+  // Manejar cambio en número de niños (incrementar o decrementar)
   const handleChildrenChange = (increment: boolean) => {
     if (increment) {
       setChildren(prev => prev + 1);
     } else {
+      // No permitir menos de 0 niños
       setChildren(prev => Math.max(0, prev - 1));
     }
   };
 
+  // Manejar búsqueda: validar y navegar a la página de resultados
   const handleSearch = () => {
-    // Validar que se haya seleccionado una fecha
+    // Validar que se haya seleccionado una fecha (obligatorio)
     if (!dates) {
       setShowDateTooltip(true);
       // Ocultar el tooltip después de 3 segundos
@@ -438,23 +439,25 @@ const Home: React.FC = () => {
       return;
     }
 
-    // Navegar a la página de búsqueda con los parámetros
+    // Construir parámetros de búsqueda para la URL
     const params = new URLSearchParams();
     if (destination) params.set('destination', destination);
     if (dates) params.set('date', dates);
     if (adults > 1) params.set('adults', adults.toString());
     if (children > 0) params.set('children', children.toString());
     
-    // Navegar a /search con los parámetros
+    // Navegar a la página de búsqueda con los parámetros
     navigate(`/search?${params.toString()}`);
   };
 
+  // Obtener texto formateado para mostrar número de viajeros
   const getTravelersText = () => {
     const total = adults + children;
     if (total === 1) return `1 ${getTranslation('home.search.travelers', language).toLowerCase()}`;
     return `${total} ${getTranslation('home.search.travelers', language).toLowerCase()}`;
   };
 
+  // Obtener actividades a mostrar (limitar a 10 inicialmente, mostrar todas si showAllActivities es true)
   const getActivitiesToShow = () => {
     if (showAllActivities || activities.length <= 10) {
       return activities;
@@ -462,6 +465,7 @@ const Home: React.FC = () => {
     return activities.slice(0, 10);
   };
 
+  // Convertir precio a número si es string
   const getPriceValue = (price: number | string): number => {
     return typeof price === 'string' ? parseFloat(price) : price;
   };
