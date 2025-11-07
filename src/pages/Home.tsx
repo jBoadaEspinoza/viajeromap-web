@@ -14,6 +14,7 @@ import type { DestinationCardData } from '../components/DestinationCard';
 import { activitiesApi } from '../api/activities';
 import type { Destination } from '../api/activities';
 import RatingStars from '../components/RatingStars';
+import { useGoogleTokenValidation } from '../hooks/useGoogleTokenValidation';
 
 
 const Home: React.FC = () => {
@@ -22,6 +23,9 @@ const Home: React.FC = () => {
   const { language } = useLanguage();
   const { config } = useConfig();
   const { currency } = useUrlParams();
+  
+  // Validar token de Google si el usuario está conectado con Google
+  useGoogleTokenValidation();
 
   // Estados del formulario (lo que el usuario está escribiendo)
   const [destination, setDestination] = useState('');

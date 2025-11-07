@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useLanguage } from '../context/LanguageContext';
 import { useCurrency } from '../context/CurrencyContext';
@@ -9,6 +9,7 @@ import { getTranslation } from '../utils/translations';
 import LanguageCurrencyModal from './LanguageCurrencyModal';
 import { signInWithPopup } from 'firebase/auth';
 import { auth, googleProvider } from '../config/firebase';
+import { authApi } from '../api/auth';
 
 const Navbar: React.FC = () => {
   const location = useLocation();
@@ -17,7 +18,7 @@ const Navbar: React.FC = () => {
   const { currency, setCurrency, getCurrencySymbol } = useCurrency();
   const { config } = useConfig();
   const { getTotalItems } = useCart();
-  const { isAuthenticated, login } = useAuth();
+  const { isAuthenticated, login, validateToken } = useAuth();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isLanguagePageViewOpen, setIsLanguagePageViewOpen] = useState(false);
   const [isCurrencyPageViewOpen, setIsCurrencyPageViewOpen] = useState(false);
@@ -28,24 +29,34 @@ const Navbar: React.FC = () => {
   const [loginPhone, setLoginPhone] = useState(''); // Estado para el teléfono del login
   const [isGoogleLoading, setIsGoogleLoading] = useState(false); // Estado para loading de Google
   const [firebaseUser, setFirebaseUser] = useState<any>(null); // Estado para el usuario de Firebase
+  const profileMenuTimeoutRef = useRef<NodeJS.Timeout | null>(null); // Ref para el timeout del menú de perfil
   
   const cartItems = getTotalItems();
 
-  // Leer información del usuario de Firebase desde localStorage
+  // Obtener información del usuario de Firebase si está autenticado
   useEffect(() => {
-    const userData = localStorage.getItem('firebaseUser');
-    console.log('🔍 Navbar - Leyendo usuario de localStorage:', userData);
-    if (userData) {
-      try {
-        const parsedData = JSON.parse(userData);
-        console.log('✅ Navbar - Usuario parseado:', parsedData);
-        setFirebaseUser(parsedData);
-      } catch (error) {
-        console.error('❌ Error parsing firebaseUser:', error);
-      }
+    const currentUser = auth.currentUser;
+    if (currentUser) {
+      // Si hay un usuario de Firebase, actualizar el estado
+      const userData = {
+        email: currentUser.email || '',
+        displayName: currentUser.displayName || '',
+        photoURL: currentUser.photoURL || '',
+        uid: currentUser.uid
+      };
+      setFirebaseUser(userData);
     } else {
-      console.log('⚠️ Navbar - No hay usuario en localStorage');
+      setFirebaseUser(null);
     }
+  }, [isAuthenticated]);
+
+  // Limpiar timeout al desmontar el componente
+  useEffect(() => {
+    return () => {
+      if (profileMenuTimeoutRef.current) {
+        clearTimeout(profileMenuTimeoutRef.current);
+      }
+    };
   }, []);
 
   // Función para validar formato de teléfono
@@ -155,7 +166,6 @@ const Navbar: React.FC = () => {
 
   const handleMyBookingsClick = () => {
     // TODO: Implementar navegación a la página de mis reservas
-    console.log('Mis reservas click');
     // Por ahora mostrar un mensaje
     alert(language === 'es' 
       ? 'Próximamente: Mis reservas' 
@@ -188,7 +198,6 @@ const Navbar: React.FC = () => {
 
   const handleLoginWithGoogle = async () => {
     try {
-      console.log('Iniciando login con Google...');
       
       // Activar loading
       setIsGoogleLoading(true);
@@ -197,58 +206,159 @@ const Navbar: React.FC = () => {
       const result = await signInWithPopup(auth, googleProvider);
       const user = result.user;
       
-      console.log('✅ Login exitoso con Google:', {
-        email: user.email,
-        displayName: user.displayName,
-        photoURL: user.photoURL,
-        uid: user.uid
-      });
-      
-      // Guardar la información del usuario en localStorage
-      const userData = {
-        email: user.email,
-        displayName: user.displayName,
-        photoURL: user.photoURL,
-        uid: user.uid
-      };
-      
-      console.log('💾 Guardando usuario en localStorage:', userData);
-      localStorage.setItem('firebaseUser', JSON.stringify(userData));
-      
-      // Verificar que se guardó correctamente
-      const savedData = localStorage.getItem('firebaseUser');
-      console.log('✅ Usuario guardado en localStorage:', savedData);
-      
-      // Actualizar el estado del usuario
-      setFirebaseUser(userData);
-      console.log('✅ Estado firebaseUser actualizado:', userData);
-      
-      // Cerrar modales
-      setIsLoginModalOpen(false);
-      setIsLoginPageViewOpen(false);
+      // Obtener el ID token de Firebase para enviarlo al backend
+      const idToken = await user.getIdToken();
+      console.log('idToken', idToken);
+      // Llamar al backend para obtener información del usuario y token
+      try {
+        const backendResponse = await authApi.getInfoByTokenTravelerByGoogle(idToken);
+        
+        if (backendResponse.success) {
+          // Guardar el token de autenticación (del backend o Firebase token como fallback)
+          if (backendResponse.token) {
+            authApi.saveToken(backendResponse.token);
+          } else {
+            // Si no hay token del backend, guardar el token de Firebase
+            authApi.saveToken(idToken);
+          }
+          
+          // Actualizar información del usuario con la respuesta del backend
+          if (backendResponse.data) {
+            const userData = {
+              email: backendResponse.data.email || user.email || '',
+              displayName: backendResponse.data.nickname || backendResponse.data.username || user.displayName || '',
+              photoURL: backendResponse.data.profileImageUrl || user.photoURL || '',
+              uid: backendResponse.data.uid || user.uid,
+              username: backendResponse.data.username,
+              nickname: backendResponse.data.nickname,
+              firstname: backendResponse.data.firstname,
+              surname: backendResponse.data.surname,
+              roleId: backendResponse.data.roleId,
+              roleCode: backendResponse.data.roleCode
+            };
+            
+            // Guardar información del usuario usando authApi (solo guarda en contexto, no en localStorage)
+            authApi.saveUserInfo({
+              user: {
+                id: backendResponse.data.roleId,
+                username: backendResponse.data.username,
+                nickname: backendResponse.data.nickname,
+                profileImageUrl: backendResponse.data.profileImageUrl,
+                isActive: true,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+              },
+              role: {
+                id: backendResponse.data.roleId,
+                code: backendResponse.data.roleCode,
+                name: backendResponse.data.roleCode,
+                isActive: true
+              },
+              lang: language
+            });
+            
+            // Actualizar el estado del usuario (solo en estado de React)
+            setFirebaseUser(userData);
+          } else {
+            // Si no hay data en la respuesta, usar datos de Firebase
+            const userData = {
+              email: user.email || '',
+              displayName: user.displayName || '',
+              photoURL: user.photoURL || '',
+              uid: user.uid
+            };
+            
+            setFirebaseUser(userData);
+          }
+          
+          // Validar el token para actualizar el contexto de autenticación
+          await validateToken(language);
+          
+          // Cerrar modales solo si todo fue exitoso
+          setIsLoginModalOpen(false);
+          setIsLoginPageViewOpen(false);
+        } else {
+          // Error en la respuesta del backend
+          throw new Error(backendResponse.message || 'Error al obtener información del usuario');
+        }
+      } catch (backendError: any) {
+        // Error al obtener información del backend - Cerrar sesión y mostrar error
+        try {
+          // Cerrar sesión de Firebase
+          await auth.signOut();
+        } catch (signOutError) {
+          // Error al cerrar sesión de Firebase, continuar
+        }
+        
+        // Limpiar token (no se guardan datos del usuario en localStorage)
+        localStorage.removeItem('authToken');
+        localStorage.removeItem('userInfo');
+        authApi.logout();
+        setFirebaseUser(null);
+        
+        // Desactivar loading
+        setIsGoogleLoading(false);
+        
+        // Cerrar modales
+        setIsLoginModalOpen(false);
+        setIsLoginPageViewOpen(false);
+        
+        // Mostrar mensaje de error
+        const errorMessage = backendError?.response?.data?.message || 
+                            backendError?.message || 
+                            (language === 'es' 
+                              ? 'Error al obtener información del usuario desde el servidor. Por favor, intenta nuevamente.' 
+                              : 'Error getting user information from server. Please try again.');
+        
+        alert(errorMessage);
+        
+        return; // Salir de la función
+      }
       
       // Desactivar loading después de cerrar modales
       setIsGoogleLoading(false);
       
     } catch (error: any) {
-      console.error('Error en login con Google:', error);
+      // Error en Firebase o en el proceso general
+      
+      // Cerrar sesión de Firebase si está autenticado
+      try {
+        await auth.signOut();
+      } catch (signOutError) {
+        // Error al cerrar sesión, continuar
+      }
+      
+      // Limpiar token (no se guardan datos del usuario en localStorage)
+      localStorage.removeItem('authToken');
+      localStorage.removeItem('userInfo');
+      authApi.logout();
+      setFirebaseUser(null);
       
       // Desactivar loading
       setIsGoogleLoading(false);
       
+      // Cerrar modales
+      setIsLoginModalOpen(false);
+      setIsLoginPageViewOpen(false);
+      
       // Mostrar mensaje de error al usuario
       alert(language === 'es' 
-        ? 'Error al iniciar sesión con Google' 
-        : 'Error signing in with Google'
+        ? 'Error al iniciar sesión con Google. Por favor, intenta nuevamente.' 
+        : 'Error signing in with Google. Please try again.'
       );
     }
   };
 
   const handleLogout = () => {
-    console.log('Cerrando sesión...');
+    // Limpiar token (no se guardan datos del usuario en localStorage)
+    localStorage.removeItem('authToken');
+    localStorage.removeItem('userInfo');
+    authApi.logout();
     
-    // Limpiar localStorage
-    localStorage.removeItem('firebaseUser');
+    // Cerrar sesión de Firebase
+    auth.signOut().catch(() => {
+      // Error al cerrar sesión
+    });
     
     // Limpiar estado
     setFirebaseUser(null);
@@ -256,8 +366,6 @@ const Navbar: React.FC = () => {
     // Cerrar menús
     setIsProfileMenuOpen(false);
     setIsMobileMenuOpen(false);
-    
-    console.log('✅ Sesión cerrada exitosamente');
   };
 
 
@@ -266,12 +374,11 @@ const Navbar: React.FC = () => {
     
     try {
       // Aquí implementar la lógica de login por teléfono
-      console.log('Login with phone:', loginPhone);
       setIsLoginModalOpen(false);
       setIsLoginPageViewOpen(false);
       setLoginPhone('');
     } catch (error) {
-      console.error('Error en login:', error);
+      // Error en login
     }
   };
 
@@ -441,8 +548,21 @@ const Navbar: React.FC = () => {
             {/* Profile Context Menu - Desktop */}
             <div 
               className="position-relative"
-              onMouseEnter={() => setIsProfileMenuOpen(true)}
-              onMouseLeave={() => setIsProfileMenuOpen(false)}
+              onMouseEnter={() => {
+                // Cancelar timeout si existe
+                if (profileMenuTimeoutRef.current) {
+                  clearTimeout(profileMenuTimeoutRef.current);
+                  profileMenuTimeoutRef.current = null;
+                }
+                setIsProfileMenuOpen(true);
+              }}
+              onMouseLeave={() => {
+                // Agregar delay antes de cerrar el menú
+                profileMenuTimeoutRef.current = setTimeout(() => {
+                  setIsProfileMenuOpen(false);
+                  profileMenuTimeoutRef.current = null;
+                }, 300); // 300ms de delay
+              }}
             >
               <button
                 className="btn d-flex flex-column align-items-center gap-1 py-2 px-3"
@@ -450,30 +570,20 @@ const Navbar: React.FC = () => {
                 type="button"
               >
                 <div className="position-relative">
-                  {(() => {
-                    console.log('🖼️ Botón perfil - firebaseUser:', firebaseUser);
-                    console.log('🖼️ Botón perfil - photoURL:', firebaseUser?.photoURL);
-                    return firebaseUser?.photoURL ? (
-                      <img 
-                        src={firebaseUser.photoURL} 
-                        alt={firebaseUser.displayName || 'User'} 
-                        style={{ 
-                          width: '24px', 
-                          height: '24px', 
-                          borderRadius: '50%',
-                          objectFit: 'cover'
-                        }}
-                        onError={(e) => {
-                          console.error('❌ Error cargando imagen:', e);
-                        }}
-                        onLoad={() => {
-                          console.log('✅ Imagen cargada exitosamente');
-                        }}
-                      />
-                    ) : (
-                      <i className="fa-regular fa-circle-user fs-6"></i>
-                    );
-                  })()}
+                  {firebaseUser?.photoURL ? (
+                    <img 
+                      src={firebaseUser.photoURL} 
+                      alt={firebaseUser.displayName || 'User'} 
+                      style={{ 
+                        width: '24px', 
+                        height: '24px', 
+                        borderRadius: '50%',
+                        objectFit: 'cover'
+                      }}
+                    />
+                  ) : (
+                    <i className="fa-regular fa-circle-user fs-6"></i>
+                  )}
                 </div>
                 {firebaseUser?.displayName && (
                   <span className="small" style={{ fontSize: '0.7rem', maxWidth: '80px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -493,6 +603,21 @@ const Navbar: React.FC = () => {
                     minWidth: '280px',
                     zIndex: 1000,
                     animation: 'fadeIn 0.2s ease-in-out'
+                  }}
+                  onMouseEnter={() => {
+                    // Cancelar timeout si el mouse entra al menú
+                    if (profileMenuTimeoutRef.current) {
+                      clearTimeout(profileMenuTimeoutRef.current);
+                      profileMenuTimeoutRef.current = null;
+                    }
+                    setIsProfileMenuOpen(true);
+                  }}
+                  onMouseLeave={() => {
+                    // Agregar delay antes de cerrar el menú
+                    profileMenuTimeoutRef.current = setTimeout(() => {
+                      setIsProfileMenuOpen(false);
+                      profileMenuTimeoutRef.current = null;
+                    }, 300); // 300ms de delay
                   }}
                 >
                   {/* Title */}

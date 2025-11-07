@@ -12,6 +12,10 @@ import type { CartItem } from '../context/CartContext';
 import RatingStars from '../components/RatingStars';
 import { apiConfig } from '../utils/apiConfig';
 import GooglePayButton from '@google-pay/button-react';
+import { signInWithPopup, onAuthStateChanged } from 'firebase/auth';
+import { auth, googleProvider } from '../config/firebase';
+import { authApi } from '../api/auth';
+import { useGoogleTokenValidation } from '../hooks/useGoogleTokenValidation';
 
 interface BookingDetails {
   activityId: string;
@@ -46,8 +50,11 @@ const Checkout: React.FC = () => {
   const { language } = useLanguage();
   const { currency } = useCurrency();
   const { config } = useConfig();
-  const { user, isAuthenticated } = useAuth();
+  const { user, isAuthenticated, validateToken } = useAuth();
   const { addItem } = useCart();
+  
+  // Validar token de Google si el usuario está conectado con Google
+  useGoogleTokenValidation();
   
   // Función para navegar a home
   const handleLogoClick = () => {
@@ -110,12 +117,202 @@ const Checkout: React.FC = () => {
   const [loginDismissed, setLoginDismissed] = useState<boolean>(() => {
     return sessionStorage.getItem('checkoutLoginDismissed') === '1';
   });
+  
+  // Estados para autenticación (siguiendo el mismo flujo que Navbar)
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  const [loginEmail, setLoginEmail] = useState('');
+  const [firebaseUser, setFirebaseUser] = useState<any>(null);
+  const [isValidatingAuth, setIsValidatingAuth] = useState(true); // Loading mientras valida autenticación
+  
+  // Ref para controlar la verificación inicial de autenticación (evitar parpadeo del modal)
+  const authCheckCompleted = useRef(false);
+  const modalShownOnce = useRef(false);
+
+  // Obtener información del usuario desde el backend cuando está autenticado con Google
+  useEffect(() => {
+    const loadUserDataFromBackend = async (user: any) => {
+      if (!user) {
+        setFirebaseUser(null);
+        return;
+      }
+
+      try {
+        // Obtener token de Firebase
+        const idToken = await user.getIdToken();
+        
+        // Llamar al backend para obtener información del usuario
+        const backendResponse = await authApi.getInfoByTokenTravelerByGoogle(idToken);
+        
+        if (backendResponse.success && backendResponse.data) {
+          // Actualizar estado del usuario con datos del backend
+          const userData = {
+            email: backendResponse.data.email || user.email || '',
+            displayName: backendResponse.data.nickname || backendResponse.data.username || user.displayName || '',
+            photoURL: backendResponse.data.profileImageUrl || user.photoURL || '',
+            uid: backendResponse.data.uid || user.uid,
+            username: backendResponse.data.username,
+            nickname: backendResponse.data.nickname,
+            firstname: backendResponse.data.firstname,
+            surname: backendResponse.data.surname,
+            roleId: backendResponse.data.roleId,
+            roleCode: backendResponse.data.roleCode
+          };
+          
+          setFirebaseUser(userData);
+          
+          // Extraer y cargar datos de contacto del backend al formulario
+          setFormData(prev => ({
+            ...prev,
+            email: backendResponse.data?.email || prev.email,
+            name: backendResponse.data?.firstname || prev.name,
+            lastName: backendResponse.data?.surname || prev.lastName,
+            phoneNumber: backendResponse.data?.phoneNumber || prev.phoneNumber,
+            phonePostalCode: backendResponse.data?.phonePostalCode || prev.phonePostalCode,
+            phonePostalId: backendResponse.data?.phonePostalId || prev.phonePostalId || 0,
+            phoneCodeId: backendResponse.data?.phoneCodeId || backendResponse.data?.phonePostalId || prev.phoneCodeId || 0,
+            countryBirthCode2: backendResponse.data?.countryBirthCode2 || prev.countryBirthCode2
+          }));
+          
+          // Buscar el código telefónico asociado al usuario
+          let foundPhoneCode: PhoneCode | undefined = undefined;
+          const phonePostalCode = backendResponse.data?.phonePostalCode;
+          
+          // Si phonePostalCode existe, buscar el código telefónico que coincida
+          if (phonePostalCode && phoneCodes.length > 0) {
+            foundPhoneCode = phoneCodes.find(pc => {
+              // Comparar phonePostalCode con phoneCode.code (normalizando formatos)
+              const postalCodeClean = phonePostalCode.replace(/[()]/g, '').replace('+', '').trim();
+              const codeClean = pc.code?.replace(/[()]/g, '').replace('+', '').trim();
+              return codeClean === postalCodeClean || pc.code === phonePostalCode;
+            });
+            
+            // Si se encuentra, establecerlo
+            if (foundPhoneCode) {
+              setFormData(prev => ({
+                ...prev,
+                phoneCode: `(${foundPhoneCode!.code})`,
+                phonePostalCode: foundPhoneCode!.code,
+                phoneCodeId: foundPhoneCode!.id || prev.phoneCodeId || 0
+              }));
+            }
+          }
+          
+          // Si phonePostalCode es null, no establecer ningún código (mostrará "Seleccione un código telefónico")
+          // Si phonePostalCode existe pero no se encontró, usar +51 (Perú) como predeterminado
+          if (phonePostalCode && !foundPhoneCode) {
+            const defaultPeruCode = phoneCodes.find(pc => {
+              const codeClean = pc.code?.replace(/[()]/g, '').replace('+', '');
+              return codeClean === '51' || pc.code === '+51' || pc.code === '51';
+            });
+            
+            if (defaultPeruCode) {
+              setFormData(prev => ({
+                ...prev,
+                phoneCode: `(${defaultPeruCode.code})`,
+                phonePostalCode: defaultPeruCode.code,
+                phoneCodeId: defaultPeruCode.id || prev.phoneCodeId || 0
+              }));
+            }
+          } else if (!phonePostalCode) {
+            // Si phonePostalCode es null, limpiar el código seleccionado para mostrar el option por defecto
+            setFormData(prev => ({
+              ...prev,
+              phoneCode: '',
+              phonePostalCode: ''
+            }));
+          }
+          
+          // Actualizar phone (compatibilidad) si phoneNumber está disponible
+          if (backendResponse.data?.phoneNumber) {
+            setFormData(prev => ({
+              ...prev,
+              phone: backendResponse.data?.phoneNumber || prev.phone
+            }));
+          }
+          
+          // Actualizar nationality si countryBirthCode2 está disponible
+          if (backendResponse.data?.countryBirthCode2) {
+            setFormData(prev => ({
+              ...prev,
+              nationality: backendResponse.data?.countryBirthCode2 || prev.nationality
+            }));
+          }
+        } else {
+          // Si falla el backend, usar datos básicos de Firebase
+          const userData = {
+            email: user.email || '',
+            displayName: user.displayName || '',
+            photoURL: user.photoURL || '',
+            uid: user.uid
+          };
+          setFirebaseUser(userData);
+          
+          // Cargar datos básicos de Firebase al formulario
+          if (user.email) {
+            let firstName = '';
+            let lastName = '';
+            
+            if (user.displayName) {
+              const nameParts = user.displayName.trim().split(/\s+/);
+              if (nameParts.length > 0) {
+                firstName = nameParts[0];
+                if (nameParts.length > 1) {
+                  lastName = nameParts.slice(1).join(' ');
+                }
+              }
+            }
+            
+            setFormData(prev => ({
+              ...prev,
+              email: user.email || prev.email,
+              name: prev.name || firstName,
+              lastName: prev.lastName || lastName
+            }));
+          }
+        }
+      } catch (error) {
+        // Error al obtener datos del backend, usar datos básicos de Firebase
+        const userData = {
+          email: user.email || '',
+          displayName: user.displayName || '',
+          photoURL: user.photoURL || '',
+          uid: user.uid
+        };
+        setFirebaseUser(userData);
+      }
+    };
+
+    // Escuchar cambios en el estado de autenticación de Firebase
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        loadUserDataFromBackend(user);
+      } else {
+        setFirebaseUser(null);
+      }
+    });
+
+    // Limpiar suscripción al desmontar
+    return () => unsubscribe();
+  }, []);
+
+  // Función para validar formato de correo electrónico
+  const isValidEmail = (email: string): boolean => {
+    // Validar formato de correo electrónico
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  };
+  
   const [formData, setFormData] = useState({
     name: '',
     lastName: '',
     email: '',
     phoneCode: '',
-    phone: '',
+    phone: '', // Mantener por compatibilidad, pero usar phoneNumber
+    phoneNumber: '',
+    phonePostalCode: '',
+    phonePostalId: 0,
+    phoneCodeId: 0, // ID del código telefónico para selección
+    countryBirthCode2: '',
     nationality: 'none'
   });
   const [phoneCodes, setPhoneCodes] = useState<PhoneCode[]>([]);
@@ -147,6 +344,8 @@ const Checkout: React.FC = () => {
   const [currentStep, setCurrentStep] = useState<1 | 2>(1); // Siempre inicia en el paso 1 (Contacto)
   const [paymentMethod, setPaymentMethod] = useState<'paypal' | 'googlepay' | 'reserve' | 'reserveLater' | ''>('');
   const [isProcessingPayPal, setIsProcessingPayPal] = useState(false);
+  const [isEditingContactInfo, setIsEditingContactInfo] = useState(false);
+  const [originalFormData, setOriginalFormData] = useState<typeof formData | null>(null);
 
   // Determinar si se puede reservar y pagar después
   // Se puede reservar y pagar después si:
@@ -285,16 +484,24 @@ const Checkout: React.FC = () => {
           }
         } catch {}
       } else {
-        console.log('⚠️ Checkout: No hay bookingDetails, pero manteniendo en checkout y mostrando modal');
-        // Mostrar modal de login solo si no fue descartado previamente
-        if (!loginDismissed) {
-          setShowLoginModal(true);
-        }
+        console.log('⚠️ Checkout: No hay bookingDetails, pero manteniendo en checkout');
+        // Si no está autenticado, mostrar modal de login (obligatorio)
+        // Pero esperar a que se complete la verificación inicial para evitar parpadeo
+        setTimeout(() => {
+          const hasFirebaseUser = firebaseUser !== null || auth.currentUser !== null;
+          const hasToken = !!localStorage.getItem('authToken');
+          
+          // Solo mostrar modal si NO está autenticado, NO hay usuario Firebase Y NO hay token
+          if (!isAuthenticated && !hasFirebaseUser && !hasToken && !modalShownOnce.current) {
+            setShowLoginModal(true);
+            modalShownOnce.current = true;
+          }
+        }, 500);
       }
     }, 100);
 
     return () => clearTimeout(timer);
-  }, [location.state, navigate, loginDismissed]);
+  }, [location.state, navigate, isAuthenticated, firebaseUser]);
 
   // Load form data from sessionStorage if in step 2 and auto-select reserve option if applicable
   useEffect(() => {
@@ -407,6 +614,23 @@ const Checkout: React.FC = () => {
 
   // Función para procesar el pago completado (compartida entre PayPal y Google Pay)
   const processCompletedPayment = (paymentInfo: any, paymentMethod: 'paypal' | 'googlepay') => {
+    // VALIDACIÓN OBLIGATORIA: Verificar autenticación o token válido antes de procesar
+    const token = localStorage.getItem('authToken');
+    const hasFirebaseUser = firebaseUser !== null || auth.currentUser !== null;
+    
+    if (!isAuthenticated && !token && !hasFirebaseUser) {
+      alert(language === 'es' 
+        ? 'Tu sesión ha expirado. Por favor inicia sesión nuevamente.'
+        : 'Your session has expired. Please log in again.');
+      setShowLoginModal(true);
+      return;
+    }
+
+    // Advertencia si no hay token pero sí hay usuario autenticado
+    if (!token && hasFirebaseUser) {
+      console.warn('Usuario autenticado pero sin token. Intentando continuar...');
+    }
+
     // Generar código de reserva UUID corto
     const reservationCode = generateShortUUID();
     
@@ -469,6 +693,17 @@ const Checkout: React.FC = () => {
 
   // Cargar botones de PayPal cuando se selecciona PayPal como método de pago
   useEffect(() => {
+    // VALIDACIÓN OBLIGATORIA: Solo ejecutar si está autenticado o tiene token válido
+    const hasToken = !!localStorage.getItem('authToken');
+    const hasFirebaseUser = firebaseUser !== null || auth.currentUser !== null;
+    
+    if (!isAuthenticated && !hasToken && !hasFirebaseUser) {
+      // Limpiar contenedor si no está autenticado
+      const container = document.getElementById('paypal-button-container');
+      if (container) container.innerHTML = '';
+      return;
+    }
+
     // Solo ejecutar si estamos en el paso 2 y PayPal está seleccionado
     if (currentStep !== 2 || paymentMethod !== 'paypal' || !bookingDetails) {
       return;
@@ -653,11 +888,25 @@ const Checkout: React.FC = () => {
           },
           onApprove: async (data: any, actions: any) => {
             try {
+              // VALIDACIÓN OBLIGATORIA: Verificar autenticación o token válido antes de procesar pago
+              const token = localStorage.getItem('authToken');
+              const hasFirebaseUser = firebaseUser !== null || auth.currentUser !== null;
+              
+              if (!isAuthenticated && !token && !hasFirebaseUser) {
+                alert(language === 'es' 
+                  ? 'Tu sesión ha expirado. Por favor inicia sesión nuevamente.'
+                  : 'Your session has expired. Please log in again.');
+                setShowLoginModal(true);
+                return;
+              }
+
               console.log('🟢 PayPal onApprove - PaymentData:', {
                 paymentData: data,
                 orderID: data.orderID,
                 payerID: data.payerID,
-                actions: actions ? 'available' : 'not available'
+                actions: actions ? 'available' : 'not available',
+                userId: user?.id,
+                token: localStorage.getItem('authToken') ? 'present' : 'missing'
               });
               
               // Capturar la orden con mejor manejo de errores
@@ -781,7 +1030,7 @@ const Checkout: React.FC = () => {
 
     loadPayPal();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paymentMethod, currentStep, bookingDetails]);
+  }, [paymentMethod, currentStep, bookingDetails, isAuthenticated]);
 
   // Función para obtener la configuración de Google Pay
   const getGooglePayConfig = () => {
@@ -818,12 +1067,92 @@ const Checkout: React.FC = () => {
 
 
 
-  // Show login modal if user is not authenticated OR if no booking details
+  // Show login modal if user is not authenticated (obligatorio)
+  // Verificar tanto isAuthenticated como firebaseUser (mismo flujo que Navbar)
+  // Con control para evitar parpadeo del modal
   useEffect(() => {
-    if (!isAuthenticated && !loginDismissed) {
-      setShowLoginModal(true);
-    }
-  }, [bookingDetails, isAuthenticated, loginDismissed]);
+    // Esperar un momento para que se carguen los estados de autenticación
+    const timer = setTimeout(() => {
+      // Verificar si hay usuario de Firebase autenticado o estado de firebaseUser
+      const hasFirebaseUser = firebaseUser !== null || auth.currentUser !== null;
+      
+      // Verificar si hay token válido en localStorage
+      const hasToken = !!localStorage.getItem('authToken');
+      
+      // Solo mostrar el modal si NO está autenticado, NO hay usuario de Firebase Y NO hay token
+      if (!isAuthenticated && !hasFirebaseUser && !hasToken) {
+        // Solo mostrar el modal si no se ha mostrado antes o si ya se completó la verificación
+        if (!modalShownOnce.current || authCheckCompleted.current) {
+          setShowLoginModal(true);
+          setLoginDismissed(false); // No permitir descartar el modal
+          modalShownOnce.current = true;
+        }
+      } else {
+        // Usuario autenticado O tiene token válido, cerrar modal y marcar verificación como completada
+        setShowLoginModal(false);
+        setLoginDismissed(false);
+        authCheckCompleted.current = true;
+      }
+      
+      // Finalizar validación
+      setIsValidatingAuth(false);
+    }, 500); // Esperar 500ms para que se estabilicen los estados
+
+    return () => clearTimeout(timer);
+  }, [isAuthenticated, firebaseUser]);
+
+  // Validar token al llegar al paso 2 (pago) - SOLO UNA VEZ
+  useEffect(() => {
+    // Usar ref para evitar validaciones múltiples
+    let isValidating = false;
+    
+    const validateTokenOnStep2 = async () => {
+      // Solo validar si estamos en el paso 2 y no estamos ya validando
+      if (currentStep !== 2 || isValidating) return;
+      
+      isValidating = true;
+
+      const token = localStorage.getItem('authToken');
+      const hasFirebaseUser = firebaseUser !== null || auth.currentUser !== null;
+
+      console.log('🔍 Validación en paso 2:', {
+        currentStep,
+        hasToken: !!token,
+        hasFirebaseUser,
+        isAuthenticated,
+        authCurrentUser: !!auth.currentUser
+      });
+
+      // Si está autenticado por el contexto O tiene token O tiene usuario, permitir continuar
+      if (isAuthenticated || token || hasFirebaseUser) {
+        console.log('✅ Usuario autenticado, permitiendo continuar en paso 2');
+        isValidating = false;
+        return;
+      }
+
+      // Si NO hay token NI usuario NI está autenticado, regresar al paso 1
+      if (!isAuthenticated && !token && !hasFirebaseUser) {
+        console.warn('⚠️ No hay autenticación válida en paso 2. Regresando al paso 1...');
+        setCurrentStep(1);
+        sessionStorage.setItem('checkoutCurrentStep', '1');
+        setShowLoginModal(true);
+        alert(language === 'es' 
+          ? 'Tu sesión ha expirado. Por favor inicia sesión nuevamente.'
+          : 'Your session has expired. Please log in again.');
+        isValidating = false;
+        return;
+      }
+      
+      isValidating = false;
+    };
+
+    // Esperar un momento antes de validar para evitar validaciones prematuras
+    const timer = setTimeout(() => {
+      validateTokenOnStep2();
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [currentStep, isAuthenticated, firebaseUser]);
 
   // Load phone codes
   useEffect(() => {
@@ -858,13 +1187,13 @@ const Checkout: React.FC = () => {
             // Priorizar Perú, si no se encuentra usar el primer país
             const defaultCode = peruCode || response.data[0];
             
-            // Establecer Perú como valor por defecto
-            if (defaultCode) {
-              // Si ya hay un phoneCode seleccionado, mantenerlo; si no, establecer el defecto (Perú)
-              const phoneCodeValue = prev.phoneCode || `(${defaultCode.code})`;
+            // Establecer Perú como valor por defecto solo si no hay un phoneCode seleccionado
+            if (defaultCode && !prev.phoneCode) {
               return {
                 ...prev,
-                phoneCode: phoneCodeValue
+                phoneCode: `(${defaultCode.code})`,
+                phonePostalCode: defaultCode.code,
+                phoneCodeId: defaultCode.id || prev.phoneCodeId || 0
               };
             }
             return prev;
@@ -879,6 +1208,62 @@ const Checkout: React.FC = () => {
 
     loadPhoneCodes();
   }, [language]);
+
+  // Actualizar phoneCode cuando se cargan los phoneCodes, buscando el código asociado al usuario
+  useEffect(() => {
+    if (phoneCodes.length === 0 || loadingPhoneCodes) {
+      return;
+    }
+
+    let foundPhoneCode: PhoneCode | undefined = undefined;
+
+    // Si phonePostalCode existe, buscar el código telefónico que coincida con phoneCode.code
+    if (formData.phonePostalCode) {
+      foundPhoneCode = phoneCodes.find(pc => {
+        // Comparar phonePostalCode con phoneCode.code (normalizando formatos)
+        const postalCodeClean = formData.phonePostalCode.replace(/[()]/g, '').replace('+', '').trim();
+        const codeClean = pc.code?.replace(/[()]/g, '').replace('+', '').trim();
+        return codeClean === postalCodeClean || pc.code === formData.phonePostalCode;
+      });
+    }
+
+    // Si se encuentra el código, establecerlo
+    if (foundPhoneCode) {
+      const phoneCodeValue = `(${foundPhoneCode.code})`;
+      if (formData.phoneCode !== phoneCodeValue) {
+        setFormData(prev => ({
+          ...prev,
+          phoneCode: phoneCodeValue,
+          phonePostalCode: foundPhoneCode!.code,
+          phoneCodeId: foundPhoneCode!.id || prev.phoneCodeId || 0
+        }));
+      }
+    } else {
+      // Si phonePostalCode es null, no establecer ningún código (mostrará "Seleccione un código telefónico")
+      // Si phonePostalCode existe pero no se encontró, usar +51 (Perú) como predeterminado
+      if (formData.phonePostalCode) {
+        const defaultPeruCode = phoneCodes.find(pc => {
+          const codeClean = pc.code?.replace(/[()]/g, '').replace('+', '');
+          return codeClean === '51' || pc.code === '+51' || pc.code === '51';
+        });
+
+        if (defaultPeruCode && (!formData.phoneCode || formData.phoneCode === '')) {
+          setFormData(prev => ({
+            ...prev,
+            phoneCode: `(${defaultPeruCode.code})`,
+            phonePostalCode: defaultPeruCode.code,
+            phoneCodeId: defaultPeruCode.id || prev.phoneCodeId || 0
+          }));
+        }
+      } else if (!formData.phonePostalCode && formData.phoneCode) {
+        // Si phonePostalCode es null y hay un código seleccionado, limpiarlo para mostrar el option por defecto
+        setFormData(prev => ({
+          ...prev,
+          phoneCode: ''
+        }));
+      }
+    }
+  }, [phoneCodes, formData.phonePostalCode, loadingPhoneCodes, formData.phoneCode]);
 
   // Load nationalities
   useEffect(() => {
@@ -1386,39 +1771,399 @@ const Checkout: React.FC = () => {
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }));
+    
+    // Manejar phonePostalId como número
+    if (name === 'phonePostalId') {
+      setFormData(prev => ({
+        ...prev,
+        [name]: value ? parseInt(value, 10) : 0
+      }));
+    } else {
+      setFormData(prev => ({
+        ...prev,
+        [name]: value
+      }));
+      
+      // Sincronizar phoneNumber con phone para compatibilidad
+      if (name === 'phoneNumber') {
+        setFormData(prev => ({
+          ...prev,
+          phone: value
+        }));
+      }
+      
+      // Si se selecciona un phoneCode, también actualizar phonePostalCode y phoneCodeId
+      if (name === 'phoneCode') {
+        setFormData(prev => {
+          // Si se selecciona el option "Seleccione un código telefónico" (value vacío), establecer como null
+          if (!value || value.trim() === '') {
+            return {
+              ...prev,
+              phoneCode: '',
+              phonePostalCode: '', // Se guarda como string vacío pero se envía como null al backend
+              phoneCodeId: 0,
+              phonePostalId: 0
+            };
+          }
+          
+          // Extraer el código del formato "(+51)" o similar
+          const codeMatch = value.match(/\(([^)]+)\)/);
+          const code = codeMatch ? codeMatch[1] : value;
+          
+          // Buscar el PhoneCode correspondiente para obtener el ID
+          const selectedPhoneCode = phoneCodes.find(pc => pc.code === code || `(${pc.code})` === value);
+          
+          return {
+            ...prev,
+            phonePostalCode: code || prev.phonePostalCode,
+            phoneCodeId: selectedPhoneCode?.id || prev.phoneCodeId || 0,
+            phonePostalId: selectedPhoneCode?.id || prev.phonePostalId || 0
+          };
+        });
+      }
+      
+      // Si se selecciona una nationality, también actualizar countryBirthCode2
+      if (name === 'nationality') {
+        setFormData(prev => ({
+          ...prev,
+          countryBirthCode2: value || prev.countryBirthCode2
+        }));
+      }
+    }
   };
 
-  const handleContinueWithoutLogin = () => {
-    sessionStorage.setItem('checkoutLoginDismissed', '1');
-    setLoginDismissed(true);
-    setShowLoginModal(false);
+  // Eliminada la función handleContinueWithoutLogin - el login ahora es obligatorio
+
+  // Login con Google (mismo flujo que Navbar)
+  const handleLoginWithGoogle = async () => {
+    try {
+      console.log('Iniciando login con Google...');
+      
+      // Activar loading
+      setIsGoogleLoading(true);
+      
+      // Autenticar con Google usando Firebase
+      const result = await signInWithPopup(auth, googleProvider);
+      const user = result.user;
+      
+      console.log('✅ Login exitoso con Google:', {
+        email: user.email,
+        displayName: user.displayName,
+        photoURL: user.photoURL,
+        uid: user.uid
+      });
+      
+      // Obtener el ID token de Firebase para enviarlo al backend
+      const idToken = await user.getIdToken();
+      console.log('🔑 ID Token obtenido de Firebase');
+      
+      // Llamar al backend para obtener el token de autenticación
+      try {
+        const backendResponse = await authApi.getInfoByTokenTravelerByGoogle(idToken);
+        
+        if (backendResponse.success) {
+          // Guardar el token de autenticación (del backend o Firebase token como fallback)
+          if (backendResponse.token) {
+            authApi.saveToken(backendResponse.token);
+          } else {
+            // Si no hay token del backend, guardar el token de Firebase
+            authApi.saveToken(idToken);
+          }
+          
+          // Actualizar información del usuario con la respuesta del backend
+          if (backendResponse.data) {
+            const userData = {
+              email: backendResponse.data.email || user.email || '',
+              displayName: backendResponse.data.nickname || backendResponse.data.username || user.displayName || '',
+              photoURL: backendResponse.data.profileImageUrl || user.photoURL || '',
+              uid: backendResponse.data.uid || user.uid,
+              username: backendResponse.data.username,
+              nickname: backendResponse.data.nickname,
+              firstname: backendResponse.data.firstname,
+              surname: backendResponse.data.surname,
+              roleId: backendResponse.data.roleId,
+              roleCode: backendResponse.data.roleCode
+            };
+            
+            setFirebaseUser(userData);
+            
+            // Extraer y cargar datos de contacto del backend al formulario
+            setFormData(prev => ({
+              ...prev,
+              email: backendResponse.data?.email || prev.email,
+              name: backendResponse.data?.firstname || prev.name,
+              lastName: backendResponse.data?.surname || prev.lastName,
+              phoneNumber: backendResponse.data?.phoneNumber || prev.phoneNumber,
+              phonePostalCode: backendResponse.data?.phonePostalCode || prev.phonePostalCode,
+              phonePostalId: backendResponse.data?.phonePostalId || prev.phonePostalId || 0,
+              phoneCodeId: backendResponse.data?.phoneCodeId || backendResponse.data?.phonePostalId || prev.phoneCodeId || 0,
+              countryBirthCode2: backendResponse.data?.countryBirthCode2 || prev.countryBirthCode2
+            }));
+            
+            // Buscar el código telefónico asociado al usuario
+            let foundPhoneCode: PhoneCode | undefined = undefined;
+            const phonePostalCode = backendResponse.data?.phonePostalCode;
+            
+            // Si phonePostalCode existe, buscar el código telefónico que coincida
+            if (phonePostalCode && phoneCodes.length > 0) {
+              foundPhoneCode = phoneCodes.find(pc => {
+                // Comparar phonePostalCode con phoneCode.code (normalizando formatos)
+                const postalCodeClean = phonePostalCode.replace(/[()]/g, '').replace('+', '').trim();
+                const codeClean = pc.code?.replace(/[()]/g, '').replace('+', '').trim();
+                return codeClean === postalCodeClean || pc.code === phonePostalCode;
+              });
+              
+              // Si se encuentra, establecerlo
+              if (foundPhoneCode) {
+                setFormData(prev => ({
+                  ...prev,
+                  phoneCode: `(${foundPhoneCode!.code})`,
+                  phonePostalCode: foundPhoneCode!.code,
+                  phoneCodeId: foundPhoneCode!.id || prev.phoneCodeId || 0
+                }));
+              }
+            }
+            
+            // Si phonePostalCode es null, no establecer ningún código (mostrará "Seleccione un código telefónico")
+            // Si phonePostalCode existe pero no se encontró, usar +51 (Perú) como predeterminado
+            if (phonePostalCode && !foundPhoneCode) {
+              const defaultPeruCode = phoneCodes.find(pc => {
+                const codeClean = pc.code?.replace(/[()]/g, '').replace('+', '');
+                return codeClean === '51' || pc.code === '+51' || pc.code === '51';
+              });
+              
+              if (defaultPeruCode) {
+                setFormData(prev => ({
+                  ...prev,
+                  phoneCode: `(${defaultPeruCode.code})`,
+                  phonePostalCode: defaultPeruCode.code,
+                  phoneCodeId: defaultPeruCode.id || prev.phoneCodeId || 0
+                }));
+              }
+            } else if (!phonePostalCode) {
+              // Si phonePostalCode es null, limpiar el código seleccionado para mostrar el option por defecto
+              setFormData(prev => ({
+                ...prev,
+                phoneCode: '',
+                phonePostalCode: ''
+              }));
+            }
+            
+            // Actualizar phone (compatibilidad) si phoneNumber está disponible
+            if (backendResponse.data?.phoneNumber) {
+              setFormData(prev => ({
+                ...prev,
+                phone: backendResponse.data?.phoneNumber || prev.phone
+              }));
+            }
+            
+            // Actualizar nationality si countryBirthCode2 está disponible
+            if (backendResponse.data?.countryBirthCode2) {
+              setFormData(prev => ({
+                ...prev,
+                nationality: backendResponse.data?.countryBirthCode2 || prev.nationality
+              }));
+            }
+          } else {
+            // Si no hay data en la respuesta, usar datos de Firebase
+            const userData = {
+              email: user.email || '',
+              displayName: user.displayName || '',
+              photoURL: user.photoURL || '',
+              uid: user.uid
+            };
+            
+            setFirebaseUser(userData);
+            
+            // Cargar datos básicos de Firebase al formulario
+            if (user.email) {
+              let firstName = '';
+              let lastName = '';
+              
+              if (user.displayName) {
+                const nameParts = user.displayName.trim().split(/\s+/);
+                if (nameParts.length > 0) {
+                  firstName = nameParts[0];
+                  if (nameParts.length > 1) {
+                    lastName = nameParts.slice(1).join(' ');
+                  }
+                }
+              }
+              
+              setFormData(prev => ({
+                ...prev,
+                email: user.email || prev.email,
+                name: prev.name || firstName,
+                lastName: prev.lastName || lastName
+              }));
+            }
+          }
+          
+          // Validar el token para actualizar el contexto de autenticación
+          await validateToken(language);
+        } else {
+          // Guardar token de Firebase como fallback
+          authApi.saveToken(idToken);
+          
+          // Usar datos de Firebase
+          const userData = {
+            email: user.email || '',
+            displayName: user.displayName || '',
+            photoURL: user.photoURL || '',
+            uid: user.uid
+          };
+          
+          setFirebaseUser(userData);
+          
+          // Cargar datos en el formulario
+          if (user.email) {
+            let firstName = '';
+            let lastName = '';
+            
+            if (user.displayName) {
+              const nameParts = user.displayName.trim().split(/\s+/);
+              if (nameParts.length > 0) {
+                firstName = nameParts[0];
+                if (nameParts.length > 1) {
+                  lastName = nameParts.slice(1).join(' ');
+                }
+              }
+            }
+            
+            setFormData(prev => ({
+              ...prev,
+              email: user.email || prev.email,
+              name: firstName || prev.name,
+              lastName: lastName || prev.lastName
+            }));
+          }
+        }
+      } catch (backendError: any) {
+        // Guardar token de Firebase como fallback
+        authApi.saveToken(idToken);
+        
+        // Usar datos de Firebase
+        const userData = {
+          email: user.email || '',
+          displayName: user.displayName || '',
+          photoURL: user.photoURL || '',
+          uid: user.uid
+        };
+        
+        setFirebaseUser(userData);
+        
+        // Cargar datos en el formulario
+        if (user.email) {
+          setFormData(prev => ({
+            ...prev,
+            email: user.email || prev.email
+          }));
+        }
+      }
+      
+      // Los datos ya se han cargado en el formulario arriba desde backendResponse.data
+      
+      // Cerrar modal y marcar autenticación como completada
+      setShowLoginModal(false);
+      authCheckCompleted.current = true;
+      
+      // Desactivar loading después de cerrar modal
+      setIsGoogleLoading(false);
+      
+    } catch (error: any) {
+      console.error('Error en login con Google:', error);
+      
+      // Desactivar loading
+      setIsGoogleLoading(false);
+      
+      // Mostrar mensaje de error al usuario
+      alert(language === 'es' 
+        ? 'Error al iniciar sesión con Google' 
+        : 'Error signing in with Google'
+      );
+    }
   };
 
-  const handleLoginWithGoogle = () => {
-    // Implement Google login
-    console.log('Login with Google');
+  // Login con correo electrónico
+  const handleEmailLogin = async () => {
+    if (!isValidEmail(loginEmail)) return;
+    
+    try {
+      // Aquí implementar la lógica de login por correo electrónico
+      console.log('Login with email:', loginEmail);
+      
+      // Guardar el email en estado (no en localStorage)
+      const userData = {
+        email: loginEmail,
+        displayName: null,
+        photoURL: null,
+        uid: null
+      };
+      
+      setFirebaseUser(userData);
+      
+      // Cargar email en el formulario de contacto
+      setFormData(prev => ({
+        ...prev,
+        email: loginEmail || prev.email
+      }));
+      
+      console.log('📝 Email cargado en formulario:', loginEmail);
+      
+      setShowLoginModal(false);
+      authCheckCompleted.current = true;
+      setLoginEmail('');
+    } catch (error) {
+      console.error('Error en login:', error);
+    }
   };
 
-  const handleLoginWithApple = () => {
-    // Implement Apple login
-    console.log('Login with Apple');
-  };
+  const handleContinueToPayment = async () => {
+    // VALIDACIÓN OBLIGATORIA: Verificar autenticación o token válido antes de continuar
+    const hasToken = !!localStorage.getItem('authToken');
+    const hasFirebaseUser = firebaseUser !== null || auth.currentUser !== null;
+    
+    // Permitir continuar si está autenticado O tiene token válido O tiene usuario de Firebase
+    if (!isAuthenticated && !hasToken && !hasFirebaseUser) {
+      setShowLoginModal(true);
+      alert(language === 'es' 
+        ? 'Debes iniciar sesión para continuar con el pago o reserva.'
+        : 'You must log in to continue with payment or reservation.');
+      return;
+    }
 
-  const handleLoginWithFacebook = () => {
-    // Implement Facebook login
-    console.log('Login with Facebook');
-  };
+    // VALIDACIÓN DEL TOKEN: Verificar que el token sea válido antes de continuar
+    if (hasToken && auth.currentUser) {
+      try {
+        const idToken = await auth.currentUser.getIdToken();
+        const validationResponse = await authApi.getInfoByTokenTravelerByGoogle(idToken);
+        
+        if (!validationResponse.success) {
+          // Token no válido, limpiar y solicitar login
+          localStorage.removeItem('authToken');
+          setShowLoginModal(true);
+          alert(language === 'es' 
+            ? 'Tu sesión ha expirado. Por favor inicia sesión nuevamente.'
+            : 'Your session has expired. Please log in again.');
+          return;
+        }
+        
+        // Token válido, actualizar si hay uno nuevo
+        if (validationResponse.token) {
+          localStorage.setItem('authToken', validationResponse.token);
+        }
+      } catch (error) {
+        console.error('Error validando token:', error);
+        // Si hay error en la validación, limpiar y solicitar login
+        localStorage.removeItem('authToken');
+        setShowLoginModal(true);
+        alert(language === 'es' 
+          ? 'Error al validar tu sesión. Por favor inicia sesión nuevamente.'
+          : 'Error validating your session. Please log in again.');
+        return;
+      }
+    }
 
-  const handleEmailLogin = () => {
-    // Implement email login
-    console.log('Login with email:', formData.email);
-  };
-
-  const handleContinueToPayment = () => {
     // Validar que la fecha/hora de salida no haya pasado
     if (isDepartureDatePast()) {
       alert(language === 'es' 
@@ -1428,19 +2173,98 @@ const Checkout: React.FC = () => {
     }
     
     // Validate form
-    if (!formData.name || !formData.lastName || !formData.email || !formData.phone || !formData.nationality || formData.nationality === 'none') {
+    if (!formData.name || !formData.lastName || !formData.email || !formData.phoneNumber || !formData.nationality || formData.nationality === 'none') {
       alert(getTranslation('checkout.pleaseCompleteFields', language));
       return;
     }
     
+    // Preparar datos del formulario para envío (convertir phonePostalCode vacío a null)
+    const formDataToSave = {
+      ...formData,
+      phonePostalCode: formData.phonePostalCode === '' || !formData.phonePostalCode ? null : formData.phonePostalCode,
+      phoneCodeId: formData.phoneCodeId === 0 ? null : formData.phoneCodeId,
+      phonePostalId: formData.phonePostalId === 0 ? null : formData.phonePostalId
+    };
+    
     // Guardar datos del formulario y avanzar al paso 2
-    sessionStorage.setItem('checkoutFormData', JSON.stringify(formData));
+    sessionStorage.setItem('checkoutFormData', JSON.stringify(formDataToSave));
     setCurrentStep(2);
     sessionStorage.setItem('checkoutCurrentStep', '2');
   };
 
 
-  const handlePayNow = () => {
+  const handlePayNow = async () => {
+    // VALIDACIÓN OBLIGATORIA: Verificar autenticación o token válido antes de procesar cualquier pago/reserva
+    const token = localStorage.getItem('authToken');
+    const hasFirebaseUser = firebaseUser !== null || auth.currentUser !== null;
+    
+    // Permitir continuar si está autenticado O tiene token válido O tiene usuario de Firebase
+    if (!isAuthenticated && !token && !hasFirebaseUser) {
+      setShowLoginModal(true);
+      alert(language === 'es' 
+        ? 'Debes iniciar sesión para procesar el pago o reserva.'
+        : 'You must log in to process payment or reservation.');
+      return;
+    }
+
+    // VALIDACIÓN DEL TOKEN: Verificar que el token sea válido antes de procesar pago
+    if (token && auth.currentUser) {
+      try {
+        const idToken = await auth.currentUser.getIdToken();
+        const validationResponse = await authApi.getInfoByTokenTravelerByGoogle(idToken);
+        
+        if (!validationResponse.success) {
+          // Token no válido, limpiar y solicitar login
+          localStorage.removeItem('authToken');
+          setShowLoginModal(true);
+          alert(language === 'es' 
+            ? 'Tu sesión ha expirado. Por favor inicia sesión nuevamente.'
+            : 'Your session has expired. Please log in again.');
+          return;
+        }
+        
+        // Token válido, actualizar si hay uno nuevo
+        if (validationResponse.token) {
+          localStorage.setItem('authToken', validationResponse.token);
+        }
+      } catch (error) {
+        console.error('Error validando token:', error);
+        // Si hay error en la validación, limpiar y solicitar login
+        localStorage.removeItem('authToken');
+        setShowLoginModal(true);
+        alert(language === 'es' 
+          ? 'Error al validar tu sesión. Por favor inicia sesión nuevamente.'
+          : 'Error validating your session. Please log in again.');
+        return;
+      }
+    } else if (!token && hasFirebaseUser) {
+      // Si no hay token pero sí usuario, intentar obtener uno
+      console.warn('Usuario autenticado pero sin token. Obteniendo token...');
+      try {
+        if (auth.currentUser) {
+          const idToken = await auth.currentUser.getIdToken();
+          const validationResponse = await authApi.getInfoByTokenTravelerByGoogle(idToken);
+          
+          if (validationResponse.success && validationResponse.token) {
+            localStorage.setItem('authToken', validationResponse.token);
+          } else {
+            setShowLoginModal(true);
+            alert(language === 'es' 
+              ? 'Error al obtener token de autenticación. Por favor inicia sesión nuevamente.'
+              : 'Error obtaining authentication token. Please log in again.');
+            return;
+          }
+        }
+      } catch (error) {
+        console.error('Error obteniendo token:', error);
+        setShowLoginModal(true);
+        alert(language === 'es' 
+          ? 'Error al validar tu sesión. Por favor inicia sesión nuevamente.'
+          : 'Error validating your session. Please log in again.');
+        return;
+      }
+    }
+
     // Validar que se haya seleccionado un método de pago
     if (!paymentMethod) {
       alert(getTranslation('checkout.pleaseSelectPaymentMethod', language));
@@ -1451,15 +2275,18 @@ const Checkout: React.FC = () => {
     // No hacer nada adicional aquí, solo validar que esté seleccionado
     if (paymentMethod === 'paypal') {
       // PayPal manejará el pago a través de los botones de login
+      // El token ya está verificado arriba
       return;
     }
 
     // Si el método de pago es "reserveLater", procesar la reserva
     if (paymentMethod === 'reserveLater') {
-      // Process payment or reservation
-      console.log('Processing reservation with:', {
+      // Process payment or reservation con token de autenticación
+      console.log('Processing reservation with token:', {
         formData,
-        paymentMethod
+        paymentMethod,
+        token: token ? 'present' : 'missing',
+        userId: user?.id
       });
       
       // Limpiar datos de reserva después del pago/reserva exitoso
@@ -1472,10 +2299,12 @@ const Checkout: React.FC = () => {
       return;
     }
     
-    // Para otros métodos de pago (como Google Pay en el futuro)
-    console.log('Processing payment with:', {
+    // Para otros métodos de pago (como Google Pay)
+    console.log('Processing payment with token:', {
       formData,
-      paymentMethod
+      paymentMethod,
+      token: token ? 'present' : 'missing',
+      userId: user?.id
     });
     
     alert(getTranslation('checkout.paymentSuccess', language));
@@ -1667,82 +2496,76 @@ const Checkout: React.FC = () => {
                   <div className="d-flex align-items-center justify-content-center w-100">
                     <h4 className="fw-bold mb-0">{getTranslation('checkout.loginModal.title', language)}</h4>
                   </div>
-                  <button
-                    type="button"
-                    className="btn-close ms-auto"
-                    onClick={() => {
-                      sessionStorage.setItem('checkoutLoginDismissed', '1');
-                      setLoginDismissed(true);
-                      setShowLoginModal(false);
-                    }}
-                  ></button>
+                  {/* El modal no se puede cerrar sin autenticarse - login obligatorio */}
                 </div>
                 <div className="modal-body text-center">
+                  <p className="text-muted mb-4 fw-medium">
+                    {language === 'es' 
+                      ? 'Para continuar con el pago o reserva, debes iniciar sesión.'
+                      : 'To continue with payment or reservation, you must log in.'}
+                  </p>
                   
-                  <button
-                    className="btn btn-primary btn-lg w-100 mb-3"
-                    onClick={handleContinueWithoutLogin}
-                  >
-                    {getTranslation('checkout.loginModal.continueWithoutLogin', language)}
-                  </button>
-
-                  <div className="d-flex align-items-center mb-3">
-                    <hr className="flex-grow-1" />
-                    <span className="mx-3 text-muted small">o</span>
-                    <hr className="flex-grow-1" />
-                  </div>
-
                   <p className="text-muted mb-4">
                     {getTranslation('checkout.loginModal.benefits', language)}
                   </p>
 
-                  {/* Social Login Buttons */}
-                  <div className="d-flex gap-2 mb-3">
-                    <button
-                      className="btn btn-outline-secondary flex-fill"
-                      onClick={handleLoginWithGoogle}
-                    >
-                      <i className="fab fa-google me-2"></i>
-                      Google
-                    </button>
-                    <button
-                      className="btn btn-outline-secondary flex-fill"
-                      onClick={handleLoginWithApple}
-                    >
-                      <i className="fab fa-apple me-2"></i>
-                      Apple
-                    </button>
-                    <button
-                      className="btn btn-outline-secondary flex-fill"
-                      onClick={handleLoginWithFacebook}
-                    >
-                      <i className="fab fa-facebook me-2"></i>
-                      Facebook
-                    </button>
-                  </div>
+                  {/* Google Login Button */}
+                  <button
+                    className="btn btn-outline-primary w-100 mb-3"
+                    onClick={handleLoginWithGoogle}
+                    disabled={isGoogleLoading}
+                  >
+                    {isGoogleLoading ? (
+                      <>
+                        <span className="spinner-border spinner-border-sm me-2" role="status"></span>
+                        {getTranslation('common.signingIn', language)}
+                      </>
+                    ) : (
+                      <>
+                        <i className="fab fa-google me-2"></i>
+                        {getTranslation('common.continueWithGoogle', language)}
+                      </>
+                    )}
+                  </button>
 
                   {/* Email Login */}
                   <div className="mb-3">
                     <input
                       type="email"
                       className="form-control"
-                      placeholder={getTranslation('checkout.loginModal.emailPlaceholder', language)}
-                      value={formData.email}
-                      onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
+                      placeholder={getTranslation('common.enterEmail', language)}
+                      value={loginEmail}
+                      onChange={(e) => setLoginEmail(e.target.value)}
                     />
                   </div>
                   <button
-                    className="btn btn-secondary w-100"
+                    className={`btn w-100 ${isValidEmail(loginEmail) ? 'btn-outline-primary' : 'btn-outline-secondary'}`}
                     onClick={handleEmailLogin}
-                    disabled={!formData.email}
+                    disabled={!isValidEmail(loginEmail)}
                   >
-                    {getTranslation('checkout.loginModal.continueWithEmail', language)}
+                    {getTranslation('common.continueWithEmail', language)}
                   </button>
                 </div>
               </div>
             </div>
           </div>
         )}
+      </div>
+    );
+  }
+
+  // Mostrar loading mientras se valida la autenticación
+  if (isValidatingAuth) {
+    return (
+      <div className="checkout-page bg-light min-vh-100 d-flex align-items-center justify-content-center">
+        <div className="text-center">
+          <div className="spinner-border text-primary mb-3" role="status" style={{ width: '3rem', height: '3rem' }}>
+            <span className="visually-hidden">{getTranslation('common.validating', language)}</span>
+          </div>
+          <h5 className="text-muted">
+            {getTranslation('common.validatingAuth', language)}
+          </h5>
+        </div>
       </div>
     );
   }
@@ -2047,151 +2870,370 @@ const Checkout: React.FC = () => {
             {/* Personal Data Form */}
             <div className="card">
               <div className="card-body">
-                <h2 className="fw-bold mb-3">{getTranslation('checkout.reviewPersonalData', language)}</h2>
+                <h2 className="fw-bold mb-3">
+                  {firebaseUser && !isEditingContactInfo 
+                    ? (language === 'es' ? 'Check your personal details' : 'Check your personal details')
+                    : getTranslation('checkout.reviewPersonalData', language)
+                  }
+                </h2>
                 <div className="d-flex align-items-center mb-4">
                   <i className="fas fa-lock text-success me-2"></i>
                   <span className="text-success fw-medium">{getTranslation('checkout.fastSecureReservation', language)}</span>
                 </div>
 
-                <form>
+                {/* Mostrar información del usuario si está autenticado y no está editando */}
+                {firebaseUser && !isEditingContactInfo ? (
+                  <>
+                    <div className="border rounded p-4 mb-4" style={{ backgroundColor: '#fff' }}>
+                      <div className="d-flex justify-content-between align-items-start">
+                        <div className="flex-grow-1">
+                          <div className="mb-2">
+                            <strong className="d-block">{formData.name && formData.lastName ? `${formData.name} ${formData.lastName}` : firebaseUser.displayName || firebaseUser.nickname || firebaseUser.username || 'Usuario'}</strong>
+                          </div>
+                          <div className="mb-2">
+                            <span>{formData.email || firebaseUser.email || ''}</span>
+                          </div>
+                          <div>
+                            <span>{formData.phoneCode ? `${formData.phoneCode} ` : ''}{formData.phoneNumber || formData.phone || ''}</span>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn btn-link text-primary p-0"
+                          onClick={() => {
+                            // Guardar los valores actuales del formulario antes de editar
+                            setOriginalFormData({ ...formData });
+                            setIsEditingContactInfo(true);
+                          }}
+                          style={{ textDecoration: 'underline', fontSize: '0.9rem' }}
+                        >
+                          {getTranslation('common.edit', language)}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Botón Continuar con el pago - Mostrar cuando se muestra la info del usuario */}
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-lg w-100 d-none d-md-block mb-3"
+                      onClick={handleContinueToPayment}
+                      disabled={isDepartureDatePast()}
+                      style={isDepartureDatePast() ? { opacity: 0.6, cursor: 'not-allowed' } : {}}
+                    >
+                      {getTranslation('checkout.continuePayment', language)}
+                    </button>
+
+                    {/* Mostrar mensaje de fecha límite si se puede reservar y pagar después */}
+                    {canReserveAndPayLater() && (() => {
+                      const deadline = getReservationDeadline();
+                      return deadline ? (
+                        <div className="mt-3 d-flex align-items-start">
+                          <i className="fas fa-check-circle text-success me-2 mt-1"></i>
+                          <div className="flex-grow-1">
+                            <span className="fw-medium d-block mb-1">
+                              {getTranslation('checkout.reserveNowPayLater', language)}
+                            </span>
+                            <span className="small text-muted">
+                              {getTranslationWithParams('checkout.deadlineConfirmCancelInfo', language, { deadline })}
+                            </span>
+                          </div>
+                        </div>
+                      ) : null;
+                    })()}
+
+                    {/* Booking Policies */}
+                    <div className="mt-4">
+                      {(() => {
+                        const cancelBefore = bookingDetails?.cancelBefore || bookingOptionCancelInfo?.cancelBefore;
+                        if (cancelBefore && canReserveAndPayLater()) {
+                          const deadline = getReservationDeadline();
+                          if (deadline) {
+                            return (
+                              <>
+                                <div className="d-flex align-items-center mb-2">
+                                  <i className="fas fa-check text-success me-2"></i>
+                                  <span className="fw-medium">{getTranslation('checkout.noPayToday', language)}</span>
+                                </div>
+                                <div className="d-flex align-items-center mb-2">
+                                  <i className="fas fa-check text-success me-2"></i>
+                                  <span className="fw-medium">
+                                    {getTranslationWithParams('checkout.bookNowPayLater', language, { deadline })}
+                                  </span>
+                                </div>
+                              </>
+                            );
+                          }
+                        }
+                        return <></>;
+                      })()}
+                      {!isCancellationDeadlinePassed() && (
+                        <div className="d-flex align-items-center mb-2">
+                          <i className="fas fa-check text-success me-2"></i>
+                          <span className="fw-medium">
+                            {(() => {
+                              const deadline = getCancellationDeadline();
+                              const cancelBefore = bookingDetails?.cancelBefore || bookingOptionCancelInfo?.cancelBefore;
+                              
+                              if (deadline) {
+                                return (
+                                  <>
+                                    {getTranslation('checkout.easyCancellation', language)} {deadline}
+                                  </>
+                                );
+                              } else if (cancelBefore) {
+                                return `${getTranslation('checkout.easyCancellation', language)} - ${cancelBefore}`;
+                              }
+                              return getTranslation('checkout.easyCancellation', language);
+                            })()}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                ) : null}
+
+                <form style={{ display: !firebaseUser || isEditingContactInfo ? 'block' : 'none' }}>
                   <div className="mb-3">
                     <label className="form-label fw-medium">
                       {getTranslation('checkout.nameRequired', language)}
                     </label>
-                    <input
-                      type="text"
-                      className="form-control"
-                      name="name"
-                      value={formData.name}
-                      onChange={handleInputChange}
-                      placeholder={getTranslation('checkout.namePlaceholder', language)}
-                    />
+                    <div className="position-relative">
+                      <input
+                        type="text"
+                        className="form-control"
+                        name="name"
+                        value={formData.name}
+                        onChange={handleInputChange}
+                        placeholder={getTranslation('checkout.namePlaceholder', language)}
+                        style={{ paddingRight: formData.name && formData.name.trim() !== '' ? '2.5rem' : '' }}
+                      />
+                      {formData.name && formData.name.trim() !== '' && (
+                        <i className="fas fa-check-circle text-success position-absolute" 
+                           style={{ 
+                             right: '0.75rem', 
+                             top: '50%', 
+                             transform: 'translateY(-50%)',
+                             fontSize: '1rem',
+                             pointerEvents: 'none'
+                           }}></i>
+                      )}
+                    </div>
                   </div>
                   <div className="mb-3">
                     <label className="form-label fw-medium">
                       {getTranslation('checkout.lastNameRequired', language)}
                     </label>
-                    <input
-                      type="text"
-                      className="form-control"
-                      name="lastName"
-                      value={formData.lastName}
-                      onChange={handleInputChange}
-                      placeholder={getTranslation('checkout.lastNamePlaceholder', language)}
-                    />
+                    <div className="position-relative">
+                      <input
+                        type="text"
+                        className="form-control"
+                        name="lastName"
+                        value={formData.lastName}
+                        onChange={handleInputChange}
+                        placeholder={getTranslation('checkout.lastNamePlaceholder', language)}
+                        style={{ paddingRight: formData.lastName && formData.lastName.trim() !== '' ? '2.5rem' : '' }}
+                      />
+                      {formData.lastName && formData.lastName.trim() !== '' && (
+                        <i className="fas fa-check-circle text-success position-absolute" 
+                           style={{ 
+                             right: '0.75rem', 
+                             top: '50%', 
+                             transform: 'translateY(-50%)',
+                             fontSize: '1rem',
+                             pointerEvents: 'none'
+                           }}></i>
+                      )}
+                    </div>
                   </div>
                   <div className="mb-3">
                     <label className="form-label fw-medium">
                       {getTranslation('checkout.emailRequired', language)}
+                      {(firebaseUser || auth.currentUser) && (
+                        <span className="text-muted ms-2" style={{ fontSize: '0.85rem', fontWeight: 'normal' }}>
+                          ({getTranslation('checkout.emailNotEditable', language)})
+                        </span>
+                      )}
                     </label>
-                    <input
-                      type="email"
-                      className="form-control"
-                      name="email"
-                      value={formData.email}
-                      onChange={handleInputChange}
-                      placeholder={getTranslation('checkout.emailPlaceholder', language)}
-                    />
+                    <div className="position-relative">
+                      <input
+                        type="email"
+                        className="form-control"
+                        name="email"
+                        value={formData.email}
+                        onChange={handleInputChange}
+                        placeholder={getTranslation('checkout.emailPlaceholder', language)}
+                        style={{ 
+                          paddingRight: formData.email && isValidEmail(formData.email) ? '2.5rem' : '',
+                          backgroundColor: (firebaseUser || auth.currentUser) ? '#f8f9fa' : '',
+                          cursor: (firebaseUser || auth.currentUser) ? 'not-allowed' : 'text'
+                        }}
+                        disabled={!!(firebaseUser || auth.currentUser)}
+                      />
+                      {formData.email && isValidEmail(formData.email) && (
+                        <i className="fas fa-check-circle text-success position-absolute" 
+                           style={{ 
+                             right: '0.75rem', 
+                             top: '50%', 
+                             transform: 'translateY(-50%)',
+                             fontSize: '1rem',
+                             pointerEvents: 'none'
+                           }}></i>
+                      )}
+                    </div>
                   </div>
 
                   <div className="mb-3">
                     <label className="form-label fw-medium">
                       {getTranslation('checkout.phoneCodeRequired', language)}
                     </label>
-                    {loadingPhoneCodes ? (
-                      <div className="d-flex align-items-center">
-                        <div className="spinner-border spinner-border-sm text-primary me-2" role="status">
-                          <span className="visually-hidden">{getTranslation('common.loading', language)}</span>
+                    <div className="position-relative">
+                      {loadingPhoneCodes ? (
+                        <div className="d-flex align-items-center">
+                          <div className="spinner-border spinner-border-sm text-primary me-2" role="status">
+                            <span className="visually-hidden">{getTranslation('common.loading', language)}</span>
+                          </div>
+                          <select
+                            className="form-select"
+                            disabled
+                          >
+                            <option>{getTranslation('common.loading', language)}...</option>
+                          </select>
                         </div>
-                    <select
-                      className="form-select"
-                          disabled
-                        >
-                          <option>{getTranslation('common.loading', language)}...</option>
-                        </select>
-                      </div>
-                    ) : (
-                      <select
-                        className="form-select"
-                        name="phoneCode"
-                        value={formData.phoneCode}
-                      onChange={handleInputChange}
-                    >
-                        {phoneCodes.length === 0 ? (
-                          <option value="">{getTranslation('checkout.noPhoneCodesAvailable', language)}</option>
-                        ) : (
-                          phoneCodes.map((phoneCode) => {
-                            const countryNameCapitalized = capitalizeCountryName(phoneCode.countryName);
-                            return (
-                              <option 
-                                key={`${phoneCode.code2}-${phoneCode.code}`} 
-                                value={`(${phoneCode.code})`}
-                              >
-                                {countryNameCapitalized} ({phoneCode.code})
-                              </option>
-                            );
-                          })
-                        )}
-                    </select>
-                    )}
+                      ) : (
+                        <>
+                          <select
+                            className="form-select"
+                            name="phoneCode"
+                            value={formData.phoneCode}
+                            onChange={handleInputChange}
+                            style={{ paddingRight: formData.phoneCode && formData.phoneCode.trim() !== '' ? '2.5rem' : '' }}
+                          >
+                            {/* Option por defecto siempre en posición 0 */}
+                            <option value="">
+                              {getTranslation('checkout.selectPhoneCode', language)}
+                            </option>
+                            {phoneCodes.length === 0 ? (
+                              <option value="" disabled>{getTranslation('checkout.noPhoneCodesAvailable', language)}</option>
+                            ) : (
+                              phoneCodes.map((phoneCode) => {
+                                const countryNameCapitalized = capitalizeCountryName(phoneCode.countryName);
+                                // El valor del option debe coincidir con formData.phoneCode para que se seleccione automáticamente
+                                // formData.phoneCode está en formato "(+51)" o similar
+                                // phoneCode.code puede estar en formato "+51" o "51"
+                                const phoneCodeValue = `(${phoneCode.code})`;
+                                
+                                return (
+                                  <option 
+                                    key={`${phoneCode.code2}-${phoneCode.code}`} 
+                                    value={phoneCodeValue}
+                                  >
+                                    {countryNameCapitalized} ({phoneCode.code})
+                                  </option>
+                                );
+                              })
+                            )}
+                          </select>
+                          {formData.phoneCode && formData.phoneCode.trim() !== '' && (
+                            <i className="fas fa-check-circle text-success position-absolute" 
+                               style={{ 
+                                 right: '1.75rem', 
+                                 top: '50%', 
+                                 transform: 'translateY(-50%)',
+                                 fontSize: '1rem',
+                                 pointerEvents: 'none',
+                                 zIndex: 10
+                               }}></i>
+                          )}
+                        </>
+                      )}
+                    </div>
                   </div>
 
                   <div className="mb-4">
                     <label className="form-label fw-medium">
                       {getTranslation('checkout.phoneRequired', language)}
                     </label>
-                    <input
-                      type="tel"
-                      className="form-control"
-                      name="phone"
-                      value={formData.phone}
-                      onChange={handleInputChange}
-                      placeholder={getTranslation('checkout.phonePlaceholder', language)}
-                    />
+                    <div className="position-relative">
+                      <input
+                        type="tel"
+                        className="form-control"
+                        name="phoneNumber"
+                        value={formData.phoneNumber}
+                        onChange={handleInputChange}
+                        placeholder={getTranslation('checkout.phonePlaceholder', language)}
+                        style={{ paddingRight: formData.phoneNumber && formData.phoneNumber.trim() !== '' ? '2.5rem' : '' }}
+                      />
+                      {formData.phoneNumber && formData.phoneNumber.trim() !== '' && (
+                        <i className="fas fa-check-circle text-success position-absolute" 
+                           style={{ 
+                             right: '0.75rem', 
+                             top: '50%', 
+                             transform: 'translateY(-50%)',
+                             fontSize: '1rem',
+                             pointerEvents: 'none'
+                           }}></i>
+                      )}
+                    </div>
                   </div>
                   <div className="mb-3">
                     <label className="form-label fw-medium">
                       {getTranslation('checkout.nationalityRequired', language)}
                     </label>
-                    {loadingNationalities ? (
-                      <div className="d-flex align-items-center">
-                        <div className="spinner-border spinner-border-sm text-primary me-2" role="status">
-                          <span className="visually-hidden">{getTranslation('common.loading', language)}</span>
+                    <div className="position-relative">
+                      {loadingNationalities ? (
+                        <div className="d-flex align-items-center">
+                          <div className="spinner-border spinner-border-sm text-primary me-2" role="status">
+                            <span className="visually-hidden">{getTranslation('common.loading', language)}</span>
+                          </div>
+                          <select
+                            className="form-select"
+                            disabled
+                          >
+                            <option>{getTranslation('common.loading', language)}...</option>
+                          </select>
                         </div>
-                        <select
-                          className="form-select"
-                          disabled
-                        >
-                          <option>{getTranslation('common.loading', language)}...</option>
-                        </select>
-                      </div>
-                    ) : (
-                    <select
-                      className="form-select"
-                      name="nationality"
-                      value={formData.nationality}
-                      onChange={handleInputChange}
-                    >
-                        <option value="none">
-                          {getTranslation('checkout.selectNationality', language) || 'Seleccione una nacionalidad'}
-                        </option>
-                        {nationalities.length === 0 ? (
-                          <option value="">{getTranslation('checkout.noNationalitiesAvailable', language) || 'No hay nacionalidades disponibles'}</option>
-                        ) : (
-                          nationalities.map((nationality) => {
-                            const denominationCapitalized = capitalizeDenomination(nationality.denomination);
-                            return (
-                              <option 
-                                key={nationality.code2} 
-                                value={nationality.code2}
-                              >
-                                {denominationCapitalized}
-                              </option>
-                            );
-                          })
-                        )}
-                    </select>
-                    )}
+                      ) : (
+                        <>
+                          <select
+                            className="form-select"
+                            name="nationality"
+                            value={formData.nationality}
+                            onChange={handleInputChange}
+                            style={{ paddingRight: formData.nationality && formData.nationality !== 'none' ? '2.5rem' : '' }}
+                          >
+                            <option value="none">
+                              {getTranslation('checkout.selectNationality', language) || 'Seleccione una nacionalidad'}
+                            </option>
+                            {nationalities.length === 0 ? (
+                              <option value="">{getTranslation('checkout.noNationalitiesAvailable', language) || 'No hay nacionalidades disponibles'}</option>
+                            ) : (
+                              nationalities.map((nationality) => {
+                                const denominationCapitalized = capitalizeDenomination(nationality.denomination);
+                                return (
+                                  <option 
+                                    key={nationality.code2} 
+                                    value={nationality.code2}
+                                  >
+                                    {denominationCapitalized}
+                                  </option>
+                                );
+                              })
+                            )}
+                          </select>
+                          {formData.nationality && formData.nationality !== 'none' && (
+                            <i className="fas fa-check-circle text-success position-absolute" 
+                               style={{ 
+                                 right: '1.75rem', 
+                                 top: '50%', 
+                                 transform: 'translateY(-50%)',
+                                 fontSize: '1rem',
+                                 pointerEvents: 'none',
+                                 zIndex: 10
+                               }}></i>
+                          )}
+                        </>
+                      )}
+                    </div>
                   </div>
                   <div className="mb-4">
                     <small className="text-muted">
@@ -2199,15 +3241,63 @@ const Checkout: React.FC = () => {
                     </small>
                   </div>
 
-                  <button
-                    type="button"
-                    className="btn btn-primary btn-lg w-100 d-none d-md-block"
-                    onClick={handleContinueToPayment}
-                    disabled={isDepartureDatePast()}
-                    style={isDepartureDatePast() ? { opacity: 0.6, cursor: 'not-allowed' } : {}}
-                  >
-                    {getTranslation('checkout.continuePayment', language)}
-                  </button>
+                  {/* Botones cuando está editando */}
+                  {isEditingContactInfo && firebaseUser ? (
+                    <div className="d-flex gap-2">
+                      <button
+                        type="button"
+                        className="btn btn-outline-secondary btn-lg flex-fill d-none d-md-block"
+                        onClick={() => {
+                          // Restaurar los datos originales del formulario sin guardar cambios
+                          if (originalFormData) {
+                            setFormData(originalFormData);
+                          }
+                          setIsEditingContactInfo(false);
+                          setOriginalFormData(null);
+                        }}
+                      >
+                        {getTranslation('common.cancel', language)}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-lg flex-fill d-none d-md-block"
+                        onClick={() => {
+                          // Actualizar firebaseUser con los nuevos datos del formulario
+                          const updatedUser = {
+                            ...firebaseUser,
+                            email: formData.email || firebaseUser.email,
+                            displayName: formData.name && formData.lastName 
+                              ? `${formData.name} ${formData.lastName}` 
+                              : firebaseUser.displayName,
+                            firstname: formData.name || firebaseUser.firstname,
+                            surname: formData.lastName || firebaseUser.surname
+                          };
+                          
+                          // Actualizar estado (no se guarda en localStorage)
+                          setFirebaseUser(updatedUser);
+                          
+                          // Cerrar el modo de edición y limpiar datos originales
+                          setIsEditingContactInfo(false);
+                          setOriginalFormData(null);
+                        }}
+                      >
+                        {getTranslation('common.saveChanges', language)}
+                      </button>
+                    </div>
+                  ) : (
+                    /* Botón Continuar con el pago - Solo mostrar cuando NO está editando */
+                    !isEditingContactInfo && (
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-lg w-100 d-none d-md-block"
+                        onClick={handleContinueToPayment}
+                        disabled={isDepartureDatePast()}
+                        style={isDepartureDatePast() ? { opacity: 0.6, cursor: 'not-allowed' } : {}}
+                      >
+                        {getTranslation('checkout.continuePayment', language)}
+                      </button>
+                    )
+                  )}
 
                   {/* Mostrar mensaje de fecha límite si se puede reservar y pagar después */}
                   {canReserveAndPayLater() && (() => {
@@ -2317,6 +3407,28 @@ const Checkout: React.FC = () => {
                 <h2 className="fw-bold mb-3">
                   {getTranslation('checkout.selectPaymentMethod', language)}
                 </h2>
+                
+                {/* Bloqueo si no está autenticado */}
+                {!isAuthenticated && (
+                  <div className="alert alert-warning mb-4" role="alert">
+                    <div className="d-flex align-items-center">
+                      <i className="fas fa-exclamation-triangle me-2"></i>
+                      <div>
+                        <strong className="d-block mb-1">
+                          {language === 'es' 
+                            ? 'Inicio de sesión requerido'
+                            : 'Login required'}
+                        </strong>
+                        <p className="mb-0">
+                          {language === 'es' 
+                            ? 'Debes iniciar sesión para poder realizar el pago o reserva.'
+                            : 'You must log in to proceed with payment or reservation.'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <div className="d-flex align-items-center mb-4">
                   <i className="fas fa-lock text-success me-2"></i>
                   <span className="text-success fw-medium">
@@ -2327,7 +3439,12 @@ const Checkout: React.FC = () => {
                 {/* Payment Methods */}
                 <div className="mb-4">
                   {/* PayPal */}
-                  <div className="form-check mb-3 p-3 border rounded" style={{ cursor: 'pointer', backgroundColor: paymentMethod === 'paypal' ? '#f8f9fa' : 'transparent', borderColor: paymentMethod === 'paypal' ? '#007bff' : '#dee2e6' }}>
+                  <div className="form-check mb-3 p-3 border rounded" style={{ 
+                    cursor: (!isAuthenticated && !localStorage.getItem('authToken') && !firebaseUser && !auth.currentUser) ? 'not-allowed' : 'pointer', 
+                    backgroundColor: paymentMethod === 'paypal' ? '#f8f9fa' : 'transparent', 
+                    borderColor: paymentMethod === 'paypal' ? '#007bff' : '#dee2e6', 
+                    opacity: (!isAuthenticated && !localStorage.getItem('authToken') && !firebaseUser && !auth.currentUser) ? 0.6 : 1 
+                  }}>
                     <input
                       className="form-check-input"
                       type="radio"
@@ -2335,8 +3452,21 @@ const Checkout: React.FC = () => {
                       id="paymentPayPal"
                       value="paypal"
                       checked={paymentMethod === 'paypal'}
-                      onChange={(e) => setPaymentMethod(e.target.value as 'paypal')}
-                      style={{ cursor: 'pointer' }}
+                      onChange={(e) => {
+                        const hasToken = !!localStorage.getItem('authToken');
+                        const hasFirebaseUser = firebaseUser !== null || auth.currentUser !== null;
+                        
+                        if (!isAuthenticated && !hasToken && !hasFirebaseUser) {
+                          setShowLoginModal(true);
+                          alert(language === 'es' 
+                            ? 'Debes iniciar sesión para seleccionar un método de pago.'
+                            : 'You must log in to select a payment method.');
+                          return;
+                        }
+                        setPaymentMethod(e.target.value as 'paypal');
+                      }}
+                      disabled={!isAuthenticated && !localStorage.getItem('authToken') && !firebaseUser && !auth.currentUser}
+                      style={{ cursor: (!isAuthenticated && !localStorage.getItem('authToken') && !firebaseUser && !auth.currentUser) ? 'not-allowed' : 'pointer' }}
                     />
                     <label className="form-check-label d-flex align-items-center justify-content-between w-100" htmlFor="paymentPayPal" style={{ cursor: 'pointer' }}>
                       <div className="d-flex align-items-center">
@@ -2352,7 +3482,12 @@ const Checkout: React.FC = () => {
                   </div>
 
                   {/* Google Pay */}
-                  <div className="form-check mb-3 p-3 border rounded" style={{ cursor: 'pointer', backgroundColor: paymentMethod === 'googlepay' ? '#f8f9fa' : 'transparent', borderColor: paymentMethod === 'googlepay' ? '#007bff' : '#dee2e6' }}>
+                  <div className="form-check mb-3 p-3 border rounded" style={{ 
+                    cursor: (!isAuthenticated && !localStorage.getItem('authToken') && !firebaseUser && !auth.currentUser) ? 'not-allowed' : 'pointer', 
+                    backgroundColor: paymentMethod === 'googlepay' ? '#f8f9fa' : 'transparent', 
+                    borderColor: paymentMethod === 'googlepay' ? '#007bff' : '#dee2e6', 
+                    opacity: (!isAuthenticated && !localStorage.getItem('authToken') && !firebaseUser && !auth.currentUser) ? 0.6 : 1 
+                  }}>
                     <input
                       className="form-check-input"
                       type="radio"
@@ -2360,8 +3495,21 @@ const Checkout: React.FC = () => {
                       id="paymentGooglePay"
                       value="googlepay"
                       checked={paymentMethod === 'googlepay'}
-                      onChange={(e) => setPaymentMethod(e.target.value as 'googlepay')}
-                      style={{ cursor: 'pointer' }}
+                      onChange={(e) => {
+                        const hasToken = !!localStorage.getItem('authToken');
+                        const hasFirebaseUser = firebaseUser !== null || auth.currentUser !== null;
+                        
+                        if (!isAuthenticated && !hasToken && !hasFirebaseUser) {
+                          setShowLoginModal(true);
+                          alert(language === 'es' 
+                            ? 'Debes iniciar sesión para seleccionar un método de pago.'
+                            : 'You must log in to select a payment method.');
+                          return;
+                        }
+                        setPaymentMethod(e.target.value as 'googlepay');
+                      }}
+                      disabled={!isAuthenticated && !localStorage.getItem('authToken') && !firebaseUser && !auth.currentUser}
+                      style={{ cursor: (!isAuthenticated && !localStorage.getItem('authToken') && !firebaseUser && !auth.currentUser) ? 'not-allowed' : 'pointer' }}
                     />
                     <label className="form-check-label d-flex align-items-center w-100" htmlFor="paymentGooglePay" style={{ cursor: 'pointer' }}>
                       <i className="fab fa-google-pay me-3" style={{ fontSize: '2rem', color: '#4285F4' }}></i>
@@ -2375,8 +3523,25 @@ const Checkout: React.FC = () => {
                   {/* Reserva ahora y paga después - Siempre disponible */}
                   <div 
                     className="form-check mb-3 p-3 border rounded" 
-                    style={{ cursor: 'pointer', backgroundColor: paymentMethod === 'reserveLater' ? '#f8f9fa' : 'transparent', borderColor: paymentMethod === 'reserveLater' ? '#28a745' : '#dee2e6' }}
-                    onClick={() => setPaymentMethod('reserveLater')}
+                    style={{ 
+                      cursor: (!isAuthenticated && !localStorage.getItem('authToken') && !firebaseUser && !auth.currentUser) ? 'not-allowed' : 'pointer', 
+                      backgroundColor: paymentMethod === 'reserveLater' ? '#f8f9fa' : 'transparent', 
+                      borderColor: paymentMethod === 'reserveLater' ? '#28a745' : '#dee2e6', 
+                      opacity: (!isAuthenticated && !localStorage.getItem('authToken') && !firebaseUser && !auth.currentUser) ? 0.6 : 1 
+                    }}
+                    onClick={() => {
+                      const hasToken = !!localStorage.getItem('authToken');
+                      const hasFirebaseUser = firebaseUser !== null || auth.currentUser !== null;
+                      
+                      if (!isAuthenticated && !hasToken && !hasFirebaseUser) {
+                        setShowLoginModal(true);
+                        alert(language === 'es' 
+                          ? 'Debes iniciar sesión para seleccionar un método de pago.'
+                          : 'You must log in to select a payment method.');
+                        return;
+                      }
+                      setPaymentMethod('reserveLater');
+                    }}
                   >
                     <input
                       className="form-check-input"
@@ -2385,8 +3550,21 @@ const Checkout: React.FC = () => {
                       id="paymentReserveLater"
                       value="reserveLater"
                       checked={paymentMethod === 'reserveLater'}
-                      onChange={(e) => setPaymentMethod(e.target.value as 'reserveLater')}
-                      style={{ cursor: 'pointer' }}
+                      onChange={(e) => {
+                        const hasToken = !!localStorage.getItem('authToken');
+                        const hasFirebaseUser = firebaseUser !== null || auth.currentUser !== null;
+                        
+                        if (!isAuthenticated && !hasToken && !hasFirebaseUser) {
+                          setShowLoginModal(true);
+                          alert(language === 'es' 
+                            ? 'Debes iniciar sesión para seleccionar un método de pago.'
+                            : 'You must log in to select a payment method.');
+                          return;
+                        }
+                        setPaymentMethod(e.target.value as 'reserveLater');
+                      }}
+                      disabled={!isAuthenticated && !localStorage.getItem('authToken') && !firebaseUser && !auth.currentUser}
+                      style={{ cursor: (!isAuthenticated && !localStorage.getItem('authToken') && !firebaseUser && !auth.currentUser) ? 'not-allowed' : 'pointer' }}
                     />
                     <label className="form-check-label d-flex align-items-center w-100" htmlFor="paymentReserveLater" style={{ cursor: 'pointer' }}>
                       <i className="fas fa-calendar-check me-3" style={{ fontSize: '2rem', color: '#28a745' }}></i>
@@ -3254,7 +4432,7 @@ const Checkout: React.FC = () => {
                         {formData.email}
                       </div>
                       <div className="mb-1 text-muted">
-                        {formData.phoneCode} {formData.phone}
+                        {formData.phoneCode} {formData.phoneNumber || formData.phone}
                       </div>
                     </div>
                   </div>
@@ -3452,58 +4630,44 @@ const Checkout: React.FC = () => {
                 <div className="d-flex align-items-center justify-content-center w-100">
                   <h4 className="fw-bold mb-0">{getTranslation('checkout.loginModal.title', language)}</h4>
                 </div>
-                <button
-                  type="button"
-                  className="btn-close ms-auto"
-                  onClick={() => {
-                    sessionStorage.setItem('checkoutLoginDismissed', '1');
-                    setLoginDismissed(true);
-                    setShowLoginModal(false);
-                  }}
-                ></button>
+                {/* El modal no se puede cerrar sin autenticarse - login obligatorio */}
               </div>
               <div className="modal-body text-center">
+                <p className="text-muted mb-4 fw-medium">
+                  {language === 'es' 
+                    ? 'Para continuar con el pago o reserva, debes iniciar sesión.'
+                    : 'To continue with payment or reservation, you must log in.'}
+                </p>
                 
-                <button
-                  className="btn btn-primary btn-lg w-100 mb-3"
-                  onClick={handleContinueWithoutLogin}
-                >
-                  {getTranslation('checkout.loginModal.continueWithoutLogin', language)}
-                </button>
-
-                <div className="d-flex align-items-center mb-3">
-                  <hr className="flex-grow-1" />
-                  <span className="mx-3 text-muted small">o</span>
-                  <hr className="flex-grow-1" />
-                </div>
-
                 <p className="text-muted mb-4">
                   {getTranslation('checkout.loginModal.benefits', language)}
                 </p>
 
-                {/* Social Login Buttons */}
-                <div className="d-flex gap-2 mb-3">
-                  <button
-                    className="btn btn-outline-secondary flex-fill"
-                    onClick={handleLoginWithGoogle}
-                  >
-                    <i className="fab fa-google me-2"></i>
-                    Google
-                  </button>
-                  <button
-                    className="btn btn-outline-secondary flex-fill"
-                    onClick={handleLoginWithApple}
-                  >
-                    <i className="fab fa-apple me-2"></i>
-                    Apple
-                  </button>
-                  <button
-                    className="btn btn-outline-secondary flex-fill"
-                    onClick={handleLoginWithFacebook}
-                  >
-                    <i className="fab fa-facebook me-2"></i>
-                    Facebook
-                  </button>
+                {/* Google Login Button */}
+                <button
+                  className="btn btn-outline-primary w-100 mb-3"
+                  onClick={handleLoginWithGoogle}
+                  disabled={isGoogleLoading}
+                >
+                  {isGoogleLoading ? (
+                    <>
+                      <span className="spinner-border spinner-border-sm me-2" role="status"></span>
+                      {getTranslation('common.signingIn', language)}
+                    </>
+                  ) : (
+                    <>
+                      <i className="fab fa-google me-2"></i>
+                      {getTranslation('common.continueWithGoogle', language)}
+                    </>
+                  )}
+                </button>
+
+                <div className="d-flex align-items-center mb-3">
+                  <hr className="flex-grow-1" />
+                  <span className="mx-3 text-muted small">
+                    {getTranslation('common.or', language)}
+                  </span>
+                  <hr className="flex-grow-1" />
                 </div>
 
                 {/* Email Login */}
@@ -3511,17 +4675,17 @@ const Checkout: React.FC = () => {
                   <input
                     type="email"
                     className="form-control"
-                    placeholder={getTranslation('checkout.loginModal.emailPlaceholder', language)}
-                    value={formData.email}
-                    onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
+                    placeholder={getTranslation('common.enterEmail', language)}
+                    value={loginEmail}
+                    onChange={(e) => setLoginEmail(e.target.value)}
                   />
                 </div>
                 <button
-                  className="btn btn-secondary w-100"
+                  className={`btn w-100 ${isValidEmail(loginEmail) ? 'btn-outline-primary' : 'btn-outline-secondary'}`}
                   onClick={handleEmailLogin}
-                  disabled={!formData.email}
+                  disabled={!isValidEmail(loginEmail)}
                 >
-                  {getTranslation('checkout.loginModal.continueWithEmail', language)}
+                  {getTranslation('common.continueWithEmail', language)}
                 </button>
               </div>
             </div>

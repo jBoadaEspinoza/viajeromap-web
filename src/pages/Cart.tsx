@@ -2,10 +2,14 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useLanguage } from '../context/LanguageContext';
 import { useCart } from '../context/CartContext';
 import { getTranslation } from '../utils/translations';
+import { useGoogleTokenValidation } from '../hooks/useGoogleTokenValidation';
 
 const Cart: React.FC = () => {
   const { language } = useLanguage();
   const { items, removeItem, updateQuantity, getTotalPrice, updateItemDetails, getTotalTravelers, getItemTotalPrice } = useCart();
+  
+  // Validar token de Google si el usuario está conectado con Google
+  useGoogleTokenValidation();
   
   // Debug: mostrar items del carrito
   useEffect(() => {

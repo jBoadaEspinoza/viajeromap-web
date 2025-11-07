@@ -35,7 +35,7 @@ apiClient.interceptors.response.use(
 
     // Si el token expiró y no es una petición de login
     if (error.response?.status === 401 && 
-        error.response?.data?.errorCode === 'TOKEN_EXPIRED' &&
+        (error.response?.data?.errorCode === 'TOKEN_EXPIRED' || error.response?.data?.errorCode === 'NO_TOKEN') &&
         !originalRequest._retry &&
         !originalRequest.url?.includes('/auth/login')) {
       
@@ -44,9 +44,15 @@ apiClient.interceptors.response.use(
       // Limpiar token expirado
       localStorage.removeItem('authToken');
       localStorage.removeItem('userInfo');
+      localStorage.removeItem('firebaseUser');
       
-      // Redirigir al login
-      window.location.href = '/extranet/login';
+      // Emitir evento personalizado para que AuthContext lo maneje
+      window.dispatchEvent(new CustomEvent('tokenExpired'));
+      
+      // Si es extranet, redirigir directamente
+      if (typeof window !== 'undefined' && window.location.pathname.startsWith('/extranet')) {
+        window.location.href = '/extranet/login';
+      }
       
       return Promise.reject(error);
     }

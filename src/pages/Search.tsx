@@ -9,6 +9,7 @@ import type { ActivityCardData } from '../components/ActivityCard';
 import { activitiesApi } from '../api/activities';
 import type { Destination } from '../api/activities';
 import RatingStars from '../components/RatingStars';
+import { useGoogleTokenValidation } from '../hooks/useGoogleTokenValidation';
 
 const Search: React.FC = () => {
   const navigate = useNavigate();
@@ -16,6 +17,9 @@ const Search: React.FC = () => {
   const { language } = useLanguage();
   const { config } = useConfig();
   const { currency } = useUrlParams();
+  
+  // Validar token de Google si el usuario está conectado con Google
+  useGoogleTokenValidation();
 
   // Estados del formulario de búsqueda
   const [destination, setDestination] = useState(searchParams.get('destination') || '');

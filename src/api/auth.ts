@@ -7,6 +7,8 @@ export interface LoginRequest {
   lang: string;
 }
 
+
+
 export interface LoginResponse {
   success: boolean;
   message: string;
@@ -57,9 +59,57 @@ export interface TokenInfoResponse {
   errorCode?: string;
 }
 
+export interface TokenInfoTravelerByGoogleResponse{
+  success: boolean;
+  message: string;
+  data?: {
+      uid: string;
+      tokenType: 'FIREBASE';
+      username: string;
+      nickname: string;
+      profileImageUrl: string;
+      firstname: string;
+      surname: string | null;
+      roleId: number;
+      roleCode: 'TRAVELER' | 'ADMIN' | 'PROVIDER' | string;
+      email: string;
+      expiration: number;
+      phoneNumber: string;
+      phonePostalCode: string;
+      phonePostalId: number;
+      phoneCodeId?: number; // ID del código telefónico
+      countryBirthCode2: string;
+      issuedAt: number;
+  };
+  token?: string;
+  errorCode?: string;
+}
+
+// Interfaces para login con SMS
+export interface SendSmsCodeRequest {
+  phone: string;
+  phoneCode: string;
+  lang: string;
+}
+
+export interface SendSmsCodeResponse {
+  success: boolean;
+  message: string;
+  sessionId?: string;
+}
+
+export interface VerifySmsCodeRequest {
+  sessionId: string;
+  code: string;
+  email: string;
+  lang: string;
+}
+
+export interface VerifySmsCodeResponse extends LoginResponse {}
+
 // Funciones de autenticación
 export const authApi = {
-  // Login
+  // Login tradicional
   login: async (credentials: LoginRequest): Promise<LoginResponse> => {
     try {
       const response = await apiClient.post('/auth/login', credentials);
@@ -96,6 +146,33 @@ export const authApi = {
         localStorage.removeItem('authToken');
       }
       
+      return {
+        success: false,
+        message: error.response?.data?.message || 'Error validando token',
+        errorCode: error.response?.data?.errorCode
+      };
+    }
+  },
+
+  // Get info by token firebase
+  getInfoByTokenTravelerByGoogle: async (token: string): Promise<TokenInfoTravelerByGoogleResponse> => {
+    try {
+      const response = await apiClient.get(`/auth/token/info/traveler/byGoogle`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      // Verificar si el backend devuelve un token en los headers o en el body
+      const responseData = response.data || {};
+      const tokenFromHeader = response.headers?.['authorization']?.replace('Bearer ', '') || 
+                              response.headers?.['Authorization']?.replace('Bearer ', '');
+      
+      return {
+        ...responseData,
+        token: responseData.token || tokenFromHeader || token // Usar token del backend, header o Firebase token como fallback
+      };
+    } catch (error: any) {
       return {
         success: false,
         message: error.response?.data?.message || 'Error validando token',

@@ -13,6 +13,7 @@ export interface NationalitySearchParams{
 }
 
 export interface PhoneCode {
+    id?: number;
     code2: string;
     code3: string;
     countryName: string;

@@ -217,9 +217,17 @@ export const translations: Translations = {
     es: '123456789',
     en: '123456789'
   },
+  'checkout.selectPhoneCode': {
+    es: 'Seleccione un código telefónico',
+    en: 'Select a phone code'
+  },
   'checkout.noPhoneCodesAvailable': {
     es: 'No hay códigos disponibles',
     en: 'No phone codes available'
+  },
+  'checkout.emailNotEditable': {
+    es: 'No editable - autenticado con Google',
+    en: 'Not editable - authenticated with Google'
   },
   'checkout.continuePayment': {
     es: 'Continuar con el pago',
@@ -1495,6 +1503,38 @@ export const translations: Translations = {
   'common.loading': {
     es: 'Cargando...',
     en: 'Loading...'
+  },
+  'common.validating': {
+    es: 'Validando...',
+    en: 'Validating...'
+  },
+  'common.validatingAuth': {
+    es: 'Validando autenticación...',
+    en: 'Validating authentication...'
+  },
+  'common.signingIn': {
+    es: 'Iniciando sesión...',
+    en: 'Signing in...'
+  },
+  'common.continueWithGoogle': {
+    es: 'Continuar con Google',
+    en: 'Continue with Google'
+  },
+  'common.continueWithEmail': {
+    es: 'Continuar con correo electrónico',
+    en: 'Continue with email'
+  },
+  'common.enterEmail': {
+    es: 'Ingresa tu correo electrónico',
+    en: 'Enter your email address'
+  },
+  'common.or': {
+    es: 'o',
+    en: 'or'
+  },
+  'common.saveChanges': {
+    es: 'Guardar cambios',
+    en: 'Save changes'
   },
   'common.error': {
     es: 'Error',
