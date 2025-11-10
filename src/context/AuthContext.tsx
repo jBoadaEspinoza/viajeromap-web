@@ -14,6 +14,7 @@ interface UserData {
   nickname?: string;
   firstname?: string;
   surname?: string | null;
+  personId?: number;
   roleId?: number;
   roleCode?: string;
   profileImageUrl?: string;
@@ -111,6 +112,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           nickname: response.data.nickname,
           firstname: response.data.firstname,
           surname: response.data.surname,
+          personId: response.data.personId,
           roleId: response.data.roleId,
           roleCode: response.data.roleCode,
           profileImageUrl: response.data.profileImageUrl,
@@ -243,6 +245,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           nickname: response.data.nickname,
           firstname: response.data.firstname,
           surname: response.data.surname,
+          personId: response.data.personId,
           roleId: response.data.roleId,
           roleCode: response.data.roleCode,
           profileImageUrl: response.data.profileImageUrl,

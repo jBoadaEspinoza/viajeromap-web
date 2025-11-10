@@ -15,6 +15,8 @@ import GooglePayButton from '@google-pay/button-react';
 import { signInWithPopup, onAuthStateChanged } from 'firebase/auth';
 import { auth, googleProvider } from '../config/firebase';
 import { authApi } from '../api/auth';
+import { ordersApi } from '../api/orders';
+import type { CreateOrderRequest } from '../api/orders';
 import { getAuthToken } from '../utils/cookieHelper';
 
 interface BookingDetails {
@@ -22,11 +24,13 @@ interface BookingDetails {
   title: string;
   imageUrl: string;
   price: number; // Precio FINAL (con descuento si existe)
+  bookingOptionId?: string;
   currency: string;
   quantity: number;
   date: string;
   time: string;
   meetingPoint: string;
+  meetingType?: string;
   guideLanguage: string;
   travelers: {
     adults: number;
@@ -35,9 +39,24 @@ interface BookingDetails {
   hasDiscount: boolean; // Indica si tiene descuento
   discountPercentage: number; // Porcentaje de descuento (0 si no hay)
   originalPrice: number; // Precio original sin descuento (para mostrar tachado)
+  totalPrice?: number;
+  commissionPercent?: number;
+  durationDays?: number;
+  durationHours?: number;
+  durationMinutes?: number;
+  meetingPointId?: number | null;
+  meetingPointName?: string;
+  meetingPointAddress?: string;
+  meetingPointLatitude?: number | null;
+  meetingPointLongitude?: number | null;
+  meetingPointCityId?: number | null;
   pickupPoint?: {
+    id?: number;
+    cityId?: number | null;
     name: string;
     address: string;
+    latitude?: number | null;
+    longitude?: number | null;
   };
   comment?: string;
   cancelBefore?: string;
@@ -51,7 +70,7 @@ const Checkout: React.FC = () => {
   const { currency } = useCurrency();
   const { config } = useConfig();
   // Usar el nuevo AuthContext
-  const { user, firebaseUser, isAuthenticated, loading: authLoading, loginWithGoogle, logout } = useAuth();
+  const { user, firebaseUser, isAuthenticated, loading: authLoading, refreshUserData } = useAuth();
   const { addItem } = useCart();
   
   // Función para navegar a home
@@ -122,10 +141,19 @@ const Checkout: React.FC = () => {
   // Ref para controlar la verificación inicial de autenticación (evitar parpadeo del modal)
   const modalShownOnce = useRef(false);
   const authCheckCompleted = useRef(false);
+  // Ref para rastrear si ya se intentó avanzar automáticamente en la carga inicial
+  const initialAutoAdvanceAttempted = useRef(false);
   
   // Estados temporales para compatibilidad durante la migración
   const [isValidatingAuth, setIsValidatingAuth] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  // Estado para el loading del botón "Guardar cambios"
+  const [isSavingContactInfo, setIsSavingContactInfo] = useState(false);
+  const [isProcessingOrder, setIsProcessingOrder] = useState(false);
+  const [contactPersonId, setContactPersonId] = useState<number | null>(() => {
+    const stored = sessionStorage.getItem('checkoutPersonId');
+    return stored ? Number(stored) : null;
+  });
 
   // Declarar phoneCodes antes del useEffect que lo usa
   const [phoneCodes, setPhoneCodes] = useState<PhoneCode[]>([]);
@@ -176,11 +204,37 @@ const Checkout: React.FC = () => {
     }
   }, [user, phoneCodes]);
 
+  // Sincronizar personId del viajero
+  useEffect(() => {
+    if (user?.personId) {
+      if (contactPersonId !== user.personId) {
+        setContactPersonId(user.personId);
+        sessionStorage.setItem('checkoutPersonId', String(user.personId));
+      }
+    }
+  }, [user?.personId, contactPersonId]);
+
   // Función para validar formato de correo electrónico
   const isValidEmail = (email: string): boolean => {
     // Validar formato de correo electrónico
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return emailRegex.test(email);
+  };
+
+  // Función para verificar si todos los campos obligatorios del contacto están completos
+  const areRequiredFieldsComplete = (data: typeof formData): boolean => {
+    return !!(
+      data.name &&
+      data.name.trim() !== '' &&
+      data.lastName &&
+      data.lastName.trim() !== '' &&
+      data.email &&
+      isValidEmail(data.email) &&
+      data.phoneNumber &&
+      data.phoneNumber.trim() !== '' &&
+      data.nationality &&
+      data.nationality !== 'none'
+    );
   };
   
   const [formData, setFormData] = useState({
@@ -216,6 +270,17 @@ const Checkout: React.FC = () => {
   const [editedTime, setEditedTime] = useState('');
   const [availableTimes, setAvailableTimes] = useState<string[]>([]);
   const [currentBookingOption, setCurrentBookingOption] = useState<any>(null);
+  const [activePriceTier, setActivePriceTier] = useState<any | null>(() => {
+    const storedTier = sessionStorage.getItem('checkoutActivePriceTier');
+    if (storedTier) {
+      try {
+        return JSON.parse(storedTier);
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  });
   const [isEditingTravelers, setIsEditingTravelers] = useState(false);
   const [editedAdults, setEditedAdults] = useState<number>(1);
   const [editedChildren, setEditedChildren] = useState<number>(0);
@@ -224,8 +289,76 @@ const Checkout: React.FC = () => {
   const [currentStep, setCurrentStep] = useState<1 | 2>(1); // Siempre inicia en el paso 1 (Contacto)
   const [paymentMethod, setPaymentMethod] = useState<'paypal' | 'googlepay' | 'reserve' | 'reserveLater' | ''>('');
   const [isProcessingPayPal, setIsProcessingPayPal] = useState(false);
-  const [isEditingContactInfo, setIsEditingContactInfo] = useState(false);
+  // Inicializar isEditingContactInfo basado en si los campos obligatorios están completos
+  // Si los campos no están completos, mostrar el formulario desplegado
+  const [isEditingContactInfo, setIsEditingContactInfo] = useState(() => {
+    // Verificar si hay datos guardados en sessionStorage
+    const savedFormData = sessionStorage.getItem('checkoutFormData');
+    if (savedFormData) {
+      try {
+        const parsed = JSON.parse(savedFormData);
+        return !areRequiredFieldsComplete(parsed);
+      } catch {
+        return true; // Si hay error al parsear, mostrar desplegado
+      }
+    }
+    return true; // Por defecto, mostrar desplegado si no hay datos
+  });
   const [originalFormData, setOriginalFormData] = useState<typeof formData | null>(null);
+
+  // Actualizar isEditingContactInfo cuando cambien los datos del formulario
+  // Si los campos obligatorios no están completos, mostrar el formulario desplegado
+  useEffect(() => {
+    // Solo actualizar si no está en modo de edición manual (cuando el usuario hace clic en "Editar")
+    // Si el usuario está editando manualmente, no cambiar el estado automáticamente
+    if (!originalFormData) {
+      const fieldsComplete = areRequiredFieldsComplete(formData);
+      // Si los campos están completos, colapsar el formulario (solo si hay usuario autenticado)
+      // Si los campos no están completos, desplegar el formulario
+      if (firebaseUser) {
+        setIsEditingContactInfo(!fieldsComplete);
+      } else {
+        // Si no hay usuario autenticado, siempre mostrar desplegado si los campos no están completos
+        setIsEditingContactInfo(!fieldsComplete);
+      }
+    }
+  }, [formData, firebaseUser, originalFormData]);
+
+  // Avanzar automáticamente al paso 2 solo cuando se carga la página checkout
+  // si los datos obligatorios ya están completos (solo en la carga inicial)
+  useEffect(() => {
+    // Solo avanzar automáticamente al cargar la página si:
+    // 1. No se ha intentado avanzar automáticamente antes
+    // 2. Estamos en el paso 1
+    // 3. Los campos obligatorios están completos
+    // 4. No hay datos originales (primera carga)
+    // 5. Hay detalles de reserva disponibles
+    // 6. La fecha de salida no ha pasado
+    if (
+      !initialAutoAdvanceAttempted.current &&
+      currentStep === 1 &&
+      areRequiredFieldsComplete(formData) &&
+      !originalFormData &&
+      bookingDetails &&
+      !isDepartureDatePast()
+    ) {
+      // Verificar autenticación antes de avanzar
+      const hasToken = !!localStorage.getItem('authToken');
+      const hasFirebaseUser = firebaseUser !== null || auth.currentUser !== null;
+      
+      // Solo avanzar si está autenticado o tiene token/usuario de Firebase
+      // Y solo en la carga inicial de la página
+      if (isAuthenticated || hasToken || hasFirebaseUser) {
+        initialAutoAdvanceAttempted.current = true;
+        // Pequeño delay para evitar cambios bruscos
+        const timer = setTimeout(() => {
+          handleContinueToPayment();
+        }, 500);
+        
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [currentStep, formData, originalFormData, bookingDetails, isAuthenticated, firebaseUser]); // Ejecutar cuando los datos estén listos
 
   // Determinar si se puede reservar y pagar después
   // Se puede reservar y pagar después si:
@@ -377,22 +510,26 @@ const Checkout: React.FC = () => {
     return () => clearTimeout(timer);
   }, [location.state, navigate, isAuthenticated, firebaseUser]);
 
-  // Cargar datos del formulario desde sessionStorage si está en el paso 2 y auto-seleccionar opción de reserva si aplica
+  // Cargar datos del formulario desde sessionStorage si está en el paso 1 o 2
   useEffect(() => {
-    if (currentStep === 2) {
       const savedFormData = sessionStorage.getItem('checkoutFormData');
       if (savedFormData) {
         try {
           const parsed = JSON.parse(savedFormData);
+        // Solo cargar si no hay datos del usuario o si los datos guardados son diferentes
+        // Esto evita sobrescribir datos del usuario autenticado
+        if (currentStep === 1 && (!user || !areRequiredFieldsComplete(parsed))) {
           setFormData(parsed);
+        } else if (currentStep === 2) {
+          setFormData(parsed);
+        }
         } catch (e) {
           console.error('Error loading form data from sessionStorage:', e);
         }
       }
 
       // Ya no auto-seleccionamos la opción de reserva, el usuario debe elegirla manualmente
-    }
-  }, [currentStep, bookingDetails, bookingOptionCancelInfo, paymentMethod]);
+  }, [currentStep, bookingDetails, bookingOptionCancelInfo, paymentMethod, user]);
 
   // Función para cargar el SDK de PayPal dinámicamente
   const loadPayPalSDK = (): Promise<void> => {
@@ -486,77 +623,285 @@ const Checkout: React.FC = () => {
     return Math.random().toString(36).substring(2, 10).toUpperCase();
   };
 
-  // Función para procesar el pago completado (compartida entre PayPal y Google Pay)
-  const processCompletedPayment = (paymentInfo: any, paymentMethod: 'paypal' | 'googlepay') => {
-    // VALIDACIÓN OBLIGATORIA: Verificar autenticación o token válido antes de procesar
-    const token = localStorage.getItem('authToken');
-    const hasFirebaseUser = firebaseUser !== null || auth.currentUser !== null;
-    
-    if (!isAuthenticated && !token && !hasFirebaseUser) {
-      alert(language === 'es' 
-        ? 'Tu sesión ha expirado. Por favor inicia sesión nuevamente.'
-        : 'Your session has expired. Please log in again.');
-      setShowLoginModal(true);
-      return;
+  const clearCheckoutData = () => {
+    sessionStorage.removeItem('checkoutBookingDetails');
+    sessionStorage.removeItem('checkoutTimeLeft');
+    sessionStorage.removeItem('checkoutCurrentStep');
+    sessionStorage.removeItem('checkoutFormData');
+    sessionStorage.removeItem('bookingDetails');
+    sessionStorage.removeItem('checkoutActivePriceTier');
+  };
+
+  const buildReservationPaymentInfo = (
+    method: 'paypal' | 'googlepay' | 'reserveLater',
+    totalPrice: number,
+    currency: string,
+    rawInfo?: any,
+    paymentStatus?: 'PAID' | 'PENDING'
+  ) => {
+    if (method === 'paypal') {
+      const amount = rawInfo?.amount || {};
+      return {
+        ...rawInfo,
+        paymentMethod: method,
+        status: paymentStatus || 'PAID',
+        amount: {
+          value: amount?.value || totalPrice.toFixed(2),
+          currency_code: amount?.currency_code || currency
+        }
+      };
     }
 
-    // Advertencia si no hay token pero sí hay usuario autenticado
-    if (!token && hasFirebaseUser) {
-      console.warn('Usuario autenticado pero sin token. Intentando continuar...');
+    if (method === 'googlepay') {
+      const amount = rawInfo?.amount || {};
+      const total = amount?.total || amount?.value || totalPrice.toFixed(2);
+      const currencyCode = amount?.currency || amount?.currency_code || currency;
+      return {
+        ...rawInfo,
+        paymentMethod: method,
+        status: paymentStatus || 'PAID',
+        amount: {
+          value: total,
+          currency_code: currencyCode
+        }
+      };
     }
 
-    // Generar código de reserva UUID corto
-    const reservationCode = generateShortUUID();
-    
-    // Mensaje sobre envío de datos al backend
-    const sendToBackendMessage = language === 'es' 
-      ? 'Se procede enviar la data del detalle de la reserva al backend para su registro.'
-      : 'Proceeding to send reservation detail data to backend for registration.';
-    
-    // Estructura de datos de reserva a enviar al backend
-    const reservationData = {
-      reservationCode,
-      bookingDetails,
-      paymentInfo: {
-        ...paymentInfo,
-        paymentMethod,
-        timestamp: new Date().toISOString()
-      }
+    return {
+      paymentMethod: method,
+      status: paymentStatus || 'PENDING',
+      amount: {
+        value: totalPrice.toFixed(2),
+        currency_code: currency
+      },
+      ...rawInfo
     };
-    
-    // Capturar el pago y enviar datos al backend
-    try {
-      // Aquí iría la llamada al backend para registrar la reserva
-      // await sendReservationToBackend(reservationData);
-      
-      // Guardar datos de reserva en sessionStorage antes de limpiar
-      sessionStorage.setItem('lastReservationData', JSON.stringify(reservationData));
-      
-      // Limpiar datos de checkout (pero mantener reservationData en sessionStorage)
-      sessionStorage.removeItem('checkoutBookingDetails');
-      sessionStorage.removeItem('checkoutTimeLeft');
-      sessionStorage.removeItem('checkoutCurrentStep');
-      sessionStorage.removeItem('checkoutFormData');
-      
-      // Redirigir a la página de pago completado con los datos de la reserva
-      navigate('/payment-completed', { 
-        state: reservationData 
-      });
-    } catch (error) {
-      console.error('❌ Error al procesar el pago:', error);
-      const errorMessage = getTranslation('checkout.paymentError', language);
-      
-      alert(errorMessage);
-      
-      // Limpiar datos de checkout
-      sessionStorage.removeItem('checkoutBookingDetails');
-      sessionStorage.removeItem('checkoutTimeLeft');
-      sessionStorage.removeItem('checkoutCurrentStep');
-      sessionStorage.removeItem('checkoutFormData');
-      
-      // Redirigir a home
-      navigate('/');
+  };
+
+  const finalizeReservation = async (
+    method: 'paypal' | 'googlepay' | 'reserveLater',
+    paymentInfo?: any
+  ) => {
+    if (!bookingDetails) {
+      throw new Error(language === 'es'
+        ? 'No se encontraron los detalles de la reserva.'
+        : 'Reservation details not found.');
     }
+
+    if (!contactPersonId || Number.isNaN(contactPersonId)) {
+      setIsEditingContactInfo(true);
+      throw new Error(language === 'es'
+        ? 'Por favor guarda tu información de contacto antes de continuar.'
+        : 'Please save your contact information before continuing.');
+    }
+
+    const totalAdults = bookingDetails.travelers?.adults || 0;
+    const totalChildren = bookingDetails.travelers?.children || 0;
+    const totalTravelers = totalAdults + totalChildren;
+
+    if (totalTravelers <= 0) {
+      throw new Error(language === 'es'
+        ? 'No se encontraron viajeros para la reserva.'
+        : 'No travelers found for the reservation.');
+    }
+
+    const unitPrice = bookingDetails.price || 0;
+    const totalPrice = bookingDetails.totalPrice || unitPrice * totalTravelers;
+
+    const paymentStatus = method === 'reserveLater' ? 'PENDING' : 'PAID';
+    const paymentProvider =
+      method === 'paypal' ? 'PAYPAL'
+        : method === 'googlepay' ? 'GOOGLE_PAY'
+        : undefined;
+
+    const paymentMethodRequest =
+      method === 'googlepay' || method === 'paypal' ? 'CARD'
+        : 'NONE';
+
+    const orderStatus = method === 'reserveLater' ? 'CREATED' : 'CONFIRMED';
+
+    const currencyCode = (bookingDetails.currency || 'USD').toUpperCase();
+    const allowedCurrencies = ['USD', 'PEN', 'EUR'];
+    const orderCurrency = (allowedCurrencies.includes(currencyCode) ? currencyCode : 'USD') as 'USD' | 'PEN' | 'EUR';
+
+    const startDatetime = bookingDetails.date && bookingDetails.time
+      ? `${bookingDetails.date}T${bookingDetails.time}:00`
+      : new Date().toISOString();
+
+    const platformCommissionPercent = Number(
+      activePriceTier?.commissionPercent ??
+      bookingDetails.commissionPercent ??
+      0
+    );
+
+    const agentCommissionPercent = user?.roleCode === 'TRAVELER'
+      ? 0
+      : platformCommissionPercent;
+
+    const platformCommissionAmount = platformCommissionPercent
+      ? Number((totalPrice * (platformCommissionPercent / 100)).toFixed(2))
+      : 0;
+
+    const agentCommissionAmount = agentCommissionPercent
+      ? Number((totalPrice * (agentCommissionPercent / 100)).toFixed(2))
+      : 0;
+
+    const meetingTypeNormalized = (currentBookingOption?.meetingType || bookingDetails.meetingType || '').toLowerCase();
+    const selectedPickup = bookingDetails.pickupPoint;
+    let meetingPlaceId = selectedPickup?.cityId ?? bookingDetails.meetingPointCityId ?? undefined;
+    if (!meetingPlaceId && typeof selectedPickupPointId === 'number') {
+      const foundPickup = currentBookingOption?.pickupPoints?.find((p: any) => p.id === selectedPickupPointId);
+      meetingPlaceId = foundPickup?.city?.id ?? undefined;
+    }
+
+    let meetingPointId = selectedPickup?.id ?? undefined;
+    if (!meetingPointId && typeof selectedPickupPointId === 'number') {
+      meetingPointId = selectedPickupPointId;
+    }
+
+    let meetingPointName = selectedPickup?.name || undefined;
+    let meetingPointAddress = selectedPickup?.address || undefined;
+    let meetingPointLatitude = selectedPickup?.latitude ?? undefined;
+    let meetingPointLongitude = selectedPickup?.longitude ?? undefined;
+    let meetingPointComputedId = meetingPointId ?? bookingDetails.meetingPointId ?? undefined;
+
+    if (meetingTypeNormalized === 'meeting_point') {
+      meetingPlaceId = meetingPlaceId ?? currentBookingOption?.meetingPointId ?? undefined;
+      meetingPointComputedId = meetingPointComputedId ?? currentBookingOption?.meetingPointId ?? undefined;
+      meetingPointName = meetingPointName
+        ?? bookingDetails.meetingPointName
+        ?? currentBookingOption?.meetingPointAddress
+        ?? currentBookingOption?.meetingPointDescription?.[0]
+        ?? undefined;
+      meetingPointAddress = meetingPointAddress ?? bookingDetails.meetingPointAddress ?? currentBookingOption?.meetingPointAddress ?? undefined;
+      meetingPointLatitude = meetingPointLatitude ?? bookingDetails.meetingPointLatitude ?? currentBookingOption?.meetingPointLatitude ?? undefined;
+      meetingPointLongitude = meetingPointLongitude ?? bookingDetails.meetingPointLongitude ?? currentBookingOption?.meetingPointLongitude ?? undefined;
+    }
+
+    const calculateEndDateTime = (): string | undefined => {
+      if (!bookingDetails.date || !bookingDetails.time) {
+        return undefined;
+      }
+      const [year, month, day] = bookingDetails.date.split('-').map(Number);
+      const [hour, minute] = bookingDetails.time.split(':').map(Number);
+      if (
+        Number.isNaN(year) || Number.isNaN(month) || Number.isNaN(day) ||
+        Number.isNaN(hour) || Number.isNaN(minute)
+      ) {
+        return undefined;
+      }
+      const startDate = new Date(year, month - 1, day, hour, minute, 0, 0);
+      if (Number.isNaN(startDate.getTime())) {
+        return undefined;
+      }
+
+      const durationDays = bookingDetails.durationDays ?? currentBookingOption?.durationDays ?? 0;
+      const durationHours = bookingDetails.durationHours ?? currentBookingOption?.durationHours ?? 0;
+      const durationMinutes = bookingDetails.durationMinutes ?? currentBookingOption?.durationMinutes ?? 0;
+
+      const endDate = new Date(startDate);
+      endDate.setDate(endDate.getDate() + (durationDays || 0));
+      endDate.setHours(endDate.getHours() + (durationHours || 0));
+      endDate.setMinutes(endDate.getMinutes() + (durationMinutes || 0));
+
+      if (Number.isNaN(endDate.getTime())) {
+        return undefined;
+      }
+
+      const pad = (value: number) => String(value).padStart(2, '0');
+      return `${endDate.getFullYear()}-${pad(endDate.getMonth() + 1)}-${pad(endDate.getDate())}T${pad(endDate.getHours())}:${pad(endDate.getMinutes())}:00`;
+    };
+
+    const endDatetime = calculateEndDateTime();
+
+    const orderRequest: CreateOrderRequest = {
+      orderSource: 'PLATFORM',
+      paymentMethod: paymentMethodRequest,
+      paymentStatus,
+      paymentProvider,
+      orderStatus,
+      items: [
+        {
+          activityId: bookingDetails.activityId,
+          bookingOptionId: bookingDetails.bookingOptionId || currentBookingOption?.id || '',
+          currency: orderCurrency,
+          participants: totalTravelers,
+          pricePerParticipant: unitPrice,
+          startDatetime,
+          specialRequest: bookingDetails.comment,
+          status: 'PENDING',
+          guideLanguage: bookingDetails.guideLanguage,
+          commissionPercentPlatform: platformCommissionPercent,
+          commissionPercentAgent: agentCommissionPercent,
+          commissionAmountPlatform: platformCommissionAmount,
+          commissionAmountAgent: agentCommissionPercent === 0 ? 0 : agentCommissionAmount,
+          meetingPickupPlaceId: meetingPlaceId,
+          meetingPickupPointName: meetingPointName,
+          meetingPickupPointAddress: meetingPointAddress,
+          meetingPickupPointLatitude: meetingPointLatitude,
+          meetingPickupPointLongitude: meetingPointLongitude,
+          endDatetime
+        }
+      ]
+    };
+
+    setIsProcessingOrder(true);
+    try {
+      const orderResponse = await ordersApi.createOrder(orderRequest);
+
+      if (!orderResponse?.success) {
+        throw new Error(orderResponse?.message || (language === 'es'
+          ? 'No se pudo crear la orden.'
+          : 'Unable to create order.'));
+      }
+
+      const reservationCode = orderResponse.idCreated
+        ? String(orderResponse.idCreated)
+        : generateShortUUID();
+
+      console.log('🔑 Token utilizado para crear la orden:', localStorage.getItem('authToken'));
+
+      const normalizedPaymentInfo = buildReservationPaymentInfo(
+        method,
+        totalPrice,
+        orderCurrency,
+        paymentInfo,
+        paymentStatus
+      );
+
+      const normalizedPaymentInfoWithTimestamp = {
+        ...normalizedPaymentInfo,
+        timestamp: new Date().toISOString()
+      };
+
+      const reservationData = {
+        reservationCode,
+        bookingDetails: {
+          ...bookingDetails,
+          totalPrice
+        },
+        paymentInfo: normalizedPaymentInfoWithTimestamp,
+        paymentStatus,
+        orderId: orderResponse.idCreated,
+        orderMessage: orderResponse.message
+      };
+
+      sessionStorage.setItem('lastReservationData', JSON.stringify(reservationData));
+      clearCheckoutData();
+      navigate('/payment-completed', { state: reservationData });
+    } catch (error: any) {
+      const message = error?.message || (language === 'es'
+        ? 'No se pudo procesar la reserva. Inténtalo nuevamente.'
+        : 'Unable to process the reservation. Please try again.');
+      throw new Error(message);
+    } finally {
+      setIsProcessingOrder(false);
+    }
+  };
+
+  // Función para procesar el pago completado (compartida entre PayPal y Google Pay)
+  const processCompletedPayment = async (paymentInfo: any, paymentMethodType: 'paypal' | 'googlepay') => {
+    await finalizeReservation(paymentMethodType, paymentInfo);
   };
 
 
@@ -777,7 +1122,7 @@ const Checkout: React.FC = () => {
                   paymentMethod: 'paypal'
                 };
                 
-                processCompletedPayment(paymentInfo, 'paypal');
+                await processCompletedPayment(paymentInfo, 'paypal');
               } else {
                 console.warn('⚠️ PayPal Order Status:', order.status, '- Expected: COMPLETED');
               }
@@ -787,9 +1132,11 @@ const Checkout: React.FC = () => {
                 errorMessage: error instanceof Error ? error.message : String(error),
                 errorStack: error instanceof Error ? error.stack : undefined
               });
-              alert(language === 'es' 
+              const fallbackMessage = language === 'es' 
                 ? 'Error al procesar el pago. Por favor intenta nuevamente.'
-                : 'Error processing payment. Please try again.');
+                : 'Error processing payment. Please try again.';
+              const message = error instanceof Error && error.message ? error.message : fallbackMessage;
+              alert(message);
             }
           },
           onCancel: (data: any) => {
@@ -954,6 +1301,11 @@ const Checkout: React.FC = () => {
         });
         
         if (response.success && response.data.length > 0) {
+          // Verificar si los phoneCodes tienen id
+          console.log('📞 PhoneCodes recibidos:', response.data);
+          console.log('📞 Primer phoneCode:', response.data[0]);
+          console.log('📞 ¿Tiene id?:', response.data[0]?.id);
+          
           setPhoneCodes(response.data);
           // Buscar Perú específicamente y establecerlo como valor por defecto
           setFormData(prev => {
@@ -1162,14 +1514,26 @@ const Checkout: React.FC = () => {
                 const finalUnitPrice = hasDiscount
                   ? Math.ceil(baseUnitPrice - (baseUnitPrice * (offer / 100)))
                   : originalUnitPrice;
+                const totalPrice = finalUnitPrice * (totalTravelers || 1);
+
+                if (matchingTier) {
+                  setActivePriceTier(matchingTier);
+                  sessionStorage.setItem('checkoutActivePriceTier', JSON.stringify(matchingTier));
+                } else {
+                  setActivePriceTier(null);
+                  sessionStorage.removeItem('checkoutActivePriceTier');
+                }
 
                 const updated: BookingDetails = {
                   ...bookingDetails,
+                  bookingOptionId: bookingOption.id || bookingDetails.bookingOptionId,
                   price: finalUnitPrice,
                   originalPrice: originalUnitPrice,
                   hasDiscount: !!hasDiscount,
                   discountPercentage: hasDiscount ? Number(offer) : 0,
-                  currency: resolvedCurrency
+                  currency: resolvedCurrency,
+                  totalPrice,
+                  commissionPercent: matchingTier?.commissionPercent ?? bookingDetails.commissionPercent
                 };
                 setBookingDetails(updated);
                 sessionStorage.setItem('checkoutBookingDetails', JSON.stringify(updated));
@@ -1550,11 +1914,19 @@ const Checkout: React.FC = () => {
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     
-    // Manejar phonePostalId como número
+    // Manejar phonePostalId como número (similar a nationality)
     if (name === 'phonePostalId') {
+      const phonePostalIdValue = value ? parseInt(value, 10) : 0;
+      
+      // Buscar el PhoneCode correspondiente para obtener el código y actualizar campos relacionados
+      const selectedPhoneCode = phoneCodes.find(pc => pc.id === phonePostalIdValue);
+      
       setFormData(prev => ({
         ...prev,
-        [name]: value ? parseInt(value, 10) : 0
+        phonePostalId: phonePostalIdValue || prev.phonePostalId || 0,
+        phoneCodeId: selectedPhoneCode?.id || prev.phoneCodeId || 0,
+        phonePostalCode: selectedPhoneCode?.code || prev.phonePostalCode || '',
+        phoneCode: selectedPhoneCode ? `(${selectedPhoneCode.code})` : prev.phoneCode || ''
       }));
     } else {
       setFormData(prev => ({
@@ -2043,23 +2415,23 @@ const Checkout: React.FC = () => {
       return;
     }
 
-    // Si el método de pago es "reserveLater", procesar la reserva
-    if (paymentMethod === 'reserveLater') {
-      // Procesar pago o reserva con token de autenticación
-      
-      // Limpiar datos de reserva después del pago/reserva exitoso
-      sessionStorage.removeItem('checkoutBookingDetails');
-      sessionStorage.removeItem('checkoutTimeLeft');
-      sessionStorage.removeItem('checkoutCurrentStep');
-      sessionStorage.removeItem('checkoutFormData');
-      
-      alert(getTranslation('checkout.reservationSuccess', language));
+    if (paymentMethod === 'reserveLater' || paymentMethod === 'reserve') {
+      try {
+        await finalizeReservation('reserveLater');
+      } catch (error: any) {
+        const message = error?.message || getTranslation('checkout.paymentError', language);
+        alert(message);
+      }
       return;
     }
     
-    // Para otros métodos de pago (como Google Pay)
-    
-    alert(getTranslation('checkout.paymentSuccess', language));
+    // Manejo preventivo para otros métodos (no debería ocurrir porque PayPal/Google Pay gestionan sus propios flujos)
+    try {
+      await finalizeReservation(paymentMethod as 'paypal' | 'googlepay' | 'reserveLater');
+    } catch (error: any) {
+      const message = error?.message || getTranslation('checkout.paymentError', language);
+      alert(message);
+    }
   };
 
   const handleBackToContact = () => {
@@ -2069,8 +2441,7 @@ const Checkout: React.FC = () => {
 
   // Función para limpiar datos de reserva (útil para otros casos)
   const clearBookingData = () => {
-    sessionStorage.removeItem('checkoutBookingDetails');
-    sessionStorage.removeItem('checkoutTimeLeft');
+    clearCheckoutData();
     localStorage.removeItem('checkoutBookingDetails');
   };
 
@@ -2456,15 +2827,22 @@ const Checkout: React.FC = () => {
             {/* Progress Steps centrados */}
             <div className="d-flex align-items-center">
               <div className="d-flex align-items-center">
-                <div className={`${currentStep === 1 ? 'bg-primary text-white' : 'bg-success text-white'} rounded-circle d-flex align-items-center justify-content-center`} 
+                {(() => {
+                  const step1Complete = currentStep === 2 || (currentStep === 1 && areRequiredFieldsComplete(formData));
+                  return (
+                    <>
+                      <div className={`${currentStep === 1 && !step1Complete ? 'bg-primary text-white' : 'bg-success text-white'} rounded-circle d-flex align-items-center justify-content-center`} 
                      style={{ width: '30px', height: '30px', fontSize: '0.9rem' }}>
-                  {currentStep === 2 ? <i className="fas fa-check"></i> : '1'}
+                        {step1Complete ? <i className="fas fa-check"></i> : '1'}
                 </div>
                 <span className={`fw-medium ${currentStep >= 1 ? 'text-primary' : 'text-muted'} ms-2`}>Contacto</span>
+                    </>
+                  );
+                })()}
               </div>
               
               {/* Línea conectora */}
-              <div className={`step-line ${currentStep >= 2 ? 'active' : ''}`}></div>
+              <div className={`step-line ${currentStep >= 2 || (currentStep === 1 && areRequiredFieldsComplete(formData)) ? 'active' : ''}`}></div>
               
               <div className="d-flex align-items-center">
                 <div className={`${currentStep === 2 ? 'bg-primary text-white' : currentStep > 2 ? 'bg-success text-white' : 'bg-light text-muted'} rounded-circle d-flex align-items-center justify-content-center`} 
@@ -2506,15 +2884,22 @@ const Checkout: React.FC = () => {
             {/* Progress Steps centrados */}
             <div className="d-flex align-items-center justify-content-center">
               <div className="d-flex align-items-center">
-                <div className={`${currentStep === 1 ? 'bg-primary text-white' : 'bg-success text-white'} rounded-circle d-flex align-items-center justify-content-center`} 
+                {(() => {
+                  const step1Complete = currentStep === 2 || (currentStep === 1 && areRequiredFieldsComplete(formData));
+                  return (
+                    <>
+                      <div className={`${currentStep === 1 && !step1Complete ? 'bg-primary text-white' : 'bg-success text-white'} rounded-circle d-flex align-items-center justify-content-center`} 
                      style={{ width: '28px', height: '28px', fontSize: '0.8rem' }}>
-                  {currentStep === 2 ? <i className="fas fa-check" style={{ fontSize: '0.7rem' }}></i> : '1'}
+                        {step1Complete ? <i className="fas fa-check" style={{ fontSize: '0.7rem' }}></i> : '1'}
                 </div>
                 <span className={`fw-medium ${currentStep >= 1 ? 'text-primary' : 'text-muted'} ms-2`} style={{ fontSize: '0.9rem' }}>Contacto</span>
+                    </>
+                  );
+                })()}
               </div>
               
               {/* Línea conectora */}
-              <div className={`step-line ${currentStep >= 2 ? 'active' : ''}`} style={{ width: '40px', height: '2px' }}></div>
+              <div className={`step-line ${currentStep >= 2 || (currentStep === 1 && areRequiredFieldsComplete(formData)) ? 'active' : ''}`} style={{ width: '40px', height: '2px' }}></div>
               
               <div className="d-flex align-items-center">
                 <div className={`${currentStep === 2 ? 'bg-primary text-white' : currentStep > 2 ? 'bg-success text-white' : 'bg-light text-muted'} rounded-circle d-flex align-items-center justify-content-center`} 
@@ -2675,8 +3060,9 @@ const Checkout: React.FC = () => {
                       {getTranslation('checkout.continuePayment', language)}
                     </button>
 
-                    {/* Mostrar mensaje de fecha límite si se puede reservar y pagar después */}
-                    {canReserveAndPayLater() && (() => {
+                    {/* Mostrar mensaje de fecha límite solo si se puede reservar y pagar después 
+                        y NO se ha seleccionado PayPal o Google Pay (porque ya está pagando) */}
+                    {canReserveAndPayLater() && paymentMethod !== 'paypal' && paymentMethod !== 'googlepay' && (() => {
                       const deadline = getReservationDeadline();
                       return deadline ? (
                         <div className="mt-3 d-flex align-items-start">
@@ -2693,11 +3079,12 @@ const Checkout: React.FC = () => {
                       ) : null;
                     })()}
 
-                    {/* Booking Policies */}
+                    {/* Booking Policies - Solo mostrar si se puede reservar y pagar después 
+                        y NO se ha seleccionado PayPal o Google Pay (porque ya está pagando) */}
                     <div className="mt-4">
                       {(() => {
                         const cancelBefore = bookingDetails?.cancelBefore || bookingOptionCancelInfo?.cancelBefore;
-                        if (cancelBefore && canReserveAndPayLater()) {
+                        if (cancelBefore && canReserveAndPayLater() && paymentMethod !== 'paypal' && paymentMethod !== 'googlepay') {
                           const deadline = getReservationDeadline();
                           if (deadline) {
                             return (
@@ -2855,12 +3242,11 @@ const Checkout: React.FC = () => {
                         <>
                           <select
                             className="form-select"
-                            name="phoneCode"
-                            value={formData.phoneCode}
+                            name="phonePostalId"
+                            value={formData.phonePostalId ? String(formData.phonePostalId) : ''}
                             onChange={handleInputChange}
-                            style={{ paddingRight: formData.phoneCode && formData.phoneCode.trim() !== '' ? '2.5rem' : '' }}
+                            style={{ paddingRight: formData.phonePostalId && formData.phonePostalId > 0 ? '2.5rem' : '' }}
                           >
-                            {/* Option por defecto siempre en posición 0 */}
                             <option value="">
                               {getTranslation('checkout.selectPhoneCode', language)}
                             </option>
@@ -2869,15 +3255,13 @@ const Checkout: React.FC = () => {
                             ) : (
                               phoneCodes.map((phoneCode) => {
                                 const countryNameCapitalized = capitalizeCountryName(phoneCode.countryName);
-                                // El valor del option debe coincidir con formData.phoneCode para que se seleccione automáticamente
-                                // formData.phoneCode está en formato "(+51)" o similar
-                                // phoneCode.code puede estar en formato "+51" o "51"
-                                const phoneCodeValue = `(${phoneCode.code})`;
+                                // Usar phoneCode.id como phonePostalId, si no está disponible usar un identificador único
+                                const phonePostalId = phoneCode.id || `${phoneCode.code2}-${phoneCode.code}`;
                                 
                                 return (
                                   <option 
-                                    key={`${phoneCode.code2}-${phoneCode.code}`} 
-                                    value={phoneCodeValue}
+                                    key={phoneCode.id || `${phoneCode.code2}-${phoneCode.code}`} 
+                                    value={phoneCode.id ? String(phoneCode.id) : ''}
                                   >
                                     {countryNameCapitalized} ({phoneCode.code})
                                   </option>
@@ -2999,6 +3383,7 @@ const Checkout: React.FC = () => {
                       <button
                         type="button"
                         className="btn btn-outline-secondary btn-lg flex-fill d-none d-md-block"
+                        disabled={isSavingContactInfo}
                         onClick={() => {
                           // Restaurar los datos originales del formulario sin guardar cambios
                           if (originalFormData) {
@@ -3013,16 +3398,118 @@ const Checkout: React.FC = () => {
                       <button
                         type="button"
                         className="btn btn-primary btn-lg flex-fill d-none d-md-block"
-                        onClick={() => {
-                          // Ya no necesitamos actualizar firebaseUser manualmente
-                          // El AuthContext maneja el estado del usuario
-                          
-                          // Cerrar el modo de edición y limpiar datos originales
-                          setIsEditingContactInfo(false);
-                          setOriginalFormData(null);
+                        disabled={isSavingContactInfo}
+                        onClick={async () => {
+                          try {
+                            // Validar que los campos obligatorios estén completos
+                            if (!areRequiredFieldsComplete(formData)) {
+                              alert(getTranslation('checkout.pleaseCompleteFields', language));
+                              return;
+                            }
+
+                            // Activar loading
+                            setIsSavingContactInfo(true);
+
+                            // Preparar los datos para la API
+                            const updateRequest: any = {
+                              firstName: formData.name || undefined,
+                              lastName: formData.lastName || undefined,
+                              email: formData.email || undefined,
+                              phoneNumber: formData.phoneNumber || undefined,
+                            };
+
+                            // Agregar phoneCodeId si está disponible
+                            if (formData.phoneCodeId > 0) {
+                              updateRequest.phoneCodeId = formData.phoneCodeId;
+                            }
+
+                            // Agregar phonePostalId - se debe enviar siempre que tenga un valor válido
+                            // Priorizar phoneCodeId si está disponible, sino usar phonePostalId directamente
+                            if (formData.phoneCodeId > 0) {
+                              updateRequest.phonePostalId = formData.phoneCodeId;
+                            } else if (formData.phonePostalId > 0) {
+                              updateRequest.phonePostalId = formData.phonePostalId;
+                            } else if (formData.phonePostalId !== undefined && formData.phonePostalId !== null) {
+                              // Enviar phonePostalId incluso si es 0, si está definido
+                              updateRequest.phonePostalId = formData.phonePostalId;
+                            }
+
+                            // Agregar countryBirthCode2 si está disponible
+                            // Nota: El backend espera un número (ID del país), pero el formulario guarda el código de 2 letras (code2)
+                            // Por ahora, intentamos convertir el código de 2 letras a número si es posible
+                            // Si el backend requiere un ID específico, necesitaríamos una API adicional para obtenerlo
+                            if (formData.nationality && formData.nationality !== 'none') {
+                              // El backend espera countryBirthCode2 como número (ID)
+                              // Por ahora, intentamos enviar el código de 2 letras
+                              // Si el backend no lo acepta, necesitaremos ajustar esto para obtener el ID del país
+                              // Nota: Si el backend requiere un ID numérico, necesitaríamos buscar el país por code2
+                              // y obtener su ID desde una API de países
+                              updateRequest.countryBirthCode2 = formData.nationality;
+                            }
+
+                            // Llamar a la API para actualizar la información de contacto
+                            const response = await authApi.updateTravelerContactInfo(updateRequest);
+                            
+                            // Si la actualización fue exitosa, mantener el formulario abierto
+                            // El usuario debe pulsar "Guardar cambios" nuevamente o "Cancelar" para cerrar
+                            if (response) {
+                              // Mostrar mensaje de éxito
+                              alert(language === 'es' 
+                                ? 'Información de contacto actualizada exitosamente'
+                                : 'Contact information updated successfully');
+                              
+                              // Actualizar los datos originales con los nuevos valores guardados
+                              // para que si el usuario cancela después, no se reviertan los cambios
+                              setOriginalFormData({ ...formData });
+                              
+                              // Guardar los datos actualizados en sessionStorage
+                              const formDataToSave = {
+                                ...formData,
+                                phonePostalCode: formData.phonePostalCode === '' || !formData.phonePostalCode ? null : formData.phonePostalCode,
+                                phoneCodeId: formData.phoneCodeId === 0 ? null : formData.phoneCodeId,
+                                phonePostalId: formData.phonePostalId === 0 ? null : formData.phonePostalId
+                              };
+                              sessionStorage.setItem('checkoutFormData', JSON.stringify(formDataToSave));
+                              
+                              // Avanzar automáticamente al paso 2 (pago) después de guardar exitosamente
+                              // Solo si estamos en el paso 1 y los campos obligatorios están completos
+                              if (currentStep === 1 && areRequiredFieldsComplete(formData) && bookingDetails && !isDepartureDatePast()) {
+                                // Pequeño delay para que el usuario vea el mensaje de éxito
+                                setTimeout(() => {
+                                  handleContinueToPayment();
+                                }, 300);
+                              }
+
+                              if (response.personId) {
+                                setContactPersonId(response.personId);
+                                sessionStorage.setItem('checkoutPersonId', String(response.personId));
+                                try {
+                                  await refreshUserData();
+                                } catch {
+                                  // Ignorar errores al refrescar datos del usuario
+                                }
+                              }
+                            }
+                          } catch (error: any) {
+                            // Mostrar mensaje de error
+                            const errorMessage = error.message || (language === 'es' 
+                              ? 'Error al actualizar la información de contacto'
+                              : 'Error updating contact information');
+                            alert(errorMessage);
+                          } finally {
+                            // Desactivar loading
+                            setIsSavingContactInfo(false);
+                          }
                         }}
                       >
-                        {getTranslation('common.saveChanges', language)}
+                        {isSavingContactInfo ? (
+                          <>
+                            <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                            {getTranslation('common.saving', language) || 'Guardando...'}
+                          </>
+                        ) : (
+                          getTranslation('common.saveChanges', language)
+                        )}
                       </button>
                     </div>
                   ) : (
@@ -3040,8 +3527,9 @@ const Checkout: React.FC = () => {
                     )
                   )}
 
-                  {/* Mostrar mensaje de fecha límite si se puede reservar y pagar después */}
-                  {canReserveAndPayLater() && (() => {
+                  {/* Mostrar mensaje de fecha límite solo si se puede reservar y pagar después 
+                      y NO se ha seleccionado PayPal o Google Pay (porque ya está pagando) */}
+                  {canReserveAndPayLater() && paymentMethod !== 'paypal' && paymentMethod !== 'googlepay' && (() => {
                     const deadline = getReservationDeadline();
                     return deadline ? (
                       <div className="mt-3 d-flex align-items-start">
@@ -3058,12 +3546,13 @@ const Checkout: React.FC = () => {
                     ) : null;
                   })()}
 
-                  {/* Booking Policies */}
+                  {/* Booking Policies - Solo mostrar si se puede reservar y pagar después 
+                      y NO se ha seleccionado PayPal o Google Pay (porque ya está pagando) */}
                   <div className="mt-4">
                     
                     {(() => {
                       const cancelBefore = bookingDetails?.cancelBefore || bookingOptionCancelInfo?.cancelBefore;
-                      if (cancelBefore && canReserveAndPayLater()) {
+                      if (cancelBefore && canReserveAndPayLater() && paymentMethod !== 'paypal' && paymentMethod !== 'googlepay') {
                         const deadline = getReservationDeadline();
                         if (deadline) {
                           return (
@@ -3405,7 +3894,7 @@ const Checkout: React.FC = () => {
                               countryCode: 'PE',
                             },
                           }}
-                          onLoadPaymentData={(paymentData) => {
+                          onLoadPaymentData={async (paymentData) => {
                             try {
                               // Extraer el token
                               const token = paymentData?.paymentMethodData?.tokenizationData?.token || '';
@@ -3434,12 +3923,14 @@ const Checkout: React.FC = () => {
                               // Mostrar alerta de éxito
                               alert('✅ Pago simulado con Google Pay completado.');
                               
-                              processCompletedPayment(paymentInfo, 'googlepay');
+                              await processCompletedPayment(paymentInfo, 'googlepay');
                             } catch (error) {
                               console.error('❌ Google Pay - Error:', error);
-                              alert(language === 'es' 
+                              const fallbackMessage = language === 'es' 
                                 ? 'Error al procesar el pago con Google Pay. Por favor intenta nuevamente.'
-                                : 'Error processing Google Pay payment. Please try again.');
+                                : 'Error processing Google Pay payment. Please try again.';
+                              const message = error instanceof Error && error.message ? error.message : fallbackMessage;
+                              alert(message);
                             }
                           }}
                           onError={(error) => {
@@ -3474,7 +3965,7 @@ const Checkout: React.FC = () => {
                     type="button"
                     className="btn btn-primary btn-lg w-100 d-none d-md-block"
                     onClick={handlePayNow}
-                    disabled={!paymentMethod}
+                    disabled={!paymentMethod || isProcessingOrder}
                   >
                     <i className="fas fa-lock me-2"></i>
                     {paymentMethod === 'reserveLater'
@@ -4099,15 +4590,27 @@ const Checkout: React.FC = () => {
                                 const finalUnitPrice = hasDiscount
                                   ? Math.ceil(baseUnitPrice - (baseUnitPrice * (offer / 100)))
                                   : originalUnitPrice;
+                                const totalPrice = finalUnitPrice * newTotal;
+
+                                if (matchingTier) {
+                                  setActivePriceTier(matchingTier);
+                                  sessionStorage.setItem('checkoutActivePriceTier', JSON.stringify(matchingTier));
+                                } else {
+                                  setActivePriceTier(null);
+                                  sessionStorage.removeItem('checkoutActivePriceTier');
+                                }
 
                                 const updatedDetails: BookingDetails = {
                                   ...bookingDetails,
+                                  bookingOptionId: currentBookingOption?.id || bookingDetails.bookingOptionId,
                                   travelers: { adults: newAdults, children: newChildren },
                                   price: finalUnitPrice,
                                   originalPrice: originalUnitPrice,
                                   hasDiscount: !!hasDiscount,
                                   discountPercentage: hasDiscount ? Number(offer) : 0,
-                                  currency: resolvedCurrency
+                                  currency: resolvedCurrency,
+                                  totalPrice,
+                                  commissionPercent: matchingTier?.commissionPercent ?? bookingDetails.commissionPercent
                                 };
                                 setBookingDetails(updatedDetails);
                                 sessionStorage.setItem('checkoutBookingDetails', JSON.stringify(updatedDetails));
@@ -4343,8 +4846,15 @@ const Checkout: React.FC = () => {
               type="button"
               className="btn btn-primary btn-lg checkout-floating-button"
               onClick={currentStep === 1 ? handleContinueToPayment : handlePayNow}
-              disabled={currentStep === 1 && isDepartureDatePast()}
-              style={currentStep === 1 && isDepartureDatePast() ? { opacity: 0.6, cursor: 'not-allowed' } : {}}
+              disabled={
+                (currentStep === 1 && isDepartureDatePast()) ||
+                (currentStep === 2 && (isProcessingOrder || !paymentMethod))
+              }
+              style={
+                currentStep === 1 && isDepartureDatePast()
+                  ? { opacity: 0.6, cursor: 'not-allowed' }
+                  : {}
+              }
             >
               {currentStep === 1 
                 ? getTranslation('checkout.continuePayment', language)
@@ -4429,6 +4939,35 @@ const Checkout: React.FC = () => {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Loading flotante pequeño para procesos asíncronos */}
+      {(isSavingContactInfo || isProcessingOrder) && (
+        <div 
+          style={{
+            position: 'fixed',
+            top: '20px',
+            right: '20px',
+            zIndex: 9999,
+            backgroundColor: 'white',
+            padding: '12px 16px',
+            borderRadius: '8px',
+            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            minWidth: '200px'
+          }}
+        >
+          <div className="spinner-border spinner-border-sm text-primary" role="status" style={{ width: '1rem', height: '1rem' }}>
+            <span className="visually-hidden">Cargando...</span>
+          </div>
+          <span style={{ fontSize: '0.9rem', color: '#333' }}>
+            {isProcessingOrder
+              ? (language === 'es' ? 'Procesando tu reserva...' : 'Processing your reservation...')
+              : (language === 'es' ? 'Espere por favor...' : 'Please wait...')}
+          </span>
         </div>
       )}
     </div>

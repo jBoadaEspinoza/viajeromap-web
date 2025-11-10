@@ -7,6 +7,8 @@ import { useCart } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
 import { getTranslation } from '../utils/translations';
 import LanguageCurrencyModal from './LanguageCurrencyModal';
+import { getAuthToken } from '../utils/cookieHelper';
+import { auth } from '../config/firebase';
 
 const Navbar: React.FC = () => {
   const location = useLocation();
@@ -39,6 +41,38 @@ const Navbar: React.FC = () => {
       }
     };
   }, []);
+
+  // Mostrar tokenId en console.log
+  useEffect(() => {
+    const getTokenId = async () => {
+      try {
+        // Intentar obtener token de cookie/localStorage
+        const tokenFromStorage = getAuthToken();
+        
+        // Intentar obtener token de Firebase si hay usuario autenticado
+        let firebaseToken = null;
+        if (firebaseUser) {
+          try {
+            firebaseToken = await firebaseUser.getIdToken();
+          } catch (error) {
+            // Si falla, continuar sin token de Firebase
+          }
+        }
+        
+        // Mostrar tokenId en console.log
+        console.log('🔑 TokenId:', {
+          fromStorage: tokenFromStorage || 'No disponible',
+          fromFirebase: firebaseToken || 'No disponible',
+          isAuthenticated,
+          hasFirebaseUser: !!firebaseUser
+        });
+      } catch (error) {
+        console.error('Error obteniendo tokenId:', error);
+      }
+    };
+
+    getTokenId();
+  }, [firebaseUser, isAuthenticated]);
 
   // Función para validar formato de teléfono
   const isValidPhone = (phone: string): boolean => {

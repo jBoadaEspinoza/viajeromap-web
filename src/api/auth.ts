@@ -64,6 +64,7 @@ export interface TokenInfoTravelerByGoogleResponse{
   message: string;
   data?: {
       uid: string;
+      personId?: number;
       tokenType: 'FIREBASE';
       username: string;
       nickname: string;
@@ -92,6 +93,18 @@ export interface SendSmsCodeRequest {
   lang: string;
 }
 
+export interface UpdateTravelerContactInfoRequest {
+  firstName?: string;          // Máx. 100 caracteres. Solo letras, espacios, guiones y apóstrofes
+  lastName?: string;           // Máx. 100 caracteres. Solo letras, espacios, guiones y apóstrofes
+  email?: string;              // Formato de email válido
+  phonePostalId?: number;      // ID positivo del código telefónico (ej. 51 para Perú)
+  phoneCodeId?: number;        // ID del código telefónico
+  phoneNumber?: string;        // Máx. 20 caracteres. Puede incluir +, espacios, guiones, paréntesis
+  countryBirthCode2?: number;  // ID positivo del país de nacimiento
+  documentTypeId?: number | null; // ID positivo del tipo de documento
+  documentNumber?: string | null; // Máx. 50 caracteres. Letras, dígitos y guiones
+}
+
 export interface SendSmsCodeResponse {
   success: boolean;
   message: string;
@@ -103,6 +116,17 @@ export interface VerifySmsCodeRequest {
   code: string;
   email: string;
   lang: string;
+}
+
+export interface ApiResponse<T = any> {
+  success: boolean;
+  message: string;
+  data: T;
+}
+
+export interface UpdateTravelerContactInfoResponse {
+  personId: number;
+  uid: string;
 }
 
 export interface VerifySmsCodeResponse extends LoginResponse {}
@@ -212,5 +236,27 @@ export const authApi = {
   getUserInfo: () => {
     const userInfo = localStorage.getItem('userInfo');
     return userInfo ? JSON.parse(userInfo) : null;
+  },
+
+  // Update traveler contact info
+  updateTravelerContactInfo: async (request: UpdateTravelerContactInfoRequest): Promise<UpdateTravelerContactInfoResponse> => {
+    try {
+      const response = await apiClient.post('/auth/traveler/contact-info', request);
+      // El formato de respuesta es: { success: boolean, message: string, data: { personId: number, uid: string } }
+      if (response.data && response.data.success && response.data.data) {
+        return response.data.data as UpdateTravelerContactInfoResponse;
+      }
+      // Si hay un error en la respuesta
+      if (response.data && response.data.success === false) {
+        throw new Error(response.data.message || 'Error updating traveler contact info');
+      }
+      // Si no se puede determinar la estructura, lanzar error
+      throw new Error('Respuesta inesperada del servidor');
+    } catch (error: any) {
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error(error.response?.data?.message || 'Error updating traveler contact info');
+    }
   }
 }; 

@@ -8,11 +8,13 @@ interface BookingDetails {
   title?: string;
   imageUrl?: string;
   price?: number;
+  totalPrice?: number;
   currency?: string;
   quantity?: number;
   date?: string;
   time?: string;
   meetingPoint?: string;
+  meetingType?: string;
   guideLanguage?: string;
   travelers?: {
     adults: number;
@@ -23,10 +25,25 @@ interface BookingDetails {
   originalPrice?: number;
   finalPrice?: number;
   pickupPoint?: {
+    id?: number;
+    cityId?: number | null;
     name: string;
     address: string;
+    latitude?: number | null;
+    longitude?: number | null;
   };
   comment?: string;
+  commissionPercent?: number;
+  bookingOptionId?: string;
+  durationDays?: number;
+  durationHours?: number;
+  durationMinutes?: number;
+  meetingPointId?: number | null;
+  meetingPointName?: string;
+  meetingPointAddress?: string;
+  meetingPointLatitude?: number | null;
+  meetingPointLongitude?: number | null;
+  meetingPointCityId?: number | null;
 }
 
 interface PaymentInfo {
@@ -38,12 +55,16 @@ interface PaymentInfo {
     currency_code: string;
   };
   timestamp?: string;
+  paymentMethod?: string;
 }
 
 interface ReservationData {
   reservationCode?: string;
   bookingDetails?: BookingDetails;
   paymentInfo?: PaymentInfo;
+  paymentStatus?: 'PAID' | 'PENDING';
+  orderId?: number;
+  orderMessage?: string;
 }
 
 const PaymentCompleted: React.FC = () => {
@@ -168,6 +189,8 @@ const PaymentCompleted: React.FC = () => {
   }
 
   const { reservationCode, bookingDetails, paymentInfo } = reservationData;
+  const paymentStatus = reservationData.paymentStatus || paymentInfo?.status;
+  const isPendingPayment = paymentStatus === 'PENDING';
 
   return (
     <div className="container py-5">
@@ -176,15 +199,24 @@ const PaymentCompleted: React.FC = () => {
           {/* Header de éxito */}
           <div className="text-center mb-4">
             <div className="mb-3">
-              <i className="fas fa-check-circle text-success" style={{ fontSize: '4rem' }}></i>
+              <i
+                className={`fas ${isPendingPayment ? 'fa-hourglass-half text-warning' : 'fa-check-circle text-success'}`}
+                style={{ fontSize: '4rem' }}
+              ></i>
             </div>
             <h1 className="h2 mb-3">
-              {language === 'es' ? '¡Pago Completado!' : 'Payment Completed!'}
+              {isPendingPayment
+                ? (language === 'es' ? '¡Reserva Registrada!' : 'Reservation Saved!')
+                : (language === 'es' ? '¡Pago Completado!' : 'Payment Completed!')}
             </h1>
             <p className="text-muted">
-              {language === 'es' 
-                ? 'Tu pago se ha procesado exitosamente. Tu reserva ha sido confirmada.'
-                : 'Your payment has been processed successfully. Your reservation has been confirmed.'}
+              {language === 'es'
+                ? isPendingPayment
+                  ? 'Tu reserva ha sido registrada. Recuerda completar el pago dentro del plazo indicado para confirmarla.'
+                  : 'Tu pago se ha procesado exitosamente. Tu reserva ha sido confirmada.'
+                : isPendingPayment
+                  ? 'Your reservation has been registered. Please complete the payment within the indicated time to confirm it.'
+                  : 'Your payment has been processed successfully. Your reservation has been confirmed.'}
             </p>
             {reservationCode && (
               <div className="alert alert-info d-inline-block">
@@ -192,6 +224,18 @@ const PaymentCompleted: React.FC = () => {
                   {language === 'es' ? 'Código de reserva:' : 'Reservation code:'} {reservationCode}
                 </strong>
               </div>
+            )}
+            {reservationData.orderId && (
+              <div className="d-block mt-2">
+                <span className="badge bg-primary">
+                  {language === 'es' ? 'Orden #' : 'Order #'} {reservationData.orderId}
+                </span>
+              </div>
+            )}
+            {reservationData.orderMessage && (
+              <p className="text-muted small mt-3">
+                {reservationData.orderMessage}
+              </p>
             )}
           </div>
 
@@ -269,7 +313,12 @@ const PaymentCompleted: React.FC = () => {
                 <div className="mb-3">
                   <strong>{language === 'es' ? 'Precio total:' : 'Total price:'}</strong>
                   <p className="h5 text-primary">
-                    {formatPrice(bookingDetails.finalPrice || bookingDetails.price, bookingDetails.currency)}
+                    {formatPrice(
+                      bookingDetails.totalPrice
+                        || bookingDetails.finalPrice
+                        || (bookingDetails.price || 0) * ((bookingDetails.travelers?.adults || 0) + (bookingDetails.travelers?.children || 0) || 1),
+                      bookingDetails.currency
+                    )}
                   </p>
                   {bookingDetails.hasDiscount && bookingDetails.originalPrice && (
                     <p className="text-muted small">
@@ -301,15 +350,29 @@ const PaymentCompleted: React.FC = () => {
                 </h3>
               </div>
               <div className="card-body">
-                {paymentInfo.status && (
+                {paymentStatus && (
                   <div className="mb-2">
                     <strong>{language === 'es' ? 'Estado:' : 'Status:'}</strong>
-                    <span className="badge bg-success ms-2">{paymentInfo.status}</span>
+                    <span className={`badge ms-2 ${isPendingPayment ? 'bg-warning text-dark' : 'bg-success'}`}>
+                      {language === 'es'
+                        ? (isPendingPayment ? 'Pendiente de pago' : 'Pagado')
+                        : (isPendingPayment ? 'Payment pending' : 'Paid')}
+                    </span>
+                  </div>
+                )}
+                {paymentInfo.paymentMethod && (
+                  <div className="mb-2">
+                    <strong>{language === 'es' ? 'Método:' : 'Method:'}</strong>{' '}
+                    <span className="text-capitalize">{paymentInfo.paymentMethod}</span>
                   </div>
                 )}
                 {paymentInfo.amount && (
                   <div className="mb-2">
-                    <strong>{language === 'es' ? 'Monto pagado:' : 'Amount paid:'}</strong>
+                    <strong>
+                      {language === 'es'
+                        ? (isPendingPayment ? 'Monto pendiente:' : 'Monto pagado:')
+                        : (isPendingPayment ? 'Amount due:' : 'Amount paid:')}
+                    </strong>
                     <p>{formatPrice(parseFloat(paymentInfo.amount.value), paymentInfo.amount.currency_code)}</p>
                   </div>
                 )}
@@ -320,6 +383,14 @@ const PaymentCompleted: React.FC = () => {
                   </div>
                 )}
               </div>
+            </div>
+          )}
+
+          {isPendingPayment && (
+            <div className="alert alert-warning mb-4">
+              {language === 'es'
+                ? 'Recibirás un correo con las instrucciones para completar el pago. Si ya realizaste el pago, te notificaremos cuando se confirme.'
+                : 'You will receive an email with instructions to complete the payment. If you have already paid, we will notify you once it is confirmed.'}
             </div>
           )}
 

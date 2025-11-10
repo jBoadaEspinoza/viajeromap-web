@@ -265,16 +265,30 @@ const ActivityDetail: React.FC = () => {
       if (selectedPickupPoint) {
         meetingPoint = selectedPickupPoint.name || selectedPickupPoint.address;
         pickupPointInfo = {
+          id: selectedPickupPoint.id,
+          cityId: selectedPickupPoint.city?.id ?? null,
           name: selectedPickupPoint.name || '',
-          address: selectedPickupPoint.address || ''
+          address: selectedPickupPoint.address || '',
+          latitude: selectedPickupPoint.latitude ?? null,
+          longitude: selectedPickupPoint.longitude ?? null
+        };
+      } else if ((selectedBookingOption.meetingType || '').toLowerCase() === 'meeting_point') {
+        meetingPoint = selectedBookingOption.meetingPointAddress || meetingPoint;
+        pickupPointInfo = {
+          id: selectedBookingOption.meetingPointId ?? null,
+          cityId: selectedBookingOption.meetingPointId ?? null,
+          name: selectedBookingOption.meetingPointAddress || selectedBookingOption.meetingPointDescription?.[0] || '',
+          address: selectedBookingOption.meetingPointAddress || '',
+          latitude: selectedBookingOption.meetingPointLatitude ?? null,
+          longitude: selectedBookingOption.meetingPointLongitude ?? null
         };
       }
 
-      // Obtener el idioma del guía (traducido a nombre completo)
+      // Obtener el código del idioma del guía (ej: es, en, fr)
       const languageCode = selectedLanguage || 
                            (selectedBookingOption.languages && selectedBookingOption.languages.length === 1 ? 
-                            selectedBookingOption.languages[0] : 'Español');
-      const guideLanguage = getLanguageName(languageCode, language);
+                            selectedBookingOption.languages[0] : 'es');
+      const guideLanguage = languageCode || 'es';
 
       // Obtener la hora de salida
       const departureTime = selectedTimeSlot;
@@ -355,16 +369,20 @@ const ActivityDetail: React.FC = () => {
       if (selectedPickupPoint) {
         meetingPoint = selectedPickupPoint.name || selectedPickupPoint.address;
         pickupPointInfo = {
+          id: selectedPickupPoint.id,
+          cityId: selectedPickupPoint.city?.id ?? null,
           name: selectedPickupPoint.name || '',
-          address: selectedPickupPoint.address || ''
+          address: selectedPickupPoint.address || '',
+          latitude: selectedPickupPoint.latitude ?? null,
+          longitude: selectedPickupPoint.longitude ?? null
         };
       }
 
       // Obtener el idioma del guía (traducido a nombre completo)
       const languageCode = selectedLanguage || 
                            (selectedBookingOption.languages && selectedBookingOption.languages.length === 1 ? 
-                            selectedBookingOption.languages[0] : 'Español');
-      const guideLanguage = getLanguageName(languageCode, language);
+                            selectedBookingOption.languages[0] : 'es');
+      const guideLanguage = languageCode || 'es';
 
       // Obtener la hora de salida
       const departureTime = selectedTimeSlot;
@@ -383,7 +401,11 @@ const ActivityDetail: React.FC = () => {
         date: selectedDate,
         time: departureTime,
         meetingPoint: meetingPoint,
+        meetingType: selectedBookingOption.meetingType,
         guideLanguage: guideLanguage,
+        durationDays: selectedBookingOption.durationDays ?? 0,
+        durationHours: selectedBookingOption.durationHours ?? 0,
+        durationMinutes: selectedBookingOption.durationMinutes ?? 0,
         travelers: {
           adults: numberOfAdults,
           children: numberOfChildren
@@ -393,6 +415,12 @@ const ActivityDetail: React.FC = () => {
         originalPrice: getOriginalPrice(),
         finalPrice: calculateTotalPrice(),
         pickupPoint: pickupPointInfo,
+        meetingPointId: pickupPointInfo?.id ?? selectedBookingOption.meetingPointId ?? null,
+        meetingPointAddress: pickupPointInfo?.address || selectedBookingOption.meetingPointAddress || '',
+        meetingPointLatitude: pickupPointInfo?.latitude ?? selectedBookingOption.meetingPointLatitude ?? null,
+        meetingPointLongitude: pickupPointInfo?.longitude ?? selectedBookingOption.meetingPointLongitude ?? null,
+        meetingPointCityId: pickupPointInfo?.cityId ?? null,
+        meetingPointName: pickupPointInfo?.name || selectedBookingOption.meetingPointAddress || selectedBookingOption.meetingPointDescription?.[0] || '',
         comment: pickupComment || undefined
       };
 

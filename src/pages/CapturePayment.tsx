@@ -1,6 +1,9 @@
 import React, { useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useLanguage } from '../context/LanguageContext';
+import { useAuth } from '../context/AuthContext';
+import { ordersApi } from '../api/orders';
+import type { CreateOrderRequest } from '../api/orders';
 
 // Función para generar un UUID corto (8 caracteres)
 const generateShortUUID = (): string => {
@@ -11,6 +14,16 @@ const CapturePayment: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { language } = useLanguage();
+  const { user } = useAuth();
+  const clearCheckoutData = () => {
+    sessionStorage.removeItem('checkoutBookingDetails');
+    sessionStorage.removeItem('checkoutTimeLeft');
+    sessionStorage.removeItem('checkoutCurrentStep');
+    sessionStorage.removeItem('checkoutFormData');
+    sessionStorage.removeItem('bookingDetails');
+    sessionStorage.removeItem('checkoutActivePriceTier');
+  };
+
 
   useEffect(() => {
     // Obtener todos los parámetros de la URL
@@ -27,76 +40,230 @@ const CapturePayment: React.FC = () => {
     
     // Función para procesar el pago con los datos obtenidos de PayPal
     const processPayment = async (paymentInfoData: any = {}) => {
-      // Obtener detalles de reserva antes de limpiarlos
       const bookingDetailsJson = sessionStorage.getItem('checkoutBookingDetails');
-      let bookingDetails = null;
+      let bookingDetails: any = null;
       
       if (bookingDetailsJson) {
         try {
           bookingDetails = JSON.parse(bookingDetailsJson);
-        } catch (error) {
-          // Si hay error al parsear los detalles de reserva, continuar sin ellos
+        } catch {
+          // Ignorar error de parseo, se manejará más adelante
         }
       }
 
       // Limpiar parámetros de URL para mantener la URL limpia
       window.history.replaceState({}, '', window.location.pathname);
 
-      // Generar código de reserva UUID corto
-      const reservationCode = generateShortUUID();
-      
-      // Mensaje sobre envío de datos al backend
-      const sendToBackendMessage = language === 'es' 
-        ? 'Se procede enviar la data del detalle de la reserva al backend para su registro.'
-        : 'Proceeding to send reservation detail data to backend for registration.';
-      
-      // Estructura de datos de reserva a enviar al backend
-      const reservationData = {
-        reservationCode,
-        bookingDetails,
-        paymentInfo: {
+      if (!bookingDetails) {
+        alert(language === 'es'
+          ? 'No se encontraron los detalles de la reserva. Intenta nuevamente.'
+          : 'Reservation details were not found. Please try again.');
+        navigate('/');
+        return;
+      }
+
+      const storedPersonId = sessionStorage.getItem('checkoutPersonId');
+      const personId = storedPersonId ? Number(storedPersonId) : (user?.personId ?? null);
+
+      if (!personId || Number.isNaN(personId)) {
+        alert(language === 'es'
+          ? 'No se encontró la información del viajero. Por favor actualiza tus datos de contacto antes de pagar.'
+          : 'Traveler information not found. Please update your contact details before paying.');
+        navigate('/checkout');
+        return;
+      }
+
+      const storedTier = sessionStorage.getItem('checkoutActivePriceTier');
+      let activePriceTier: any = null;
+      if (storedTier) {
+        try {
+          activePriceTier = JSON.parse(storedTier);
+        } catch {
+          activePriceTier = null;
+        }
+      }
+
+      const totalAdults = bookingDetails?.travelers?.adults || 0;
+      const totalChildren = bookingDetails?.travelers?.children || 0;
+      const totalTravelers = totalAdults + totalChildren;
+
+      if (totalTravelers <= 0) {
+        alert(language === 'es'
+          ? 'No se encontraron viajeros asociados a la reserva.'
+          : 'No travelers were found for this reservation.');
+        navigate('/');
+        return;
+      }
+
+      const unitPrice = bookingDetails?.price || 0;
+      const totalPrice = bookingDetails?.totalPrice || unitPrice * totalTravelers;
+
+      const currencyCode = (bookingDetails?.currency || 'USD').toUpperCase();
+      const allowedCurrencies = ['USD', 'PEN', 'EUR'];
+      const orderCurrency = (allowedCurrencies.includes(currencyCode) ? currencyCode : 'USD') as 'USD' | 'PEN' | 'EUR';
+
+      const startDatetime = bookingDetails?.date && bookingDetails?.time
+        ? `${bookingDetails.date}T${bookingDetails.time}:00`
+        : new Date().toISOString();
+
+      const platformCommissionPercent = Number(
+        bookingDetails?.commissionPercent ??
+        activePriceTier?.commissionPercent ??
+        0
+      );
+      const agentCommissionPercent = user?.roleCode === 'TRAVELER'
+        ? 0
+        : platformCommissionPercent;
+
+      const platformCommissionAmount = platformCommissionPercent
+        ? Number((totalPrice * (platformCommissionPercent / 100)).toFixed(2))
+        : 0;
+      const agentCommissionAmount = agentCommissionPercent
+        ? Number((totalPrice * (agentCommissionPercent / 100)).toFixed(2))
+        : 0;
+
+      const meetingTypeNormalized = (bookingDetails.meetingType || '').toLowerCase();
+      let meetingPickupPlaceId = bookingDetails.pickupPoint?.cityId ?? bookingDetails.meetingPointCityId ?? undefined;
+      let meetingPickupPointId = bookingDetails.pickupPoint?.id ?? undefined;
+      let meetingPickupPointName = bookingDetails.pickupPoint?.name ?? undefined;
+      let meetingPickupPointAddress = bookingDetails.pickupPoint?.address ?? undefined;
+      let meetingPickupPointLatitude = bookingDetails.pickupPoint?.latitude ?? undefined;
+      let meetingPickupPointLongitude = bookingDetails.pickupPoint?.longitude ?? undefined;
+
+      if (meetingTypeNormalized === 'meeting_point') {
+        meetingPickupPlaceId = meetingPickupPlaceId ?? bookingDetails.meetingPointId ?? undefined;
+        meetingPickupPointId = meetingPickupPointId ?? bookingDetails.meetingPointId ?? bookingDetails.bookingOptionId ?? undefined;
+        meetingPickupPointName = meetingPickupPointName
+          ?? bookingDetails.meetingPointName
+          ?? bookingDetails.pickupPoint?.name
+          ?? bookingDetails.meetingPointAddress
+          ?? undefined;
+        meetingPickupPointAddress = meetingPickupPointAddress ?? bookingDetails.meetingPointAddress ?? undefined;
+        meetingPickupPointLatitude = meetingPickupPointLatitude ?? bookingDetails.meetingPointLatitude ?? undefined;
+        meetingPickupPointLongitude = meetingPickupPointLongitude ?? bookingDetails.meetingPointLongitude ?? undefined;
+      }
+
+      const calculateEndDateTime = (): string | undefined => {
+        if (!bookingDetails.date || !bookingDetails.time) {
+          return undefined;
+        }
+        const [year, month, day] = bookingDetails.date.split('-').map(Number);
+        const [hour, minute] = bookingDetails.time.split(':').map(Number);
+        if (
+          Number.isNaN(year) || Number.isNaN(month) || Number.isNaN(day) ||
+          Number.isNaN(hour) || Number.isNaN(minute)
+        ) {
+          return undefined;
+        }
+        const startDate = new Date(year, month - 1, day, hour, minute, 0, 0);
+        if (Number.isNaN(startDate.getTime())) {
+          return undefined;
+        }
+
+        const durationDays = bookingDetails.durationDays ?? 0;
+        const durationHours = bookingDetails.durationHours ?? 0;
+        const durationMinutes = bookingDetails.durationMinutes ?? 0;
+
+        const endDate = new Date(startDate);
+        endDate.setDate(endDate.getDate() + (durationDays || 0));
+        endDate.setHours(endDate.getHours() + (durationHours || 0));
+        endDate.setMinutes(endDate.getMinutes() + (durationMinutes || 0));
+
+        if (Number.isNaN(endDate.getTime())) {
+          return undefined;
+        }
+
+        const pad = (value: number) => String(value).padStart(2, '0');
+        return `${endDate.getFullYear()}-${pad(endDate.getMonth() + 1)}-${pad(endDate.getDate())}T${pad(endDate.getHours())}:${pad(endDate.getMinutes())}:00`;
+      };
+
+      const endDatetime = calculateEndDateTime();
+
+      const orderRequest: CreateOrderRequest = {
+        orderSource: 'PLATFORM',
+        paymentMethod: 'CARD',
+        paymentStatus: 'PAID',
+        paymentProvider: 'PAYPAL',
+        orderStatus: 'CONFIRMED',
+        items: [
+          {
+            activityId: String(bookingDetails.activityId),
+            bookingOptionId: bookingDetails.bookingOptionId || '',
+            currency: orderCurrency,
+            participants: totalTravelers,
+            pricePerParticipant: unitPrice,
+            startDatetime,
+            specialRequest: bookingDetails.comment,
+            status: 'PENDING',
+            guideLanguage: bookingDetails.guideLanguage,
+            commissionPercentPlatform: platformCommissionPercent,
+            commissionPercentAgent: agentCommissionPercent,
+            commissionAmountPlatform: platformCommissionAmount,
+            commissionAmountAgent: agentCommissionPercent === 0 ? 0 : agentCommissionAmount,
+            meetingPickupPlaceId,
+            meetingPickupPointId,
+            meetingPickupPointName,
+            meetingPickupPointAddress,
+            meetingPickupPointLatitude,
+            meetingPickupPointLongitude,
+            endDatetime
+          }
+        ]
+      };
+
+      try {
+        const orderResponse = await ordersApi.createOrder(orderRequest);
+
+        if (!orderResponse?.success) {
+          throw new Error(orderResponse?.message || 'Unable to create order.');
+        }
+
+        const reservationCode = orderResponse.idCreated
+          ? String(orderResponse.idCreated)
+          : generateShortUUID();
+
+        console.log('🔑 Token utilizado para crear la orden (capture):', localStorage.getItem('authToken'));
+
+        const paymentInfo = {
           token,
           payerId,
           paymentId,
           orderId,
+          paymentMethod: 'googlepay',
+          status: 'PAID',
+          amount: paymentInfoData?.amount || {
+            value: totalPrice.toFixed(2),
+            currency_code: orderCurrency
+          },
           timestamp: new Date().toISOString(),
           ...paymentInfoData
-        }
-      };
-      
-      // Capturar el pago y enviar datos al backend
-      try {
-        // Aquí iría la llamada al backend para registrar la reserva
-        // await sendReservationToBackend(reservationData);
-        
-        // Guardar datos de reserva en sessionStorage antes de limpiar (para que PaymentCompleted pueda acceder)
-        sessionStorage.setItem('lastReservationData', JSON.stringify(reservationData));
-        
-        // Limpiar datos de checkout (pero mantener reservationData en sessionStorage)
-        sessionStorage.removeItem('checkoutBookingDetails');
-        sessionStorage.removeItem('checkoutTimeLeft');
-        sessionStorage.removeItem('checkoutCurrentStep');
-        sessionStorage.removeItem('checkoutFormData');
+        };
 
-        // Redirigir a la página de pago completado con los datos de la reserva
+        const reservationData = {
+          reservationCode,
+          bookingDetails: {
+            ...bookingDetails,
+            totalPrice
+          },
+          paymentInfo,
+          paymentStatus: 'PAID' as const,
+          orderId: orderResponse.idCreated,
+          orderMessage: orderResponse.message
+        };
+
+        sessionStorage.setItem('lastReservationData', JSON.stringify(reservationData));
+        clearCheckoutData();
+
         navigate('/payment-completed', { 
           state: reservationData 
         });
-      } catch (error) {
-        // Si hay error al procesar el pago, mostrar mensaje y redirigir
+      } catch (error: any) {
         const errorMessage = language === 'es' 
-          ? 'Hubo un error al procesar el pago. Por favor, contacta con soporte.'
-          : 'There was an error processing the payment. Please contact support.';
+          ? (error?.message || 'Hubo un error al procesar el pago. Por favor, contacta con soporte.')
+          : (error?.message || 'There was an error processing the payment. Please contact support.');
         
         alert(errorMessage);
-        
-        // Limpiar datos de checkout
-        sessionStorage.removeItem('checkoutBookingDetails');
-        sessionStorage.removeItem('checkoutTimeLeft');
-        sessionStorage.removeItem('checkoutCurrentStep');
-        sessionStorage.removeItem('checkoutFormData');
-        
-        // Redirigir a home
+        clearCheckoutData();
         navigate('/');
       }
     };

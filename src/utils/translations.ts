@@ -1532,6 +1532,10 @@ export const translations: Translations = {
     es: 'o',
     en: 'or'
   },
+  'common.saving': {
+    es: 'Guardando...',
+    en: 'Saving...'
+  },
   'common.saveChanges': {
     es: 'Guardar cambios',
     en: 'Save changes'
