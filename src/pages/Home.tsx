@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useLanguage } from '../context/LanguageContext';
+import { useCurrency } from '../context/CurrencyContext';
 import { useCart } from '../context/CartContext';
 import { getTranslation, getTranslationWithParams } from '../utils/translations';
 import { useConfig } from '../context/ConfigContext';
@@ -21,6 +22,7 @@ const Home: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { language } = useLanguage();
+  const { getCurrencySymbol } = useCurrency();
   const { config } = useConfig();
   const { currency } = useUrlParams();
   
@@ -218,69 +220,50 @@ const Home: React.FC = () => {
             let hasActiveOffer = false;
             let discountPercent = 0;
 
-            // Aplicar la lógica de precios según el modo de precios
+            // Aplicar la lógica de precios usando normalPrice, specialOfferPercentage y priceAfterDiscount
             let minParticipants: number | null = null;
             
             if (bookingOption) {
-              // Obtener el precio base (el API ya devuelve precios en la moneda solicitada)
-              // Si el modo de precios es por persona y hay niveles de precio (tiers)
-              if (bookingOption.pricingMode === 'PER_PERSON' && bookingOption.priceTiers && bookingOption.priceTiers.length > 0) {
-                // Usar la moneda del primer priceTier (asumiendo que todos tienen la misma moneda)
-                currency = bookingOption.priceTiers[0].currency || 'PEN';
-                
-                // Calcular el precio mínimo y encontrar el tier correspondiente
-                // Esto permite mostrar el precio más bajo disponible
-                let minPrice = Infinity;
-                let minParticipantsValue = Infinity;
-                
-                // Iterar sobre todos los niveles de precio para encontrar el más bajo
-                bookingOption.priceTiers.forEach((tier: any) => {
-                  const tierTotalPrice = tier.totalPrice || 0;
-                  const tierMinParticipants = tier.minParticipants || 1;
-                  
-                  // Aplicar descuento si existe una oferta especial
-                  let finalPrice = tierTotalPrice;
-                  if (bookingOption.specialOfferPercentage && bookingOption.specialOfferPercentage > 0) {
-                    finalPrice = tierTotalPrice - (tierTotalPrice * (bookingOption.specialOfferPercentage / 100));
-                  }
-                  
-                  // Actualizar precio mínimo y participantes mínimos
-                  if (finalPrice < minPrice) {
-                    minPrice = finalPrice;
-                    minParticipantsValue = tierMinParticipants;
-                  } else if (finalPrice === minPrice && tierMinParticipants < minParticipantsValue) {
-                    minParticipantsValue = tierMinParticipants;
-                  }
-                });
-                
-                price = minPrice === Infinity ? 0 : minPrice;
-                minParticipants = minParticipantsValue === Infinity ? null : minParticipantsValue;
-                
-                // Si hay múltiples niveles de precio, mostrar "Desde"
-                if (bookingOption.priceTiers.length > 1) {
-                  isFrom = true;
-                  // Solo calcular minParticipants si hay más de un tier
-                  minParticipants = minParticipantsValue === Infinity ? null : minParticipantsValue;
-                } else {
-                  isFrom = false;
-                  minParticipants = null; // No mostrar mensaje si solo hay un tier
+              // Obtener la moneda del bookingOption
+              currency = bookingOption.currency || 'PEN';
+              
+              // Usar priceAfterDiscount si está disponible (ya incluye el descuento aplicado)
+              if (bookingOption.priceAfterDiscount != null && bookingOption.priceAfterDiscount > 0) {
+                price = bookingOption.priceAfterDiscount;
+                // Si hay precio normal, usarlo como precio original
+                if (bookingOption.normalPrice != null && bookingOption.normalPrice > 0) {
+                  originalPrice = bookingOption.normalPrice;
                 }
+              } else if (bookingOption.normalPrice != null && bookingOption.normalPrice > 0) {
+                // Si no hay priceAfterDiscount, usar normalPrice
+                price = bookingOption.normalPrice;
+              } else if (bookingOption.pricePerPerson != null && bookingOption.pricePerPerson > 0) {
+                // Fallback: usar pricePerPerson si no hay normalPrice ni priceAfterDiscount
+                price = bookingOption.pricePerPerson;
               } else {
-                // Fallback: usar precio por persona directo si no hay tiers
-                currency = bookingOption.currency || 'PEN';
-                price = bookingOption.pricePerPerson || 0;
-                isFrom = false;
-                minParticipants = null;
+                price = 0;
               }
-              // Aplicar descuento si existe una oferta especial (specialOfferPercentage)
-              if (bookingOption.specialOfferPercentage && bookingOption.specialOfferPercentage > 0) {
+              
+              // Verificar si hay oferta especial activa
+              if (bookingOption.specialOfferPercentage != null && bookingOption.specialOfferPercentage > 0) {
                 hasActiveOffer = true;
-                originalPrice = price; // Guardar precio original antes del descuento
                 discountPercent = bookingOption.specialOfferPercentage;
                 
-                // Calcular precio final con descuento aplicado
-                const discountAmount = price * (bookingOption.specialOfferPercentage / 100);
-                price = price - discountAmount;
+                // Si no tenemos originalPrice pero tenemos specialOfferPercentage, calcularlo
+                if (originalPrice === 0 && price > 0) {
+                  // Calcular precio original desde el precio con descuento
+                  originalPrice = price / (1 - (bookingOption.specialOfferPercentage / 100));
+                }
+              }
+              
+              // Obtener minParticipants del bookingOption si está disponible
+              if (bookingOption.groupMinSize != null && bookingOption.groupMinSize > 0) {
+                minParticipants = bookingOption.groupMinSize;
+                // Mostrar "Desde" si hay un mínimo de participantes
+                isFrom = true;
+              } else {
+                isFrom = false;
+                minParticipants = null;
               }
             }
 
@@ -972,30 +955,19 @@ const Home: React.FC = () => {
                                   <div className="d-flex align-items-center gap-2 mb-1">
                                     <span className="badge bg-danger" style={{ fontSize: '0.65rem' }}>-{activity.discountPercent}%</span>
                                     <span className="text-muted strikethrough-price" style={{ fontSize: '0.75rem' }}>
-                                      {activity.currency === 'PEN' ? 'S/' : '$'}{Math.ceil(activity.originalPrice)}
+                                      {getCurrencySymbol(activity.currency)}{Math.ceil(activity.originalPrice)}
                                     </span>
                                   </div>
                                 )}
-                                <span className="text-muted" style={{ fontSize: '0.9rem', marginBottom: '0px' }}>
-                                  {activity.isFromPrice && `${getTranslation('home.activities.priceFrom', language)} `}
-                                </span>
+                                
                                 <div style={{ margin: '0px', padding: '0px' }}>
                                   <span className="fs-5 fw-bold" style={{ fontSize: '1rem', margin: '0px', padding: '0px' }}>
-                                    {activity.currency === 'PEN' ? 'S/' : '$'}{Math.ceil(getPriceValue(activity.price))}
+                                    {getCurrencySymbol(activity.currency)}{Math.ceil(getPriceValue(activity.price))}
                                   </span>
+                                  &nbsp;
                                    <small className="text-muted" style={{ fontSize: '0.6rem', marginLeft: '0.25rem' , margin: '0px', padding: '0px' }}>
                                       {getTranslation('home.activities.perPerson', language)}
                                    </small>
-                                   {activity.minParticipants !== null && activity.minParticipants !== undefined && (
-                                     <small className="text-muted d-block" style={{ fontSize: '0.6rem', marginTop: '2px' }}>
-                                       {getTranslationWithParams('home.activities.fromParticipants', language, {
-                                         count: activity.minParticipants,
-                                         plural: activity.minParticipants === 1 
-                                           ? getTranslation('home.activities.participantSingular', language)
-                                           : getTranslation('home.activities.participantPlural', language)
-                                       })}
-                                     </small>
-                                   )}
                                 </div>
                               </>
                             ) : (
@@ -1133,30 +1105,18 @@ const Home: React.FC = () => {
                                       <div className="d-flex align-items-center gap-1 mb-1">
                                         <span className="badge bg-danger" style={{ fontSize: '0.6rem' }}>-{activity.discountPercent}%</span>
                                         <span className="text-muted strikethrough-price" style={{ fontSize: '0.7rem' }}>
-                                          {activity.currency === 'PEN' ? 'S/' : '$'}{Math.ceil(activity.originalPrice)}
+                                          {getCurrencySymbol(activity.currency)}{Math.ceil(activity.originalPrice)}
                                         </span>
                                       </div>
                                     )}
-                                    <span className="text-muted" style={{ fontSize: '0.9rem', marginBottom: '0px' }}>
-                                      {activity.isFromPrice && `${getTranslation('home.activities.priceFrom', language)} `}
-                                    </span>
+                                    
                                     <div style={{ margin: '0px', padding: '0px' }}> 
                                       <span className="fs-6 fw-bold" style={{ fontSize: '1rem', margin: '0px', padding: '0px' }}>
-                                        {activity.currency === 'PEN' ? 'S/' : '$'}{Math.ceil(getPriceValue(activity.price))}
+                                        {getCurrencySymbol(activity.currency)}{Math.ceil(getPriceValue(activity.price))}
                                       </span>
-                                      <small className="text-muted" style={{ fontSize: '0.55rem', marginLeft: '0.25rem' , margin: '0px', padding: '0px' }}>
+                                      &nbsp;<small className="text-muted" style={{ fontSize: '0.55rem', marginLeft: '0.25rem' , margin: '0px', padding: '0px' }}>
                                         {getTranslation('home.activities.perPerson', language)}
                                       </small>
-                                      {activity.minParticipants !== null && activity.minParticipants !== undefined && (
-                                        <small className="text-muted d-block" style={{ fontSize: '0.55rem', marginTop: '2px' }}>
-                                          {getTranslationWithParams('home.activities.fromParticipants', language, {
-                                            count: activity.minParticipants,
-                                            plural: activity.minParticipants === 1 
-                                              ? getTranslation('home.activities.participantSingular', language)
-                                              : getTranslation('home.activities.participantPlural', language)
-                                          })}
-                                        </small>
-                                      )}
                                     </div>
                                   </>
                                 ) : (

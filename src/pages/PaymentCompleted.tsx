@@ -1,164 +1,132 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useLanguage } from '../context/LanguageContext';
-import { getTranslation } from '../utils/translations';
+import { useCurrency } from '../context/CurrencyContext';
+import { getTranslation, getLanguageName } from '../utils/translations';
+import { OrderResponse, OrderItemResponse } from '../api/orders';
+import { activitiesApi, Activity } from '../api/activities';
 
-interface BookingDetails {
-  activityId?: number;
-  title?: string;
-  imageUrl?: string;
-  price?: number;
-  totalPrice?: number;
-  currency?: string;
-  quantity?: number;
-  date?: string;
-  time?: string;
-  meetingPoint?: string;
-  meetingType?: string;
-  guideLanguage?: string;
-  travelers?: {
-    adults: number;
-    children: number;
-  };
-  hasDiscount?: boolean;
-  discountPercentage?: number;
-  originalPrice?: number;
-  finalPrice?: number;
-  pickupPoint?: {
-    id?: number;
-    cityId?: number | null;
-    name: string;
-    address: string;
-    latitude?: number | null;
-    longitude?: number | null;
-  };
-  comment?: string;
-  commissionPercent?: number;
-  bookingOptionId?: string;
-  durationDays?: number;
-  durationHours?: number;
-  durationMinutes?: number;
-  meetingPointId?: number | null;
-  meetingPointName?: string;
-  meetingPointAddress?: string;
-  meetingPointLatitude?: number | null;
-  meetingPointLongitude?: number | null;
-  meetingPointCityId?: number | null;
-}
-
-interface PaymentInfo {
-  orderId?: string;
-  status?: string;
-  payerId?: string;
-  amount?: {
-    value: string;
-    currency_code: string;
-  };
-  timestamp?: string;
+interface PaymentCompletedState {
   paymentMethod?: string;
-}
-
-interface ReservationData {
-  reservationCode?: string;
-  bookingDetails?: BookingDetails;
-  paymentInfo?: PaymentInfo;
   paymentStatus?: 'PAID' | 'PENDING';
-  orderId?: number;
-  orderMessage?: string;
+  paymentProvider?: string;
+  paymentDetails?: any;
+  orders?: OrderResponse[];
+  totalAmount?: number;
+  currency?: string;
 }
 
 const PaymentCompleted: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { language } = useLanguage();
-  const [reservationData, setReservationData] = useState<ReservationData | null>(null);
-  const [isCancelling, setIsCancelling] = useState(false);
+  const { getCurrencySymbol } = useCurrency();
+  const [paymentData, setPaymentData] = useState<PaymentCompletedState | null>(null);
+  const [activityDetails, setActivityDetails] = useState<Map<string, Activity>>(new Map());
+  const [loading, setLoading] = useState(true);
 
-  // Efecto para obtener datos de la reserva al montar el componente
+  // Efecto para obtener datos del pago al montar el componente
   useEffect(() => {
-    // Intentar obtener datos de la reserva desde location.state primero
-    const stateData = location.state as ReservationData;
+    const stateData = location.state as PaymentCompletedState;
     
     if (stateData) {
-      // Si hay datos en location.state, usarlos y guardarlos en sessionStorage
-      setReservationData(stateData);
-      // Guardar en sessionStorage para persistencia durante la sesión
-      sessionStorage.setItem('lastReservationData', JSON.stringify(stateData));
+      setPaymentData(stateData);
+      sessionStorage.setItem('lastPaymentData', JSON.stringify(stateData));
     } else {
-      // Intentar obtener desde sessionStorage si no hay datos en location.state
-      const storedData = sessionStorage.getItem('lastReservationData');
+      const storedData = sessionStorage.getItem('lastPaymentData');
       if (storedData) {
         try {
-          setReservationData(JSON.parse(storedData));
+          setPaymentData(JSON.parse(storedData));
         } catch (error) {
-          // Si hay error al parsear los datos almacenados, continuar sin ellos
+          console.error('Error parsing stored payment data:', error);
         }
       }
     }
   }, [location.state]);
 
-  // Manejar cancelación de reserva
-  const handleCancelReservation = async () => {
-    // Validar que exista código de reserva
-    if (!reservationData?.reservationCode) {
-      alert(language === 'es' 
-        ? 'No se puede cancelar la reserva. Código de reserva no encontrado.'
-        : 'Cannot cancel reservation. Reservation code not found.');
+  // Cargar detalles de actividades
+  useEffect(() => {
+    const loadActivityDetails = async () => {
+      if (!paymentData?.orders) {
+        setLoading(false);
       return;
     }
 
-    // Confirmar cancelación con el usuario
-    const confirmMessage = language === 'es'
-      ? `¿Estás seguro de que deseas cancelar la reserva ${reservationData.reservationCode}?`
-      : `Are you sure you want to cancel reservation ${reservationData.reservationCode}?`;
+      // La API ya devuelve la actividad en item.activity, pero es una versión simplificada
+      // Si necesitamos más detalles (como imágenes múltiples), los cargamos desde la API
+      const activityIds = new Set<string>();
+      paymentData.orders.forEach((order) => {
+        order.items.forEach((item) => {
+          if (item.activity?.id) {
+            activityIds.add(item.activity.id);
+          }
+        });
+      });
 
-    if (!window.confirm(confirmMessage)) {
-      // Si el usuario cancela, no hacer nada
-      return;
-    }
+      // Cargar detalles completos de actividades desde la API
+      const detailsPromises = Array.from(activityIds).map(async (activityId) => {
+        try {
+          const currency = paymentData.currency || 'USD';
+          const activity = await activitiesApi.getById(activityId, language, currency);
+          return { activityId, activity };
+        } catch (err) {
+          console.error(`Error loading activity ${activityId}:`, err);
+          return { activityId, activity: null };
+        }
+      });
 
-    setIsCancelling(true);
-    
-    try {
-      // Aquí iría la llamada al backend para cancelar la reserva
-      // await cancelReservation(reservationData.reservationCode);
+      const results = await Promise.all(detailsPromises);
+      const detailsMap = new Map<string, Activity>();
       
-      // Limpiar datos de la reserva del sessionStorage
-      sessionStorage.removeItem('lastReservationData');
-      
-      alert(language === 'es'
-        ? 'Reserva cancelada exitosamente.'
-        : 'Reservation cancelled successfully.');
-      
-      navigate('/');
-    } catch (error) {
-      // Si hay error al cancelar la reserva, mostrar mensaje de error
-      alert(language === 'es'
-        ? 'Error al cancelar la reserva. Por favor, contacta con soporte.'
-        : 'Error cancelling reservation. Please contact support.');
-    } finally {
-      setIsCancelling(false);
+      results.forEach(({ activityId, activity }) => {
+        if (activity) {
+          detailsMap.set(activityId, activity);
+        }
+      });
+
+      setActivityDetails(detailsMap);
+      setLoading(false);
+    };
+
+    if (paymentData?.orders) {
+      loadActivityDetails();
+    } else {
+      setLoading(false);
     }
-  };
+  }, [paymentData, language]);
 
   // Función auxiliar para formatear fecha según el idioma
   const formatDate = (dateString?: string): string => {
     if (!dateString) return '-';
     try {
-      const [year, month, day] = dateString.split('-');
-      // Crear fecha y formatearla según el idioma (mes es 0-indexed, por eso month - 1)
-      return new Date(parseInt(year), parseInt(month) - 1, parseInt(day)).toLocaleDateString(language === 'es' ? 'es-ES' : 'en-US', {
+      const date = new Date(dateString);
+      return date.toLocaleDateString(language === 'es' ? 'es-ES' : 'en-US', {
         year: 'numeric',
         month: 'long',
         day: 'numeric'
       });
     } catch {
-      // Si hay error al formatear, retornar la fecha original
       return dateString;
     }
   };
 
-  // Función auxiliar para formatear precio según la moneda y el idioma
+  // Función auxiliar para formatear hora
+  const formatTime = (dateString?: string): string => {
+    if (!dateString) return '-';
+    try {
+      const date = new Date(dateString);
+      return date.toLocaleTimeString(language === 'es' ? 'es-ES' : 'en-US', {
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch {
+      // Intentar extraer hora del formato ISO
+      const timeMatch = dateString.match(/T(\d{2}:\d{2})/);
+      return timeMatch ? timeMatch[1] : dateString;
+    }
+  };
+
+  // Función auxiliar para formatear precio
   const formatPrice = (price?: number, currency?: string): string => {
     if (!price) return '-';
     const currencyCode = currency || 'USD';
@@ -168,19 +136,38 @@ const PaymentCompleted: React.FC = () => {
     }).format(price);
   };
 
-  // Mostrar pantalla de carga si no hay datos de reserva aún
-  if (!reservationData) {
+  // Función para obtener nombre del método de pago
+  const getPaymentMethodName = (provider?: string): string => {
+    const methods: Record<string, string> = {
+      'PAYPAL': 'PayPal',
+      'GOOGLE_PAY': 'Google Pay',
+      'MERCADO_PAGO': 'Mercado Pago',
+      'STRIPE': 'Stripe',
+      'YAPE': 'Yape',
+      'NIUBIZ': 'Niubiz',
+      'OTHER': language === 'es' ? 'Otro' : 'Other'
+    };
+    return methods[provider || ''] || (language === 'es' ? 'No especificado' : 'Not specified');
+  };
+
+  // Calcular total de todas las órdenes
+  const totalAmount = paymentData?.totalAmount || 
+    (paymentData?.orders?.reduce((sum, order) => sum + (order.totalAmount || 0), 0) || 0);
+
+  const currency = paymentData?.currency || paymentData?.orders?.[0]?.items?.[0]?.currency || 'USD';
+  const isPendingPayment = paymentData?.paymentStatus === 'PENDING';
+
+  // Mostrar pantalla de carga
+  if (loading || !paymentData) {
     return (
       <div className="container py-5">
         <div className="row justify-content-center">
           <div className="col-md-8 text-center">
-            {/* Spinner de carga */}
             <div className="spinner-border text-primary mb-3" role="status">
               <span className="visually-hidden">Loading...</span>
             </div>
-            {/* Mensaje de carga */}
             <p className="text-muted">
-              {language === 'es' ? 'Cargando información de la reserva...' : 'Loading reservation information...'}
+              {language === 'es' ? 'Cargando información del pago...' : 'Loading payment information...'}
             </p>
           </div>
         </div>
@@ -188,14 +175,10 @@ const PaymentCompleted: React.FC = () => {
     );
   }
 
-  const { reservationCode, bookingDetails, paymentInfo } = reservationData;
-  const paymentStatus = reservationData.paymentStatus || paymentInfo?.status;
-  const isPendingPayment = paymentStatus === 'PENDING';
-
   return (
     <div className="container py-5">
       <div className="row justify-content-center">
-        <div className="col-md-8">
+        <div className="col-lg-10">
           {/* Header de éxito */}
           <div className="text-center mb-4">
             <div className="mb-3">
@@ -218,176 +201,175 @@ const PaymentCompleted: React.FC = () => {
                   ? 'Your reservation has been registered. Please complete the payment within the indicated time to confirm it.'
                   : 'Your payment has been processed successfully. Your reservation has been confirmed.'}
             </p>
-            {reservationCode && (
-              <div className="alert alert-info d-inline-block">
-                <strong>
-                  {language === 'es' ? 'Código de reserva:' : 'Reservation code:'} {reservationCode}
-                </strong>
-              </div>
-            )}
-            {reservationData.orderId && (
-              <div className="d-block mt-2">
-                <span className="badge bg-primary">
-                  {language === 'es' ? 'Orden #' : 'Order #'} {reservationData.orderId}
-                </span>
-              </div>
-            )}
-            {reservationData.orderMessage && (
-              <p className="text-muted small mt-3">
-                {reservationData.orderMessage}
-              </p>
-            )}
           </div>
 
-          {/* Resumen de la reserva */}
-          {bookingDetails && (
+          {/* Resumen de pago */}
+          <div className="card mb-4">
+            <div className={`card-header text-white ${isPendingPayment ? 'bg-warning' : 'bg-success'}`}>
+              <h3 className="h5 mb-0">
+                <i className="fas fa-receipt me-2"></i>
+                {language === 'es' ? 'Resumen del Pago' : 'Payment Summary'}
+              </h3>
+              </div>
+            <div className="card-body">
+              <div className="row">
+                <div className="col-md-6 mb-3">
+                  <strong>{language === 'es' ? 'Estado del pago:' : 'Payment status:'}</strong>
+                  <span className={`badge ms-2 ${isPendingPayment ? 'bg-warning text-dark' : 'bg-success'}`}>
+                    {language === 'es'
+                      ? (isPendingPayment ? 'Pendiente' : 'Pagado')
+                      : (isPendingPayment ? 'Pending' : 'Paid')}
+                </span>
+              </div>
+                <div className="col-md-6 mb-3">
+                  <strong>{language === 'es' ? 'Método de pago:' : 'Payment method:'}</strong>
+                  <p className="mb-0">{getPaymentMethodName(paymentData.paymentProvider)}</p>
+                </div>
+                <div className="col-md-6 mb-3">
+                  <strong>{language === 'es' ? 'Total:' : 'Total:'}</strong>
+                  <p className="h5 text-primary mb-0">{formatPrice(totalAmount, currency)}</p>
+                </div>
+                <div className="col-md-6 mb-3">
+                  <strong>{language === 'es' ? 'Número de órdenes:' : 'Number of orders:'}</strong>
+                  <p className="mb-0">{paymentData.orders?.length || 0}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Lista de órdenes */}
+          {paymentData.orders && paymentData.orders.length > 0 && (
             <div className="card mb-4">
               <div className="card-header bg-primary text-white">
                 <h3 className="h5 mb-0">
-                  <i className="fas fa-receipt me-2"></i>
-                  {language === 'es' ? 'Resumen de la Reserva' : 'Reservation Summary'}
+                  <i className="fas fa-list me-2"></i>
+                  {language === 'es' ? 'Órdenes' : 'Orders'} ({paymentData.orders.length})
                 </h3>
               </div>
               <div className="card-body">
-                {/* Imagen y título */}
-                {bookingDetails.imageUrl && (
-                  <div className="mb-3">
-                    <img 
-                      src={bookingDetails.imageUrl} 
-                      alt={bookingDetails.title || ''} 
+                {paymentData.orders.map((order, orderIndex) => (
+                  <div key={order.id} className={`mb-4 ${orderIndex < paymentData.orders!.length - 1 ? 'border-bottom pb-4' : ''}`}>
+                    {/* Información de la orden */}
+                    <div className="d-flex justify-content-between align-items-start mb-3">
+                      <div>
+                        <h5 className="mb-1">
+                          {language === 'es' ? 'Orden' : 'Order'} #{orderIndex + 1}
+                        </h5>
+                        <p className="text-muted small mb-0">
+                          ID: {order.id}
+                        </p>
+                        <p className="text-muted small mb-0">
+                          {language === 'es' ? 'Estado:' : 'Status:'} 
+                          <span className="badge bg-info ms-2">{order.orderStatus}</span>
+                        </p>
+                      </div>
+                      <div className="text-end">
+                        <p className="h6 mb-0">{formatPrice(order.totalAmount, order.items[0]?.currency || currency)}</p>
+                        <p className="text-muted small mb-0">
+                          {new Date(order.updatedAt).toLocaleString(language === 'es' ? 'es-ES' : 'en-US')}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Items de la orden */}
+                    <div className="row">
+                      {order.items.map((item) => {
+                        // Obtener detalles de la actividad
+                        // Primero intentar desde activityDetails (actividad completa con imágenes)
+                        // Si no está, usar item.activity (versión simplificada)
+                        const activityId = item.activity?.id || '';
+                        const activity = activityDetails.get(activityId) || null;
+                        const activityTitle = activity?.title || item.activity?.title || '';
+                        let activityImageUrl = '';
+                        if (activity?.images && activity.images.length > 0) {
+                          const coverImage = activity.images.find((img: any) => img.isCover);
+                          activityImageUrl = coverImage?.imageUrl || activity.images[0]?.imageUrl || '';
+                        } else if (item.activity?.imageUrl) {
+                          // Fallback a imageUrl de la actividad simplificada
+                          activityImageUrl = item.activity.imageUrl;
+                        }
+
+                        const guideLanguageCode = item.guideLanguage || undefined;
+                        const guideLanguageName = guideLanguageCode
+                          ? getLanguageName(guideLanguageCode, language)
+                          : getTranslation('common.notSpecified', language) || (language === 'es' ? 'No especificado' : 'Not specified');
+
+                        return (
+                          <div key={item.id} className="col-12 mb-3">
+                            <div className="card border">
+                              <div className="card-body">
+                                <div className="row">
+                                  {activityImageUrl && (
+                                    <div className="col-md-3 mb-3 mb-md-0">
+                                      <img
+                                        src={activityImageUrl}
+                                        alt={activityTitle}
                       className="img-fluid rounded"
-                      style={{ maxHeight: '200px', objectFit: 'cover' }}
+                                        style={{ maxHeight: '150px', objectFit: 'cover', width: '100%' }}
                     />
                   </div>
                 )}
-                
-                {bookingDetails.title && (
-                  <h4 className="h5 mb-3">{bookingDetails.title}</h4>
-                )}
-
-                <div className="row mb-3">
-                  <div className="col-md-6">
-                    <strong>{language === 'es' ? 'Fecha:' : 'Date:'}</strong>
-                    <p>{formatDate(bookingDetails.date)}</p>
+                                  <div className={activityImageUrl ? 'col-md-9' : 'col-12'}>
+                                    <h6 className="mb-2">{activityTitle || (language === 'es' ? 'Actividad' : 'Activity')}</h6>
+                                    <div className="row small">
+                                      <div className="col-md-6 mb-2">
+                                        <strong>{language === 'es' ? 'Fecha:' : 'Date:'}</strong> {formatDate(item.startDatetime)}
                   </div>
-                  {bookingDetails.time && (
-                    <div className="col-md-6">
-                      <strong>{language === 'es' ? 'Hora:' : 'Time:'}</strong>
-                      <p>{bookingDetails.time}</p>
+                                      <div className="col-md-6 mb-2">
+                                        <strong>{language === 'es' ? 'Hora:' : 'Time:'}</strong> {formatTime(item.startDatetime)}
                     </div>
+                                      <div className="col-md-6 mb-2">
+                                        <strong>{language === 'es' ? 'Participantes:' : 'Participants:'}</strong>{' '}
+                                        {item.participantsDetails?.adults || item.participants || 0} {language === 'es' ? 'adulto(s)' : 'adult(s)'}
+                                        {item.participantsDetails?.children > 0 && (
+                                          <>, {item.participantsDetails.children} {language === 'es' ? 'niño(s)' : 'child(ren)'}</>
                   )}
                 </div>
-
-                {bookingDetails.travelers && (
-                  <div className="mb-3">
-                    <strong>{language === 'es' ? 'Viajeros:' : 'Travelers:'}</strong>
-                    <p>
-                      {bookingDetails.travelers.adults} {language === 'es' ? 'Adulto(s)' : 'Adult(s)'}
-                      {bookingDetails.travelers.children > 0 && (
-                        <>, {bookingDetails.travelers.children} {language === 'es' ? 'Niño(s)' : 'Child(ren)'}</>
-                      )}
-                    </p>
+                                      <div className="col-md-6 mb-2">
+                                        <strong>{language === 'es' ? 'Idioma del guía:' : 'Guide language:'}</strong> {guideLanguageName}
+                  </div>
+                                      {item.meetingPickupPointAddress && (
+                                        <div className="col-12 mb-2">
+                                          <strong>{language === 'es' ? 'Punto de encuentro:' : 'Meeting point:'}</strong>{' '}
+                                          {item.meetingPickupPointAddress}
                   </div>
                 )}
-
-                {bookingDetails.meetingPoint && (
-                  <div className="mb-3">
-                    <strong>{language === 'es' ? 'Punto de encuentro:' : 'Meeting point:'}</strong>
-                    <p>{bookingDetails.meetingPoint}</p>
+                                      {item.specialRequest && (
+                                        <div className="col-12 mb-2">
+                                          <strong>{language === 'es' ? 'Comentario especial:' : 'Special request:'}</strong>{' '}
+                                          {item.specialRequest}
                   </div>
                 )}
-
-                {bookingDetails.pickupPoint && (
-                  <div className="mb-3">
-                    <strong>{language === 'es' ? 'Punto de recogida:' : 'Pickup point:'}</strong>
-                    <p>
-                      <strong>{bookingDetails.pickupPoint.name}</strong><br />
-                      {bookingDetails.pickupPoint.address}
-                    </p>
-                  </div>
-                )}
-
-                <hr />
-
-                {/* Información de pago */}
-                <div className="mb-3">
-                  <strong>{language === 'es' ? 'Precio total:' : 'Total price:'}</strong>
-                  <p className="h5 text-primary">
-                    {formatPrice(
-                      bookingDetails.totalPrice
-                        || bookingDetails.finalPrice
-                        || (bookingDetails.price || 0) * ((bookingDetails.travelers?.adults || 0) + (bookingDetails.travelers?.children || 0) || 1),
-                      bookingDetails.currency
-                    )}
-                  </p>
-                  {bookingDetails.hasDiscount && bookingDetails.originalPrice && (
-                    <p className="text-muted small">
-                      <del>{formatPrice(bookingDetails.originalPrice, bookingDetails.currency)}</del>
-                      {' '}
-                      <span className="text-success">
-                        -{bookingDetails.discountPercentage || 0}%
+                                      <div className="col-12 mt-2 pt-2 border-top">
+                                        <div className="d-flex justify-content-between">
+                                          <span>
+                                            <strong>{language === 'es' ? 'Precio unitario:' : 'Unit price:'}</strong>{' '}
+                                            {formatPrice(item.pricePerParticipant, item.currency)}
+                                          </span>
+                                          <span className="h6 mb-0">
+                                            <strong>{language === 'es' ? 'Total:' : 'Total:'}</strong>{' '}
+                                            {formatPrice(item.totalAmount, item.currency)}
                       </span>
-                    </p>
-                  )}
+                                        </div>
                 </div>
-
-                {paymentInfo?.orderId && (
-                  <div className="small text-muted">
-                    <strong>{language === 'es' ? 'ID de orden PayPal:' : 'PayPal Order ID:'}</strong> {paymentInfo.orderId}
                   </div>
-                )}
               </div>
             </div>
-          )}
-
-          {/* Información de pago */}
-          {paymentInfo && (
-            <div className="card mb-4">
-              <div className="card-header bg-success text-white">
-                <h3 className="h5 mb-0">
-                  <i className="fas fa-credit-card me-2"></i>
-                  {language === 'es' ? 'Información de Pago' : 'Payment Information'}
-                </h3>
               </div>
-              <div className="card-body">
-                {paymentStatus && (
-                  <div className="mb-2">
-                    <strong>{language === 'es' ? 'Estado:' : 'Status:'}</strong>
-                    <span className={`badge ms-2 ${isPendingPayment ? 'bg-warning text-dark' : 'bg-success'}`}>
-                      {language === 'es'
-                        ? (isPendingPayment ? 'Pendiente de pago' : 'Pagado')
-                        : (isPendingPayment ? 'Payment pending' : 'Paid')}
-                    </span>
                   </div>
-                )}
-                {paymentInfo.paymentMethod && (
-                  <div className="mb-2">
-                    <strong>{language === 'es' ? 'Método:' : 'Method:'}</strong>{' '}
-                    <span className="text-capitalize">{paymentInfo.paymentMethod}</span>
                   </div>
-                )}
-                {paymentInfo.amount && (
-                  <div className="mb-2">
-                    <strong>
-                      {language === 'es'
-                        ? (isPendingPayment ? 'Monto pendiente:' : 'Monto pagado:')
-                        : (isPendingPayment ? 'Amount due:' : 'Amount paid:')}
-                    </strong>
-                    <p>{formatPrice(parseFloat(paymentInfo.amount.value), paymentInfo.amount.currency_code)}</p>
+                        );
+                      })}
                   </div>
-                )}
-                {paymentInfo.timestamp && (
-                  <div className="small text-muted">
-                    <strong>{language === 'es' ? 'Fecha de pago:' : 'Payment date:'}</strong>{' '}
-                    {new Date(paymentInfo.timestamp).toLocaleString(language === 'es' ? 'es-ES' : 'en-US')}
                   </div>
-                )}
+                ))}
               </div>
             </div>
           )}
 
           {isPendingPayment && (
             <div className="alert alert-warning mb-4">
+              <i className="fas fa-exclamation-triangle me-2"></i>
               {language === 'es'
                 ? 'Recibirás un correo con las instrucciones para completar el pago. Si ya realizaste el pago, te notificaremos cuando se confirme.'
                 : 'You will receive an email with instructions to complete the payment. If you have already paid, we will notify you once it is confirmed.'}
@@ -395,26 +377,9 @@ const PaymentCompleted: React.FC = () => {
           )}
 
           {/* Botones de acción */}
-          <div className="d-flex justify-content-between gap-3 mb-4">
+          <div className="d-flex justify-content-center gap-3 mb-4">
             <button
-              className="btn btn-outline-danger"
-              onClick={handleCancelReservation}
-              disabled={isCancelling}
-            >
-              {isCancelling ? (
-                <>
-                  <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-                  {language === 'es' ? 'Cancelando...' : 'Cancelling...'}
-                </>
-              ) : (
-                <>
-                  <i className="fas fa-times-circle me-2"></i>
-                  {language === 'es' ? 'Cancelar Reserva' : 'Cancel Reservation'}
-                </>
-              )}
-            </button>
-            <button
-              className="btn btn-primary"
+              className="btn btn-primary btn-lg"
               onClick={() => navigate('/')}
             >
               <i className="fas fa-home me-2"></i>
@@ -428,4 +393,3 @@ const PaymentCompleted: React.FC = () => {
 };
 
 export default PaymentCompleted;
-

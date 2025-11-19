@@ -100,7 +100,7 @@ export interface UpdateTravelerContactInfoRequest {
   phonePostalId?: number;      // ID positivo del código telefónico (ej. 51 para Perú)
   phoneCodeId?: number;        // ID del código telefónico
   phoneNumber?: string;        // Máx. 20 caracteres. Puede incluir +, espacios, guiones, paréntesis
-  countryBirthCode2?: number;  // ID positivo del país de nacimiento
+  countryBirthCode2?: string;  // ID positivo del país de nacimiento
   documentTypeId?: number | null; // ID positivo del tipo de documento
   documentNumber?: string | null; // Máx. 50 caracteres. Letras, dígitos y guiones
 }

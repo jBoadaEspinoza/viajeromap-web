@@ -2,7 +2,7 @@ import React from 'react';
 import { useAuth } from '../context/AuthContext';
 
 const AuthDebug: React.FC = () => {
-  const { isAuthenticated, isInitialized, user, company, role } = useAuth();
+  const { isAuthenticated, user } = useAuth();
   const [verificationResult, setVerificationResult] = React.useState<string>('');
   const [isVerifying, setIsVerifying] = React.useState(false);
   const [debugInfo, setDebugInfo] = React.useState<any>(null);
@@ -44,7 +44,6 @@ const AuthDebug: React.FC = () => {
           <div className="col-md-6">
             <h6>Estado:</h6>
             <ul className="list-unstyled">
-              <li><strong>Inicializado:</strong> {isInitialized ? '✅ Sí' : '❌ No'}</li>
               <li><strong>Autenticado:</strong> {isAuthenticated ? '✅ Sí' : '❌ No'}</li>
             </ul>
           </div>
@@ -53,8 +52,8 @@ const AuthDebug: React.FC = () => {
             <ul className="list-unstyled">
               <li><strong>Usuario:</strong> {user?.username || 'N/A'}</li>
               <li><strong>Nickname:</strong> {user?.nickname || 'N/A'}</li>
-              <li><strong>Empresa:</strong> {company?.name || 'N/A'}</li>
-              <li><strong>Rol:</strong> {role?.name || 'N/A'}</li>
+              <li><strong>Email:</strong> {user?.email || 'N/A'}</li>
+              <li><strong>Rol:</strong> {user?.roleCode || 'N/A'}</li>
             </ul>
             
             <h6 className="mt-3">Cookies:</h6>

@@ -6,7 +6,7 @@ type Currency = 'PEN' | 'USD';
 interface CurrencyContextType {
   currency: Currency;
   setCurrency: (currency: Currency) => void;
-  getCurrencySymbol: (currency: Currency) => string;
+  getCurrencySymbol: (currency: Currency | string | undefined) => string;
 }
 
 const CurrencyContext = createContext<CurrencyContextType | undefined>(undefined);
@@ -32,8 +32,23 @@ export const CurrencyProvider: React.FC<CurrencyProviderProps> = ({ children }) 
     localStorage.setItem('currency', newCurrency);
   };
 
-  const getCurrencySymbol = (curr: Currency) => {
-    return curr === 'PEN' ? 'S/' : '$';
+  const getCurrencySymbol = (curr: Currency | string | undefined) => {
+    if (!curr) return '$'; // Default to USD symbol if undefined
+    
+    // Normalizar a mayúsculas para comparación case-insensitive y eliminar espacios
+    const normalizedCurr = typeof curr === 'string' ? curr.toUpperCase().trim() : String(curr).toUpperCase().trim();
+    
+    // Comparación explícita para cada currency
+    if (normalizedCurr === 'PEN') {
+      return 'S/';
+    } else if (normalizedCurr === 'USD') {
+      return '$';
+    } else if (normalizedCurr === 'EUR') {
+      return '€';
+    }
+    
+    // Default to USD symbol si no coincide
+    return '$';
   };
 
   return (

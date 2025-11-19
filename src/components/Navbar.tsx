@@ -3,12 +3,12 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useLanguage } from '../context/LanguageContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { useConfig } from '../context/ConfigContext';
-import { useCart } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
 import { getTranslation } from '../utils/translations';
 import LanguageCurrencyModal from './LanguageCurrencyModal';
 import { getAuthToken } from '../utils/cookieHelper';
 import { auth } from '../config/firebase';
+import { ordersApi } from '../api/orders';
 
 const Navbar: React.FC = () => {
   const location = useLocation();
@@ -16,7 +16,6 @@ const Navbar: React.FC = () => {
   const { language, setLanguage } = useLanguage();
   const { currency, setCurrency, getCurrencySymbol } = useCurrency();
   const { config } = useConfig();
-  const { getTotalItems } = useCart();
   
   // Usar el nuevo AuthContext simplificado
   const { user, firebaseUser, isAuthenticated, loading: authLoading, loginWithGoogle, logout } = useAuth();
@@ -29,9 +28,8 @@ const Navbar: React.FC = () => {
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [isLoginPageViewOpen, setIsLoginPageViewOpen] = useState(false);
   const [loginPhone, setLoginPhone] = useState('');
+  const [cartItems, setCartItems] = useState(0);
   const profileMenuTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  
-  const cartItems = getTotalItems();
 
   // Limpiar timeout al desmontar el componente
   useEffect(() => {
@@ -41,6 +39,61 @@ const Navbar: React.FC = () => {
       }
     };
   }, []);
+
+  // Cargar cantidad de items del carrito desde la API
+  useEffect(() => {
+    const loadCartItemsCount = async () => {
+      try {
+        const response = await ordersApi.getOrdersDraft({
+          page: 0,
+          size: 100,
+          sortBy: 'createdAt',
+          sortDirection: 'DESC',
+          lang: language,
+          currency: currency
+        });
+
+        if (response?.data) {
+          // Contar todos los items de todas las órdenes DRAFT
+          const totalItems = response.data.reduce((total, order) => {
+            return total + (order.items?.length || 0);
+          }, 0);
+          setCartItems(totalItems);
+        } else {
+          setCartItems(0);
+        }
+      } catch (err) {
+        console.error('Error loading cart items count:', err);
+        setCartItems(0);
+      }
+    };
+
+    loadCartItemsCount();
+
+    // Recargar cuando cambie la ubicación (por ejemplo, al volver del carrito)
+    const handleLocationChange = () => {
+      loadCartItemsCount();
+    };
+
+    // Recargar cada 5 segundos para mantener el contador actualizado
+    const interval = setInterval(loadCartItemsCount, 5000);
+
+    // Escuchar evento personalizado cuando se agrega un item al carrito
+    const handleCartUpdate = () => {
+      loadCartItemsCount();
+    };
+
+    window.addEventListener('cartUpdated', handleCartUpdate);
+    window.addEventListener('focus', handleLocationChange);
+    window.addEventListener('popstate', handleLocationChange);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('cartUpdated', handleCartUpdate);
+      window.removeEventListener('focus', handleLocationChange);
+      window.removeEventListener('popstate', handleLocationChange);
+    };
+  }, [location.pathname]);
 
   // Mostrar tokenId en console.log
   useEffect(() => {
@@ -180,12 +233,7 @@ const Navbar: React.FC = () => {
   };
 
   const handleMyBookingsClick = () => {
-    // TODO: Implementar navegación a la página de mis reservas
-    // Por ahora mostrar un mensaje
-    alert(language === 'es' 
-      ? 'Próximamente: Mis reservas' 
-      : 'Coming soon: My bookings'
-    );
+    navigate('/bookings');
   };
 
   const handleLoginClick = () => {
@@ -488,9 +536,11 @@ const Navbar: React.FC = () => {
                     {firebaseUser.displayName}
                   </span>
                 )}
-                <div className="d-flex align-items-center">
-                  <span className="small" style={{ fontSize: '0.7rem' }}>{getTranslation('profile.title', language)}</span>
-                </div>
+                {!firebaseUser && (
+                  <div className="d-flex align-items-center">
+                    <span className="small" style={{ fontSize: '0.7rem' }}>{getTranslation('profile.title', language)}</span>
+                  </div>
+                )}
               </button>
 
               {/* Profile Context Menu */}

@@ -21,10 +21,17 @@ export interface CartItem {
     departureDate: string;
     finalPrice: number;
     pickupPoint?: {
+      id?: number | string | null;
+      cityId?: number | null;
       name: string;
       address: string;
-    };
+      latitude?: number | null;
+      longitude?: number | null;
+    } | null;
     comment?: string;
+    hasDiscount?: boolean;
+    discountPercentage?: number;
+    originalPrice?: number;
   };
 }
 
@@ -38,6 +45,20 @@ interface CartContextType {
     travelers?: { adults: number; children: number };
     meetingPoint?: string;
     comment?: string;
+    guideLanguage?: string;
+    departureTime?: string;
+    pickupPoint?: {
+      id?: number | string | null;
+      cityId?: number | null;
+      name: string;
+      address: string;
+      latitude?: number | null;
+      longitude?: number | null;
+    } | null;
+    price?: number;
+    currency?: string;
+    finalPrice?: number;
+    bookingOptionId?: string;
   }) => void;
   clearCart: () => void;
   getTotalItems: () => number; // Retorna cantidad de actividades
@@ -133,25 +154,56 @@ export const CartProvider: React.FC<CartProviderProps> = ({ children }) => {
     travelers?: { adults: number; children: number };
     meetingPoint?: string;
     comment?: string;
+    guideLanguage?: string;
+    departureTime?: string;
+    pickupPoint?: {
+      id?: number | string | null;
+      cityId?: number | null;
+      name: string;
+      address: string;
+      latitude?: number | null;
+      longitude?: number | null;
+    } | null;
+    price?: number;
+    currency?: string;
+    finalPrice?: number;
+    bookingOptionId?: string;
   }) => {
     setItems(prevItems =>
-      prevItems.map(item =>
-        item.id === id 
-          ? { 
-              ...item, 
-              date: details.date !== undefined ? details.date : item.date,
-              travelers: details.travelers !== undefined ? details.travelers : item.travelers,
-              // Actualizar la cantidad basada en el nuevo número de viajeros
-              quantity: details.travelers ? details.travelers.adults + details.travelers.children : item.quantity,
-              // Actualizar activityDetails si hay cambios
-              activityDetails: item.activityDetails ? {
-                ...item.activityDetails,
-                meetingPoint: details.meetingPoint !== undefined ? details.meetingPoint : item.activityDetails.meetingPoint,
-                comment: details.comment !== undefined ? details.comment : item.activityDetails.comment
-              } : item.activityDetails
-            } 
-          : item
-      )
+      prevItems.map(item => {
+        if (item.id !== id) {
+          return item;
+        }
+
+        const updatedTravelers = details.travelers ?? item.travelers;
+        const updatedQuantity = details.travelers
+          ? Math.max((details.travelers.adults || 0) + (details.travelers.children || 0), 1)
+          : item.quantity;
+
+        const updatedActivityDetails = item.activityDetails
+          ? {
+              ...item.activityDetails,
+              meetingPoint: details.meetingPoint !== undefined ? details.meetingPoint : item.activityDetails.meetingPoint,
+              comment: details.comment !== undefined ? details.comment : item.activityDetails.comment,
+              guideLanguage: details.guideLanguage !== undefined ? details.guideLanguage : item.activityDetails.guideLanguage,
+              departureTime: details.departureTime !== undefined ? details.departureTime : item.activityDetails.departureTime,
+              departureDate: details.date !== undefined ? details.date : item.activityDetails.departureDate,
+              pickupPoint: details.pickupPoint !== undefined ? details.pickupPoint || undefined : item.activityDetails.pickupPoint,
+              finalPrice: details.finalPrice !== undefined ? details.finalPrice : item.activityDetails.finalPrice,
+              bookingOptionId: details.bookingOptionId !== undefined ? details.bookingOptionId : item.activityDetails.bookingOptionId,
+            }
+          : item.activityDetails;
+
+        return {
+          ...item,
+          date: details.date !== undefined ? details.date : item.date,
+          travelers: updatedTravelers,
+          quantity: updatedQuantity,
+          price: details.price !== undefined ? details.price : item.price,
+          currency: details.currency !== undefined ? details.currency : item.currency,
+          activityDetails: updatedActivityDetails,
+        };
+      })
     );
   };
 

@@ -2,8 +2,7 @@ import React, { useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
-import { ordersApi } from '../api/orders';
-import type { CreateOrderRequest } from '../api/orders';
+// Note: CapturePayment is deprecated - orders are now created via ordersItemApi in Checkout
 
 // Función para generar un UUID corto (8 caracteres)
 const generateShortUUID = (): string => {
@@ -179,48 +178,13 @@ const CapturePayment: React.FC = () => {
 
       const endDatetime = calculateEndDateTime();
 
-      const orderRequest: CreateOrderRequest = {
-        orderSource: 'PLATFORM',
-        paymentMethod: 'CARD',
-        paymentStatus: 'PAID',
-        paymentProvider: 'PAYPAL',
-        orderStatus: 'CONFIRMED',
-        items: [
-          {
-            activityId: String(bookingDetails.activityId),
-            bookingOptionId: bookingDetails.bookingOptionId || '',
-            currency: orderCurrency,
-            participants: totalTravelers,
-            pricePerParticipant: unitPrice,
-            startDatetime,
-            specialRequest: bookingDetails.comment,
-            status: 'PENDING',
-            guideLanguage: bookingDetails.guideLanguage,
-            commissionPercentPlatform: platformCommissionPercent,
-            commissionPercentAgent: agentCommissionPercent,
-            commissionAmountPlatform: platformCommissionAmount,
-            commissionAmountAgent: agentCommissionPercent === 0 ? 0 : agentCommissionAmount,
-            meetingPickupPlaceId,
-            meetingPickupPointId,
-            meetingPickupPointName,
-            meetingPickupPointAddress,
-            meetingPickupPointLatitude,
-            meetingPickupPointLongitude,
-            endDatetime
-          }
-        ]
-      };
-
+      // Note: This page is deprecated. Orders should be created via Checkout page.
+      // For now, we'll just navigate to payment-completed with the booking details.
+      // In a real scenario, the order would have been created in the Checkout page.
+      
       try {
-        const orderResponse = await ordersApi.createOrder(orderRequest);
-
-        if (!orderResponse?.success) {
-          throw new Error(orderResponse?.message || 'Unable to create order.');
-        }
-
-        const reservationCode = orderResponse.idCreated
-          ? String(orderResponse.idCreated)
-          : generateShortUUID();
+        // Generate a temporary reservation code
+        const reservationCode = generateShortUUID();
 
         console.log('🔑 Token utilizado para crear la orden (capture):', localStorage.getItem('authToken'));
 
@@ -247,8 +211,8 @@ const CapturePayment: React.FC = () => {
           },
           paymentInfo,
           paymentStatus: 'PAID' as const,
-          orderId: orderResponse.idCreated,
-          orderMessage: orderResponse.message
+          orderId: reservationCode, // Temporary ID
+          orderMessage: 'Payment processed successfully'
         };
 
         sessionStorage.setItem('lastReservationData', JSON.stringify(reservationData));

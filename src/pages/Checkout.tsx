@@ -1,168 +1,362 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useLanguage } from '../context/LanguageContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { useConfig } from '../context/ConfigContext';
 import { useAuth } from '../context/AuthContext';
-import { getTranslation, getTranslationWithParams, getLanguageName } from '../utils/translations';
+import { getTranslation, getLanguageName } from '../utils/translations';
 import { countriesApi, PhoneCode, Nationality } from '../api/countries';
 import { activitiesApi } from '../api/activities';
-import { useCart } from '../context/CartContext';
-import type { CartItem } from '../context/CartContext';
-import RatingStars from '../components/RatingStars';
-import { apiConfig } from '../utils/apiConfig';
+import CheckoutCartSummary, { CheckoutSummaryItem } from '../components/CheckoutCartSummary';
+import { ordersApi, OrderResponse } from '../api/orders';
+import { useGoogleTokenValidation } from '../hooks/useGoogleTokenValidation';
 import GooglePayButton from '@google-pay/button-react';
-import { signInWithPopup, onAuthStateChanged } from 'firebase/auth';
-import { auth, googleProvider } from '../config/firebase';
-import { authApi } from '../api/auth';
-import { ordersApi } from '../api/orders';
-import type { CreateOrderRequest } from '../api/orders';
-import { getAuthToken } from '../utils/cookieHelper';
-
-interface BookingDetails {
-  activityId: string;
-  title: string;
-  imageUrl: string;
-  price: number; // Precio FINAL (con descuento si existe)
-  bookingOptionId?: string;
-  currency: string;
-  quantity: number;
-  date: string;
-  time: string;
-  meetingPoint: string;
-  meetingType?: string;
-  guideLanguage: string;
-  travelers: {
-    adults: number;
-    children: number;
-  };
-  hasDiscount: boolean; // Indica si tiene descuento
-  discountPercentage: number; // Porcentaje de descuento (0 si no hay)
-  originalPrice: number; // Precio original sin descuento (para mostrar tachado)
-  totalPrice?: number;
-  commissionPercent?: number;
-  durationDays?: number;
-  durationHours?: number;
-  durationMinutes?: number;
-  meetingPointId?: number | null;
-  meetingPointName?: string;
-  meetingPointAddress?: string;
-  meetingPointLatitude?: number | null;
-  meetingPointLongitude?: number | null;
-  meetingPointCityId?: number | null;
-  pickupPoint?: {
-    id?: number;
-    cityId?: number | null;
-    name: string;
-    address: string;
-    latitude?: number | null;
-    longitude?: number | null;
-  };
-  comment?: string;
-  cancelBefore?: string;
-  cancelBeforeMinutes?: number;
-}
+import { appConfig } from '../config/appConfig';
+import { authApi, UpdateTravelerContactInfoRequest } from '../api/auth';
 
 const Checkout: React.FC = () => {
   const navigate = useNavigate();
-  const location = useLocation();
   const { language } = useLanguage();
-  const { currency } = useCurrency();
+  const { currency, getCurrencySymbol } = useCurrency();
   const { config } = useConfig();
-  // Usar el nuevo AuthContext
-  const { user, firebaseUser, isAuthenticated, loading: authLoading, refreshUserData } = useAuth();
-  const { addItem } = useCart();
+  const { user, firebaseUser, isAuthenticated, loading: authLoading, loginWithGoogle, refreshUserData } = useAuth();
   
-  // Función para navegar a home
-  const handleLogoClick = () => {
-    navigate('/');
+  // Estados para órdenes y items
+  const [orders, setOrders] = useState<OrderResponse[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [activityDetails, setActivityDetails] = useState<Map<string, any>>(new Map());
+  
+  // Estados para formulario de contacto
+  const [formData, setFormData] = useState({
+    name: '',
+    lastName: '',
+    email: '',
+    phoneCode: '',
+    phoneNumber: '',
+    phonePostalCode: '',
+    phonePostalId: 0,
+    phoneCodeId: 0,
+    countryBirthCode2: '',
+    nationality: 'none'
+  });
+  const [isEditingContactInfo, setIsEditingContactInfo] = useState(true);
+  const [isSavingContactInfo, setIsSavingContactInfo] = useState(false);
+  const [phoneCodes, setPhoneCodes] = useState<PhoneCode[]>([]);
+  const [nationalities, setNationalities] = useState<Nationality[]>([]);
+  const [loadingPhoneCodes, setLoadingPhoneCodes] = useState(true);
+  const [loadingNationalities, setLoadingNationalities] = useState(true);
+  
+  // Estados para métodos de pago
+  const [paymentMethod, setPaymentMethod] = useState<'paypal' | 'googlepay' | 'reserve' | 'reserveLater' | ''>('');
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+  const [paypalScriptLoaded, setPaypalScriptLoaded] = useState(false);
+  const paypalButtonRef = useRef<HTMLDivElement>(null);
+  
+  // Estados para login
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  
+  useGoogleTokenValidation();
+
+  // Función para validar email
+  const isValidEmail = (email: string): boolean => {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   };
 
-  // Función para convertir BookingDetails a CartItem
-  // Esta función incluye todos los datos actualizados (comentario, idioma, fecha/hora, viajeros)
-  const convertBookingDetailsToCartItem = (details: BookingDetails): CartItem => {
-    const totalTravelers = details.travelers.adults + details.travelers.children;
-    return {
-      id: `${details.activityId}-${details.date}-${details.time}`,
-      title: details.title,
-      price: details.price, // Usar details.price (precio FINAL)
-      currency: details.currency,
-      quantity: totalTravelers, // Se actualiza con los viajeros editados
-      imageUrl: details.imageUrl,
-      date: details.date, // Fecha actualizada
-      travelers: details.travelers, // Viajeros actualizados (adults/children)
-      activityDetails: {
-        activityId: details.activityId,
-        bookingOptionId: '', // No disponible en BookingDetails, se puede dejar vacío o obtener si es necesario
-        meetingPoint: details.meetingPoint,
-        guideLanguage: details.guideLanguage, // Idioma del guía actualizado
-        departureTime: details.time, // Hora de salida actualizada
-        departureDate: details.date, // Fecha de salida actualizada
-        finalPrice: details.price, // Usar details.price como precio final
-        pickupPoint: details.pickupPoint,
-        comment: details.comment // Comentario actualizado
+  // Función para capitalizar nombre de país
+  const capitalizeCountryName = (name: string): string => {
+    if (!name) return '';
+    return name
+      .split(' ')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join(' ');
+  };
+
+  // Función para verificar si los campos obligatorios están completos
+  const areRequiredFieldsComplete = (data: typeof formData): boolean => {
+    return !!(
+      data.name &&
+      data.name.trim() !== '' &&
+      data.lastName &&
+      data.lastName.trim() !== '' &&
+      data.email &&
+      isValidEmail(data.email) &&
+      data.phoneNumber &&
+      data.phoneNumber.trim() !== '' &&
+      data.nationality &&
+      data.nationality !== 'none'
+    );
+  };
+
+  // Cargar órdenes DRAFT desde la API
+  useEffect(() => {
+    // Si está cargando la autenticación, esperar
+    if (authLoading) {
+      return;
+    }
+
+    // Si no está autenticado, no cargar órdenes
+    if (!isAuthenticated) {
+      setLoading(false);
+      setOrders([]);
+      return;
+    }
+
+    const loadDraftOrders = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        
+        console.log('🛒 Checkout: Cargando órdenes DRAFT...');
+        const response = await ordersApi.getOrdersDraft({
+          page: 0,
+          size: 100,
+          sortBy: 'createdAt',
+          sortDirection: 'DESC',
+          lang: language,
+          currency: currency
+        });
+
+        console.log('🛒 Checkout: Respuesta de getOrdersDraft:', response);
+
+        if (response?.data) {
+          setOrders(Array.isArray(response.data) ? response.data : []);
+          console.log('🛒 Checkout: Órdenes cargadas:', response.data.length);
+        } else {
+          console.log('🛒 Checkout: No hay órdenes o respuesta inválida');
+          setOrders([]);
+        }
+      } catch (err: any) {
+        console.error('❌ Checkout: Error loading draft orders:', err);
+        const errorMessage = err?.message || err?.response?.data?.message || getTranslation('checkout.errorLoadingOrders', language) || (language === 'es' ? 'Error al cargar las órdenes' : 'Error loading orders');
+        setError(errorMessage);
+        setOrders([]);
+      } finally {
+        setLoading(false);
       }
     };
-  };
 
-  // Función para convertir formato de 24 horas a AM/PM
-  const convertTo12HourFormat = (time24: string): string => {
-    if (!time24 || !time24.includes(':')) return time24;
-    
-    const [hours, minutes] = time24.split(':');
-    const hour = parseInt(hours, 10);
-    const min = minutes || '00';
-    
-    if (hour === 0) {
-      return `12:${min} AM`;
-    } else if (hour === 12) {
-      return `12:${min} PM`;
-    } else if (hour < 12) {
-      return `${hour}:${min} AM`;
+    loadDraftOrders();
+
+    // Escuchar el evento cartUpdated para recargar cuando se actualice un item
+    const handleCartUpdated = () => {
+      console.log('🛒 Checkout: Evento cartUpdated recibido, recargando órdenes...');
+      loadDraftOrders();
+    };
+
+    window.addEventListener('cartUpdated', handleCartUpdated);
+
+    return () => {
+      window.removeEventListener('cartUpdated', handleCartUpdated);
+    };
+  }, [language, isAuthenticated, authLoading]);
+
+  // La API ya devuelve la actividad en item.activity, pero es una versión simplificada
+  // Si necesitamos más detalles (como imágenes múltiples), los cargamos desde la API
+  useEffect(() => {
+    const loadActivityDetails = async () => {
+      const activityIds = new Set<string>();
+      orders.forEach((order) => {
+        order.items.forEach((item) => {
+          if (item.activity?.id) {
+            activityIds.add(item.activity.id);
+          }
+        });
+      });
+
+      // Cargar detalles completos de actividades desde la API
+      const detailsPromises = Array.from(activityIds).map(async (activityId) => {
+        try {
+          const activity = await activitiesApi.getById(activityId, language, currency);
+          return { activityId, activity };
+        } catch (err) {
+          console.error(`Error loading activity ${activityId}:`, err);
+          return { activityId, activity: null };
+        }
+      });
+
+      const results = await Promise.all(detailsPromises);
+      const detailsMap = new Map<string, any>();
+      
+      results.forEach(({ activityId, activity }) => {
+        if (activity) {
+          detailsMap.set(activityId, activity);
+        }
+      });
+
+      setActivityDetails(detailsMap);
+    };
+
+    if (orders.length > 0) {
+      loadActivityDetails();
     } else {
-      return `${hour - 12}:${min} PM`;
+      setActivityDetails(new Map());
     }
-  };
-  
-  const [bookingDetails, setBookingDetails] = useState<BookingDetails | null>(null);
-  const [timeLeft, setTimeLeft] = useState(() => {
-    // Intentar recuperar el tiempo restante desde sessionStorage
-    const savedTime = sessionStorage.getItem('checkoutTimeLeft');
-    return savedTime ? parseInt(savedTime) : 15 * 60; // 15 minutes por defecto
-  });
-  const [showLoginModal, setShowLoginModal] = useState(false);
-  const [loginDismissed, setLoginDismissed] = useState<boolean>(() => {
-    return sessionStorage.getItem('checkoutLoginDismissed') === '1';
-  });
-  
-  // Estados para autenticación
-  const [loginEmail, setLoginEmail] = useState('');
-  
-  // Ref para controlar la verificación inicial de autenticación (evitar parpadeo del modal)
-  const modalShownOnce = useRef(false);
-  const authCheckCompleted = useRef(false);
-  // Ref para rastrear si ya se intentó avanzar automáticamente en la carga inicial
-  const initialAutoAdvanceAttempted = useRef(false);
-  
-  // Estados temporales para compatibilidad durante la migración
-  const [isValidatingAuth, setIsValidatingAuth] = useState(false);
-  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
-  // Estado para el loading del botón "Guardar cambios"
-  const [isSavingContactInfo, setIsSavingContactInfo] = useState(false);
-  const [isProcessingOrder, setIsProcessingOrder] = useState(false);
-  const [contactPersonId, setContactPersonId] = useState<number | null>(() => {
-    const stored = sessionStorage.getItem('checkoutPersonId');
-    return stored ? Number(stored) : null;
-  });
+  }, [orders, language, currency]);
 
-  // Declarar phoneCodes antes del useEffect que lo usa
-  const [phoneCodes, setPhoneCodes] = useState<PhoneCode[]>([]);
-  
-  // El nuevo AuthContext ya maneja la carga de datos del usuario
-  // Solo cargar datos del usuario en el formulario cuando estén disponibles
+  // Mapear OrderItemResponse a CheckoutSummaryItem (similar a Cart.tsx)
+  const checkoutSummaryItems = useMemo<CheckoutSummaryItem[]>(() => {
+    const allItems: CheckoutSummaryItem[] = [];
+    
+    orders.forEach((order) => {
+      order.items.forEach((orderItem) => {
+        const startDatetime = orderItem.startDatetime;
+        let date = '';
+        let time = '';
+        
+        if (startDatetime) {
+          try {
+            const dateObj = new Date(startDatetime);
+            date = dateObj.toISOString().split('T')[0];
+            const timeStr = startDatetime.split('T')[1] || '';
+            time = timeStr.split('.')[0] || timeStr.split('+')[0] || timeStr;
+            if (time.length > 8) {
+              time = time.substring(0, 8);
+            }
+          } catch (e) {
+            console.error('Error parsing startDatetime:', e);
+          }
+        }
+
+        const guideLanguageCode = orderItem.guideLanguage || undefined;
+        const guideLanguageName = guideLanguageCode
+          ? getLanguageName(guideLanguageCode, language)
+          : getTranslation('common.notSpecified', language) || (language === 'es' ? 'No especificado' : 'Not specified');
+
+        const travelers = {
+          adults: orderItem.participantsDetails?.adults ?? orderItem.participants ?? 1,
+          children: orderItem.participantsDetails?.children ?? 0,
+        };
+
+        const totalTravelers = orderItem.participants || (travelers.adults + travelers.children) || 1;
+
+        // Obtener detalles de la actividad
+        // Primero intentar desde activityDetails (actividad completa con imágenes)
+        // Si no está, usar orderItem.activity (versión simplificada)
+        const activityId = orderItem.activity?.id || '';
+        const activity = activityDetails.get(activityId) || null;
+        const activityTitle = activity?.title || orderItem.activity?.title || '';
+        
+        let activityImageUrl = '';
+        if (activity?.images && activity.images.length > 0) {
+          const coverImage = activity.images.find((img: any) => img.isCover);
+          activityImageUrl = coverImage?.imageUrl || activity.images[0]?.imageUrl || '';
+        } else if (orderItem.activity?.imageUrl) {
+          // Fallback a imageUrl de la actividad simplificada
+          activityImageUrl = orderItem.activity.imageUrl;
+        }
+
+        allItems.push({
+          id: `${orderItem.orderId}-${orderItem.id}`,
+          activityId: orderItem.activity?.id || '',
+          bookingOptionId: orderItem.bookingOptionId,
+          orderItemId: orderItem.id,
+          orderId: orderItem.orderId,
+          title: activityTitle,
+          imageUrl: activityImageUrl,
+          language: guideLanguageName,
+          languageCode: guideLanguageCode,
+          meetingPoint: orderItem.meetingPickupPointAddress || '',
+          meetingAddress: orderItem.meetingPickupPointAddress || '',
+          comment: orderItem.specialRequest || '',
+          date,
+          time,
+          travelers,
+          participants: orderItem.participants || totalTravelers,
+          unitPrice: orderItem.pricePerParticipant || 0,
+          totalPrice: orderItem.totalAmount || (orderItem.pricePerParticipant || 0) * totalTravelers,
+          currency: orderItem.currency || 'USD',
+          meetingPickupPlaceId: orderItem.meetingPickupPlaceId ?? null,
+          meetingPickupPointLatitude: orderItem.meetingPickupPointLatitude ?? null,
+          meetingPickupPointLongitude: orderItem.meetingPickupPointLongitude ?? null,
+          cancelUntilDate: orderItem.cancelUntilDate ?? null,
+        });
+      });
+    });
+
+    return allItems;
+  }, [orders, language, activityDetails]);
+
+  // Calcular total (después de checkoutSummaryItems)
+  const totalAmount = useMemo(() => {
+    return checkoutSummaryItems.reduce((sum, item) => {
+      return sum + (item.totalPrice || 0);
+    }, 0);
+  }, [checkoutSummaryItems]);
+
+  const currencyForTotal = checkoutSummaryItems[0]?.currency || 'USD';
+
+  // Cargar script de PayPal (después de currencyForTotal)
+  useEffect(() => {
+    if (paymentMethod === 'paypal' && !paypalScriptLoaded && config.paypal?.clientId) {
+      const script = document.createElement('script');
+      script.src = `https://www.paypal.com/sdk/js?client-id=${config.paypal.clientId}&currency=${currencyForTotal || config.paypal.currency || 'USD'}`;
+      script.async = true;
+      script.onload = () => {
+        setPaypalScriptLoaded(true);
+      };
+      document.body.appendChild(script);
+
+      return () => {
+        // Limpiar script al desmontar
+        const existingScript = document.querySelector(`script[src*="paypal.com/sdk/js"]`);
+        if (existingScript) {
+          document.body.removeChild(existingScript);
+        }
+      };
+    }
+  }, [paymentMethod, paypalScriptLoaded, config.paypal, currencyForTotal]);
+
+  // Cargar códigos telefónicos
+  useEffect(() => {
+    const loadPhoneCodes = async () => {
+      try {
+        setLoadingPhoneCodes(true);
+        const response = await countriesApi.getPhoneCodes({
+          lang: language,
+          all: true,
+          sortBy: 'countryName'
+        });
+        if (response?.data) {
+          setPhoneCodes(response.data);
+        }
+      } catch (err) {
+        console.error('Error loading phone codes:', err);
+      } finally {
+        setLoadingPhoneCodes(false);
+      }
+    };
+
+    loadPhoneCodes();
+  }, [language]);
+
+  // Cargar nacionalidades
+  useEffect(() => {
+    const loadNationalities = async () => {
+      try {
+        setLoadingNationalities(true);
+        const response = await countriesApi.getNationalities({
+          lang: language,
+          all: true,
+          sortBy: 'denomination'
+        });
+        if (response?.data) {
+          setNationalities(response.data);
+        }
+      } catch (err) {
+        console.error('Error loading nationalities:', err);
+      } finally {
+        setLoadingNationalities(false);
+      }
+    };
+
+    loadNationalities();
+  }, [language]);
+
+  // Cargar datos del usuario en el formulario
   useEffect(() => {
     if (user && phoneCodes.length > 0) {
-      // Cargar datos del usuario en el formulario
       setFormData(prev => ({
         ...prev,
         email: user.email || prev.email,
@@ -174,10 +368,8 @@ const Checkout: React.FC = () => {
         phoneCodeId: user.phoneCodeId || user.phonePostalId || prev.phoneCodeId || 0,
         countryBirthCode2: user.countryBirthCode2 || prev.countryBirthCode2,
         nationality: user.countryBirthCode2 || prev.nationality,
-        phone: user.phoneNumber || prev.phone
       }));
       
-      // Buscar y establecer el código telefónico
       if (user.phonePostalCode) {
         const foundPhoneCode = phoneCodes.find(pc => {
           const postalCodeClean = user.phonePostalCode!.replace(/[()]/g, '').replace('+', '').trim();
@@ -193,2480 +385,487 @@ const Checkout: React.FC = () => {
             phoneCodeId: foundPhoneCode!.id || prev.phoneCodeId || 0
           }));
         }
-      } else {
-        // Si phonePostalCode es null, limpiar
-        setFormData(prev => ({
-          ...prev,
-          phoneCode: '',
-          phonePostalCode: ''
-        }));
+      }
+      
+      // Si los campos están completos, colapsar el formulario
+      if (areRequiredFieldsComplete({
+        ...formData,
+        email: user.email || formData.email,
+        name: user.firstname || formData.name,
+        lastName: user.surname || formData.lastName,
+        phoneNumber: user.phoneNumber || formData.phoneNumber,
+        phonePostalCode: user.phonePostalCode || formData.phonePostalCode,
+        phonePostalId: user.phonePostalId || formData.phonePostalId || 0,
+        phoneCodeId: user.phoneCodeId || user.phonePostalId || formData.phoneCodeId || 0,
+        countryBirthCode2: user.countryBirthCode2 || formData.countryBirthCode2,
+        nationality: user.countryBirthCode2 || formData.nationality,
+      })) {
+        setIsEditingContactInfo(false);
       }
     }
   }, [user, phoneCodes]);
 
-  // Sincronizar personId del viajero
-  useEffect(() => {
-    if (user?.personId) {
-      if (contactPersonId !== user.personId) {
-        setContactPersonId(user.personId);
-        sessionStorage.setItem('checkoutPersonId', String(user.personId));
-      }
-    }
-  }, [user?.personId, contactPersonId]);
-
-  // Función para validar formato de correo electrónico
-  const isValidEmail = (email: string): boolean => {
-    // Validar formato de correo electrónico
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return emailRegex.test(email);
-  };
-
-  // Función para verificar si todos los campos obligatorios del contacto están completos
-  const areRequiredFieldsComplete = (data: typeof formData): boolean => {
-    return !!(
-      data.name &&
-      data.name.trim() !== '' &&
-      data.lastName &&
-      data.lastName.trim() !== '' &&
-      data.email &&
-      isValidEmail(data.email) &&
-      data.phoneNumber &&
-      data.phoneNumber.trim() !== '' &&
-      data.nationality &&
-      data.nationality !== 'none'
-    );
-  };
-  
-  const [formData, setFormData] = useState({
-    name: '',
-    lastName: '',
-    email: '',
-    phoneCode: '',
-    phone: '', // Mantener por compatibilidad, pero usar phoneNumber
-    phoneNumber: '',
-    phonePostalCode: '',
-    phonePostalId: 0,
-    phoneCodeId: 0, // ID del código telefónico para selección
-    countryBirthCode2: '',
-    nationality: 'none'
-  });
-  const [loadingPhoneCodes, setLoadingPhoneCodes] = useState(true);
-  const [nationalities, setNationalities] = useState<Nationality[]>([]);
-  const [loadingNationalities, setLoadingNationalities] = useState(true);
-  const [activityTitle, setActivityTitle] = useState<string>('');
-  const [activityRating, setActivityRating] = useState<number | null>(null);
-  const [activityCommentsCount, setActivityCommentsCount] = useState<number | null>(null);
-  const [bookingOptionCancelInfo, setBookingOptionCancelInfo] = useState<{
-    cancelBefore?: string;
-    cancelBeforeMinutes?: number;
-  } | null>(null);
-  const [isEditingComment, setIsEditingComment] = useState(false);
-  const [editedComment, setEditedComment] = useState('');
-  const [isEditingLanguage, setIsEditingLanguage] = useState(false);
-  const [editedLanguage, setEditedLanguage] = useState('');
-  const [availableGuideLanguages, setAvailableGuideLanguages] = useState<string[]>([]);
-  const [isEditingDateTime, setIsEditingDateTime] = useState(false);
-  const [editedDate, setEditedDate] = useState('');
-  const [editedTime, setEditedTime] = useState('');
-  const [availableTimes, setAvailableTimes] = useState<string[]>([]);
-  const [currentBookingOption, setCurrentBookingOption] = useState<any>(null);
-  const [activePriceTier, setActivePriceTier] = useState<any | null>(() => {
-    const storedTier = sessionStorage.getItem('checkoutActivePriceTier');
-    if (storedTier) {
-      try {
-        return JSON.parse(storedTier);
-      } catch {
-        return null;
-      }
-    }
-    return null;
-  });
-  const [isEditingTravelers, setIsEditingTravelers] = useState(false);
-  const [editedAdults, setEditedAdults] = useState<number>(1);
-  const [editedChildren, setEditedChildren] = useState<number>(0);
-  const [isEditingPickupPoint, setIsEditingPickupPoint] = useState(false);
-  const [selectedPickupPointId, setSelectedPickupPointId] = useState<number | ''>('');
-  const [currentStep, setCurrentStep] = useState<1 | 2>(1); // Siempre inicia en el paso 1 (Contacto)
-  const [paymentMethod, setPaymentMethod] = useState<'paypal' | 'googlepay' | 'reserve' | 'reserveLater' | ''>('');
-  const [isProcessingPayPal, setIsProcessingPayPal] = useState(false);
-  // Inicializar isEditingContactInfo basado en si los campos obligatorios están completos
-  // Si los campos no están completos, mostrar el formulario desplegado
-  const [isEditingContactInfo, setIsEditingContactInfo] = useState(() => {
-    // Verificar si hay datos guardados en sessionStorage
-    const savedFormData = sessionStorage.getItem('checkoutFormData');
-    if (savedFormData) {
-      try {
-        const parsed = JSON.parse(savedFormData);
-        return !areRequiredFieldsComplete(parsed);
-      } catch {
-        return true; // Si hay error al parsear, mostrar desplegado
-      }
-    }
-    return true; // Por defecto, mostrar desplegado si no hay datos
-  });
-  const [originalFormData, setOriginalFormData] = useState<typeof formData | null>(null);
-
-  // Actualizar isEditingContactInfo cuando cambien los datos del formulario
-  // Si los campos obligatorios no están completos, mostrar el formulario desplegado
-  useEffect(() => {
-    // Solo actualizar si no está en modo de edición manual (cuando el usuario hace clic en "Editar")
-    // Si el usuario está editando manualmente, no cambiar el estado automáticamente
-    if (!originalFormData) {
-      const fieldsComplete = areRequiredFieldsComplete(formData);
-      // Si los campos están completos, colapsar el formulario (solo si hay usuario autenticado)
-      // Si los campos no están completos, desplegar el formulario
-      if (firebaseUser) {
-        setIsEditingContactInfo(!fieldsComplete);
-      } else {
-        // Si no hay usuario autenticado, siempre mostrar desplegado si los campos no están completos
-        setIsEditingContactInfo(!fieldsComplete);
-      }
-    }
-  }, [formData, firebaseUser, originalFormData]);
-
-  // Avanzar automáticamente al paso 2 solo cuando se carga la página checkout
-  // si los datos obligatorios ya están completos (solo en la carga inicial)
-  useEffect(() => {
-    // Solo avanzar automáticamente al cargar la página si:
-    // 1. No se ha intentado avanzar automáticamente antes
-    // 2. Estamos en el paso 1
-    // 3. Los campos obligatorios están completos
-    // 4. No hay datos originales (primera carga)
-    // 5. Hay detalles de reserva disponibles
-    // 6. La fecha de salida no ha pasado
-    if (
-      !initialAutoAdvanceAttempted.current &&
-      currentStep === 1 &&
-      areRequiredFieldsComplete(formData) &&
-      !originalFormData &&
-      bookingDetails &&
-      !isDepartureDatePast()
-    ) {
-      // Verificar autenticación antes de avanzar
-      const hasToken = !!localStorage.getItem('authToken');
-      const hasFirebaseUser = firebaseUser !== null || auth.currentUser !== null;
-      
-      // Solo avanzar si está autenticado o tiene token/usuario de Firebase
-      // Y solo en la carga inicial de la página
-      if (isAuthenticated || hasToken || hasFirebaseUser) {
-        initialAutoAdvanceAttempted.current = true;
-        // Pequeño delay para evitar cambios bruscos
-        const timer = setTimeout(() => {
-          handleContinueToPayment();
-        }, 500);
-        
-        return () => clearTimeout(timer);
-      }
-    }
-  }, [currentStep, formData, originalFormData, bookingDetails, isAuthenticated, firebaseUser]); // Ejecutar cuando los datos estén listos
-
-  // Determinar si se puede reservar y pagar después
-  // Se puede reservar y pagar después si:
-  // 1. cancelBeforeMinutes > 1440 minutos (más de 1 día)
-  // 2. La fecha/hora de salida menos la fecha/hora actual es mayor a 1 día (1440 minutos)
-  const canReserveAndPayLater = (): boolean => {
-    const cancelBeforeMinutes = bookingDetails?.cancelBeforeMinutes ?? bookingOptionCancelInfo?.cancelBeforeMinutes;
-    
-    // Si cancelBeforeMinutes no es mayor a 1 día, no se puede reservar y pagar después
-    if (cancelBeforeMinutes === undefined || cancelBeforeMinutes === null || cancelBeforeMinutes <= 1440) {
-      return false;
-    }
-    
-    // Verificar que la fecha/hora de salida menos la fecha/hora actual sea mayor a 1 día
-    if (!bookingDetails?.date || !bookingDetails?.time) {
-      // Si no hay fecha o hora de salida, no se puede reservar y pagar después
-      return false;
-    }
-    
-    try {
-      // Construir la fecha/hora de salida
-      const [year, month, day] = bookingDetails.date.split('-').map(Number);
-      const timeParts = bookingDetails.time.split(':');
-      const hours = timeParts[0] ? parseInt(timeParts[0], 10) : 0;
-      const minutes = timeParts[1] ? parseInt(timeParts[1], 10) : 0;
-      
-      const departureDate = new Date(year, month - 1, day, hours, minutes, 0);
-      
-      // Verificar que la fecha es válida
-      if (isNaN(departureDate.getTime())) {
-        return false;
-      }
-      
-      // Calcular la diferencia en minutos entre la fecha de salida y ahora
-      const now = new Date();
-      const diffInMilliseconds = departureDate.getTime() - now.getTime();
-      const diffInMinutes = diffInMilliseconds / (1000 * 60);
-      
-      // 1 día = 24 horas = 1440 minutos
-      // Si la diferencia es menor o igual a 1 día, no se puede reservar y pagar después
-      return diffInMinutes > 1440;
-    } catch (error) {
-      console.error('Error calculating if can reserve and pay later:', error);
-      return false;
-    }
-  };
-
-  // Verificar si la fecha/hora de salida ya pasó
-  const isDepartureDatePast = (): boolean => {
-    if (!bookingDetails?.date || !bookingDetails?.time) {
-      return false;
-    }
-    
-    try {
-      // Construir la fecha/hora de salida
-      const [year, month, day] = bookingDetails.date.split('-').map(Number);
-      const timeParts = bookingDetails.time.split(':');
-      const hours = timeParts[0] ? parseInt(timeParts[0], 10) : 0;
-      const minutes = timeParts[1] ? parseInt(timeParts[1], 10) : 0;
-      
-      const departureDate = new Date(year, month - 1, day, hours, minutes, 0);
-      
-      // Verificar que la fecha es válida
-      if (isNaN(departureDate.getTime())) {
-        return false;
-      }
-      
-      // Comparar con la fecha/hora actual
-      const now = new Date();
-      return departureDate < now;
-    } catch (error) {
-      console.error('Error checking if departure date is past:', error);
-      return false;
-    }
-  };
-
-  // Asegurar que el checkout siempre inicie en el paso 1
-  useEffect(() => {
-    setCurrentStep(1);
-    // Limpiar el paso guardado en sessionStorage para evitar conflictos
-    sessionStorage.removeItem('checkoutCurrentStep');
-  }, []);
-
-  // Obtener detalles de reserva desde location.state, localStorage o sessionStorage
-  useEffect(() => {
-    // Pequeño delay para asegurar que el estado esté disponible
-    const timer = setTimeout(() => {
-      let details = null;
-      
-      // Intentar obtener desde location.state primero
-      if (location.state?.bookingDetails) {
-        details = location.state.bookingDetails;
-        // Guardar en sessionStorage para persistencia
-        sessionStorage.setItem('checkoutBookingDetails', JSON.stringify(details));
-      } 
-      // Si no hay en location.state, intentar desde sessionStorage (persistente)
-      else {
-        const sessionDetails = sessionStorage.getItem('checkoutBookingDetails');
-        if (sessionDetails) {
-          details = JSON.parse(sessionDetails);
-        }
-        // Si tampoco hay en sessionStorage, intentar desde localStorage (respaldo)
-        else {
-          const storedDetails = localStorage.getItem('checkoutBookingDetails');
-          if (storedDetails) {
-            details = JSON.parse(storedDetails);
-            // Mover a sessionStorage para mejor persistencia
-            sessionStorage.setItem('checkoutBookingDetails', storedDetails);
-            // Limpiar localStorage después de migrar
-            localStorage.removeItem('checkoutBookingDetails');
-          }
-        }
-      }
-      
-      if (details) {
-        setBookingDetails(details);
-        // Prellenar campos de edición de viajeros
-        try {
-          const ad = Number(details?.travelers?.adults ?? 1);
-          const ch = Number(details?.travelers?.children ?? 0);
-          setEditedAdults(isNaN(ad) ? 1 : ad);
-          setEditedChildren(isNaN(ch) ? 0 : ch);
-        } catch {}
-        // Prellenar selector de punto de recogida si está disponible
-        try {
-          if (details?.pickupPoint && Array.isArray(currentBookingOption?.pickupPoints)) {
-            const found = currentBookingOption.pickupPoints.find((p: any) => p?.name === details.pickupPoint?.name);
-            if (found?.id != null) {
-              setSelectedPickupPointId(found.id);
-            }
-          }
-        } catch {}
-      } else {
-        // Si no está autenticado, mostrar modal de login (obligatorio)
-        // Pero esperar a que se complete la verificación inicial para evitar parpadeo
-        setTimeout(() => {
-          const hasFirebaseUser = firebaseUser !== null || auth.currentUser !== null;
-          const hasToken = !!localStorage.getItem('authToken');
-          
-          // Solo mostrar modal si NO está autenticado, NO hay usuario Firebase Y NO hay token
-          if (!isAuthenticated && !hasFirebaseUser && !hasToken && !modalShownOnce.current) {
-            setShowLoginModal(true);
-            modalShownOnce.current = true;
-          }
-        }, 500);
-      }
-    }, 100);
-
-    return () => clearTimeout(timer);
-  }, [location.state, navigate, isAuthenticated, firebaseUser]);
-
-  // Cargar datos del formulario desde sessionStorage si está en el paso 1 o 2
-  useEffect(() => {
-      const savedFormData = sessionStorage.getItem('checkoutFormData');
-      if (savedFormData) {
-        try {
-          const parsed = JSON.parse(savedFormData);
-        // Solo cargar si no hay datos del usuario o si los datos guardados son diferentes
-        // Esto evita sobrescribir datos del usuario autenticado
-        if (currentStep === 1 && (!user || !areRequiredFieldsComplete(parsed))) {
-          setFormData(parsed);
-        } else if (currentStep === 2) {
-          setFormData(parsed);
-        }
-        } catch (e) {
-          console.error('Error loading form data from sessionStorage:', e);
-        }
-      }
-
-      // Ya no auto-seleccionamos la opción de reserva, el usuario debe elegirla manualmente
-  }, [currentStep, bookingDetails, bookingOptionCancelInfo, paymentMethod, user]);
-
-  // Función para cargar el SDK de PayPal dinámicamente
-  const loadPayPalSDK = (): Promise<void> => {
-    return new Promise((resolve, reject) => {
-      // Verificar si ya está cargado
-      if ((window as any).paypal) {
-        resolve();
-        return;
-      }
-
-      // Obtener credenciales de PayPal desde config
-      const paypalConfig = config?.paypal || apiConfig.paypal;
-      const clientId = paypalConfig?.clientId || '';
-      
-      if (!clientId) {
-        reject(new Error('PayPal Client ID no configurado. Por favor configúralo en appConfig.ts.'));
-        return;
-      }
-
-      const currency = bookingDetails?.currency || paypalConfig?.currency || 'USD';
-      const script = document.createElement('script');
-      script.src = `https://www.paypal.com/sdk/js?client-id=${clientId}&currency=${currency}&components=buttons`;
-      script.async = true;
-      script.onload = () => resolve();
-      script.onerror = () => reject(new Error('Error al cargar el SDK de PayPal'));
-      document.body.appendChild(script);
-    });
-  };
-
-  // Función auxiliar para calcular el precio total con descuento para PayPal
-  const calculatePayPalAmount = () => {
-    const paypalConfig = config?.paypal || apiConfig.paypal;
-    const currency = bookingDetails?.currency || paypalConfig?.currency || 'USD';
-    
-    const totalAdults = bookingDetails?.travelers?.adults || 1;
-    const totalChildren = bookingDetails?.travelers?.children || 0;
-    const totalTravelers = totalAdults + totalChildren;
-    
-    // Calcular precio unitario
-    const unitPrice = bookingDetails?.price || 0;
-    
-    // Calcular total sin descuento
-    let totalAmount = unitPrice * totalTravelers;
-    
-    // Aplicar descuento si existe
-    if (bookingDetails?.hasDiscount && bookingDetails?.discountPercentage > 0) {
-      const discount = totalAmount * (bookingDetails.discountPercentage / 100);
-      totalAmount = Math.ceil(totalAmount - discount);
-    } else {
-      totalAmount = Math.ceil(totalAmount);
-    }
-    
-    return {
-      totalAmount: totalAmount.toFixed(2),
-      currency
-    };
-  };
-
-
-  const calculateGooglePayAmount = () => {
-    // Similar a PayPal, calcular el total con descuentos
-    const googlePayConfig = config?.googlePay || apiConfig.googlePay;
-    const currency = bookingDetails?.currency || googlePayConfig?.currency || 'USD';
-    
-    const totalAdults = bookingDetails?.travelers?.adults || 1;
-    const totalChildren = bookingDetails?.travelers?.children || 0;
-    const totalTravelers = totalAdults + totalChildren;
-    
-    // Calcular precio unitario
-    const unitPrice = bookingDetails?.price || 0;
-    
-    // Calcular total sin descuento
-    let totalAmount = unitPrice * totalTravelers;
-    
-    // Aplicar descuento si existe
-    if (bookingDetails?.hasDiscount && bookingDetails?.discountPercentage > 0) {
-      const discount = totalAmount * (bookingDetails.discountPercentage / 100);
-      totalAmount = Math.ceil(totalAmount - discount);
-    } else {
-      totalAmount = Math.ceil(totalAmount);
-    }
-    
-    return {
-      totalAmount: totalAmount.toFixed(2),
-      currency
-    };
-  };
-
-  // Función para generar UUID corto (usado en PayPal y Google Pay)
-  const generateShortUUID = (): string => {
-    return Math.random().toString(36).substring(2, 10).toUpperCase();
-  };
-
-  const clearCheckoutData = () => {
-    sessionStorage.removeItem('checkoutBookingDetails');
-    sessionStorage.removeItem('checkoutTimeLeft');
-    sessionStorage.removeItem('checkoutCurrentStep');
-    sessionStorage.removeItem('checkoutFormData');
-    sessionStorage.removeItem('bookingDetails');
-    sessionStorage.removeItem('checkoutActivePriceTier');
-  };
-
-  const buildReservationPaymentInfo = (
-    method: 'paypal' | 'googlepay' | 'reserveLater',
-    totalPrice: number,
-    currency: string,
-    rawInfo?: any,
-    paymentStatus?: 'PAID' | 'PENDING'
-  ) => {
-    if (method === 'paypal') {
-      const amount = rawInfo?.amount || {};
-      return {
-        ...rawInfo,
-        paymentMethod: method,
-        status: paymentStatus || 'PAID',
-        amount: {
-          value: amount?.value || totalPrice.toFixed(2),
-          currency_code: amount?.currency_code || currency
-        }
-      };
-    }
-
-    if (method === 'googlepay') {
-      const amount = rawInfo?.amount || {};
-      const total = amount?.total || amount?.value || totalPrice.toFixed(2);
-      const currencyCode = amount?.currency || amount?.currency_code || currency;
-      return {
-        ...rawInfo,
-        paymentMethod: method,
-        status: paymentStatus || 'PAID',
-        amount: {
-          value: total,
-          currency_code: currencyCode
-        }
-      };
-    }
-
-    return {
-      paymentMethod: method,
-      status: paymentStatus || 'PENDING',
-      amount: {
-        value: totalPrice.toFixed(2),
-        currency_code: currency
-      },
-      ...rawInfo
-    };
-  };
-
-  const finalizeReservation = async (
-    method: 'paypal' | 'googlepay' | 'reserveLater',
-    paymentInfo?: any
-  ) => {
-    if (!bookingDetails) {
-      throw new Error(language === 'es'
-        ? 'No se encontraron los detalles de la reserva.'
-        : 'Reservation details not found.');
-    }
-
-    if (!contactPersonId || Number.isNaN(contactPersonId)) {
-      setIsEditingContactInfo(true);
-      throw new Error(language === 'es'
-        ? 'Por favor guarda tu información de contacto antes de continuar.'
-        : 'Please save your contact information before continuing.');
-    }
-
-    const totalAdults = bookingDetails.travelers?.adults || 0;
-    const totalChildren = bookingDetails.travelers?.children || 0;
-    const totalTravelers = totalAdults + totalChildren;
-
-    if (totalTravelers <= 0) {
-      throw new Error(language === 'es'
-        ? 'No se encontraron viajeros para la reserva.'
-        : 'No travelers found for the reservation.');
-    }
-
-    const unitPrice = bookingDetails.price || 0;
-    const totalPrice = bookingDetails.totalPrice || unitPrice * totalTravelers;
-
-    const paymentStatus = method === 'reserveLater' ? 'PENDING' : 'PAID';
-    const paymentProvider =
-      method === 'paypal' ? 'PAYPAL'
-        : method === 'googlepay' ? 'GOOGLE_PAY'
-        : undefined;
-
-    const paymentMethodRequest =
-      method === 'googlepay' || method === 'paypal' ? 'CARD'
-        : 'NONE';
-
-    const orderStatus = method === 'reserveLater' ? 'CREATED' : 'CONFIRMED';
-
-    const currencyCode = (bookingDetails.currency || 'USD').toUpperCase();
-    const allowedCurrencies = ['USD', 'PEN', 'EUR'];
-    const orderCurrency = (allowedCurrencies.includes(currencyCode) ? currencyCode : 'USD') as 'USD' | 'PEN' | 'EUR';
-
-    const startDatetime = bookingDetails.date && bookingDetails.time
-      ? `${bookingDetails.date}T${bookingDetails.time}:00`
-      : new Date().toISOString();
-
-    const platformCommissionPercent = Number(
-      activePriceTier?.commissionPercent ??
-      bookingDetails.commissionPercent ??
-      0
-    );
-
-    const agentCommissionPercent = user?.roleCode === 'TRAVELER'
-      ? 0
-      : platformCommissionPercent;
-
-    const platformCommissionAmount = platformCommissionPercent
-      ? Number((totalPrice * (platformCommissionPercent / 100)).toFixed(2))
-      : 0;
-
-    const agentCommissionAmount = agentCommissionPercent
-      ? Number((totalPrice * (agentCommissionPercent / 100)).toFixed(2))
-      : 0;
-
-    const meetingTypeNormalized = (currentBookingOption?.meetingType || bookingDetails.meetingType || '').toLowerCase();
-    const selectedPickup = bookingDetails.pickupPoint;
-    let meetingPlaceId = selectedPickup?.cityId ?? bookingDetails.meetingPointCityId ?? undefined;
-    if (!meetingPlaceId && typeof selectedPickupPointId === 'number') {
-      const foundPickup = currentBookingOption?.pickupPoints?.find((p: any) => p.id === selectedPickupPointId);
-      meetingPlaceId = foundPickup?.city?.id ?? undefined;
-    }
-
-    let meetingPointId = selectedPickup?.id ?? undefined;
-    if (!meetingPointId && typeof selectedPickupPointId === 'number') {
-      meetingPointId = selectedPickupPointId;
-    }
-
-    let meetingPointName = selectedPickup?.name || undefined;
-    let meetingPointAddress = selectedPickup?.address || undefined;
-    let meetingPointLatitude = selectedPickup?.latitude ?? undefined;
-    let meetingPointLongitude = selectedPickup?.longitude ?? undefined;
-    let meetingPointComputedId = meetingPointId ?? bookingDetails.meetingPointId ?? undefined;
-
-    if (meetingTypeNormalized === 'meeting_point') {
-      meetingPlaceId = meetingPlaceId ?? currentBookingOption?.meetingPointId ?? undefined;
-      meetingPointComputedId = meetingPointComputedId ?? currentBookingOption?.meetingPointId ?? undefined;
-      meetingPointName = meetingPointName
-        ?? bookingDetails.meetingPointName
-        ?? currentBookingOption?.meetingPointAddress
-        ?? currentBookingOption?.meetingPointDescription?.[0]
-        ?? undefined;
-      meetingPointAddress = meetingPointAddress ?? bookingDetails.meetingPointAddress ?? currentBookingOption?.meetingPointAddress ?? undefined;
-      meetingPointLatitude = meetingPointLatitude ?? bookingDetails.meetingPointLatitude ?? currentBookingOption?.meetingPointLatitude ?? undefined;
-      meetingPointLongitude = meetingPointLongitude ?? bookingDetails.meetingPointLongitude ?? currentBookingOption?.meetingPointLongitude ?? undefined;
-    }
-
-    const calculateEndDateTime = (): string | undefined => {
-      if (!bookingDetails.date || !bookingDetails.time) {
-        return undefined;
-      }
-      const [year, month, day] = bookingDetails.date.split('-').map(Number);
-      const [hour, minute] = bookingDetails.time.split(':').map(Number);
-      if (
-        Number.isNaN(year) || Number.isNaN(month) || Number.isNaN(day) ||
-        Number.isNaN(hour) || Number.isNaN(minute)
-      ) {
-        return undefined;
-      }
-      const startDate = new Date(year, month - 1, day, hour, minute, 0, 0);
-      if (Number.isNaN(startDate.getTime())) {
-        return undefined;
-      }
-
-      const durationDays = bookingDetails.durationDays ?? currentBookingOption?.durationDays ?? 0;
-      const durationHours = bookingDetails.durationHours ?? currentBookingOption?.durationHours ?? 0;
-      const durationMinutes = bookingDetails.durationMinutes ?? currentBookingOption?.durationMinutes ?? 0;
-
-      const endDate = new Date(startDate);
-      endDate.setDate(endDate.getDate() + (durationDays || 0));
-      endDate.setHours(endDate.getHours() + (durationHours || 0));
-      endDate.setMinutes(endDate.getMinutes() + (durationMinutes || 0));
-
-      if (Number.isNaN(endDate.getTime())) {
-        return undefined;
-      }
-
-      const pad = (value: number) => String(value).padStart(2, '0');
-      return `${endDate.getFullYear()}-${pad(endDate.getMonth() + 1)}-${pad(endDate.getDate())}T${pad(endDate.getHours())}:${pad(endDate.getMinutes())}:00`;
-    };
-
-    const endDatetime = calculateEndDateTime();
-
-    const orderRequest: CreateOrderRequest = {
-      orderSource: 'PLATFORM',
-      paymentMethod: paymentMethodRequest,
-      paymentStatus,
-      paymentProvider,
-      orderStatus,
-      items: [
-        {
-          activityId: bookingDetails.activityId,
-          bookingOptionId: bookingDetails.bookingOptionId || currentBookingOption?.id || '',
-          currency: orderCurrency,
-          participants: totalTravelers,
-          pricePerParticipant: unitPrice,
-          startDatetime,
-          specialRequest: bookingDetails.comment,
-          status: 'PENDING',
-          guideLanguage: bookingDetails.guideLanguage,
-          commissionPercentPlatform: platformCommissionPercent,
-          commissionPercentAgent: agentCommissionPercent,
-          commissionAmountPlatform: platformCommissionAmount,
-          commissionAmountAgent: agentCommissionPercent === 0 ? 0 : agentCommissionAmount,
-          meetingPickupPlaceId: meetingPlaceId,
-          meetingPickupPointName: meetingPointName,
-          meetingPickupPointAddress: meetingPointAddress,
-          meetingPickupPointLatitude: meetingPointLatitude,
-          meetingPickupPointLongitude: meetingPointLongitude,
-          endDatetime
-        }
-      ]
-    };
-
-    setIsProcessingOrder(true);
-    try {
-      const orderResponse = await ordersApi.createOrder(orderRequest);
-
-      if (!orderResponse?.success) {
-        throw new Error(orderResponse?.message || (language === 'es'
-          ? 'No se pudo crear la orden.'
-          : 'Unable to create order.'));
-      }
-
-      const reservationCode = orderResponse.idCreated
-        ? String(orderResponse.idCreated)
-        : generateShortUUID();
-
-      console.log('🔑 Token utilizado para crear la orden:', localStorage.getItem('authToken'));
-
-      const normalizedPaymentInfo = buildReservationPaymentInfo(
-        method,
-        totalPrice,
-        orderCurrency,
-        paymentInfo,
-        paymentStatus
-      );
-
-      const normalizedPaymentInfoWithTimestamp = {
-        ...normalizedPaymentInfo,
-        timestamp: new Date().toISOString()
-      };
-
-      const reservationData = {
-        reservationCode,
-        bookingDetails: {
-          ...bookingDetails,
-          totalPrice
-        },
-        paymentInfo: normalizedPaymentInfoWithTimestamp,
-        paymentStatus,
-        orderId: orderResponse.idCreated,
-        orderMessage: orderResponse.message
-      };
-
-      sessionStorage.setItem('lastReservationData', JSON.stringify(reservationData));
-      clearCheckoutData();
-      navigate('/payment-completed', { state: reservationData });
-    } catch (error: any) {
-      const message = error?.message || (language === 'es'
-        ? 'No se pudo procesar la reserva. Inténtalo nuevamente.'
-        : 'Unable to process the reservation. Please try again.');
-      throw new Error(message);
-    } finally {
-      setIsProcessingOrder(false);
-    }
-  };
-
-  // Función para procesar el pago completado (compartida entre PayPal y Google Pay)
-  const processCompletedPayment = async (paymentInfo: any, paymentMethodType: 'paypal' | 'googlepay') => {
-    await finalizeReservation(paymentMethodType, paymentInfo);
-  };
-
-
-  // Cargar botones de PayPal cuando se selecciona PayPal como método de pago
-  useEffect(() => {
-    // VALIDACIÓN OBLIGATORIA: Solo ejecutar si está autenticado o tiene token válido
-    const hasToken = !!localStorage.getItem('authToken');
-    const hasFirebaseUser = firebaseUser !== null || auth.currentUser !== null;
-    
-    if (!isAuthenticated && !hasToken && !hasFirebaseUser) {
-      // Limpiar contenedor si no está autenticado
-      const container = document.getElementById('paypal-button-container');
-      if (container) container.innerHTML = '';
-      return;
-    }
-
-    // Solo ejecutar si estamos en el paso 2 y PayPal está seleccionado
-    if (currentStep !== 2 || paymentMethod !== 'paypal' || !bookingDetails) {
-      return;
-    }
-
-    // Limpiar contenedor anterior si existe
-    const container = document.getElementById('paypal-button-container');
-    if (!container) {
-      return;
-    }
-
-    container.innerHTML = '';
-
-    // Cargar PayPal automáticamente cuando se selecciona
-    const loadPayPal = async () => {
-      try {
-        await loadPayPalSDK();
-        
-        if (!(window as any).paypal) {
-          console.error('PayPal SDK no está disponible');
-          return;
-        }
-
-        const { totalAmount, currency } = calculatePayPalAmount();
-
-        // Obtener URLs base desde la configuración de PayPal
-        // PayPal baseUrl es para el entorno de PayPal (sandbox.paypal.com)
-        // redirectBaseUrl es para la URL de nuestra aplicación donde PayPal redirigirá después del pago
-        const paypalBaseUrl = config?.paypal?.baseUrl || 'https://sandbox.paypal.com'; // URL base de PayPal
-        
-        // Construir la URL de redirección asegurando que incluya el puerto 3000 para PayPal
-        let appRedirectBaseUrl = config?.paypal?.redirectBaseUrl;
-        
-        if (!appRedirectBaseUrl && typeof window !== 'undefined') {
-          // Construir URL con puerto 3000 explícito para PayPal
-          const hostname = window.location.hostname;
-          const protocol = window.location.protocol;
-          const port = window.location.port || '3000';
-          
-          // Para PayPal, siempre usar puerto explícito si está en localhost
-          if (hostname === 'localhost' || hostname === '127.0.0.1' || !window.location.port) {
-            appRedirectBaseUrl = `${protocol}//${hostname}:3000`;
-          } else {
-            appRedirectBaseUrl = window.location.origin;
-          }
-        } else if (typeof window !== 'undefined' && appRedirectBaseUrl && !appRedirectBaseUrl.includes(':3000') && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
-          // Si la URL configurada no incluye puerto y estamos en localhost, forzar puerto 3000
-          const url = new URL(appRedirectBaseUrl || window.location.origin);
-          if (!url.port || url.port !== '3000') {
-            url.port = '3000';
-            appRedirectBaseUrl = url.toString().replace(/\/$/, ''); // Remover barra diagonal final
-          }
-        }
-        
-        // Asegurar que siempre tengamos una URL de redirección válida
-        if (!appRedirectBaseUrl && typeof window !== 'undefined') {
-          appRedirectBaseUrl = window.location.origin;
-        }
-        
-        // Construir URLs de retorno y cancelación (deben apuntar a nuestra aplicación con puerto 3000)
-        const returnUrl = `${appRedirectBaseUrl}/capture-payment?token=${encodeURIComponent(bookingDetails?.activityId?.toString() || '')}`;
-        const cancelUrl = `${appRedirectBaseUrl}/cancel-payment`;
-        
-        // La baseUrl de PayPal es solo informativa (para logging), las redirecciones usan appRedirectBaseUrl
-        const baseUrl = paypalBaseUrl;
-
-        const paypal = (window as any).paypal;
-        paypal.Buttons({
-          createOrder: (data: any, actions: any) => {
-            // Calcular cantidad total de viajeros
-            const totalAdults = bookingDetails?.travelers?.adults || 1;
-            const totalChildren = bookingDetails?.travelers?.children || 0;
-            const totalTravelers = totalAdults + totalChildren;
-            
-            // Preparar descripción con título y cantidad de viajeros
-            const activityTitle = bookingDetails?.title || 'Reserva de actividad';
-            const travelersDescription = totalTravelers === 1 
-              ? getTranslation('checkout.traveler', language)
-              : getTranslationWithParams('checkout.travelers', language, { count: totalTravelers });
-            
-            const description = `${activityTitle} - ${travelersDescription}`;
-            
-            // Calcular precio unitario asegurando precisión
-            // PayPal requiere que la suma de items coincida exactamente con amount.value
-            const totalAmountFloat = parseFloat(totalAmount);
-            const unitPriceFloat = totalAmountFloat / totalTravelers;
-            
-            // Redondear a 2 decimales y verificar que la suma sea exacta
-            const unitPrice = Math.round(unitPriceFloat * 100) / 100;
-            const calculatedTotal = unitPrice * totalTravelers;
-            const difference = totalAmountFloat - calculatedTotal;
-            
-            // Ajustar si hay diferencia de redondeo (distribuirla en el último item si es necesario)
-            // Por simplicidad, usaremos un solo item con la cantidad total
-            const finalUnitPrice = difference !== 0 
-              ? (totalAmountFloat / totalTravelers) // Usar cálculo exacto sin redondeo
-              : unitPrice;
-            
-            // PayPal puede rechazar si items total !== amount total
-            // Por seguridad, primero intentamos sin items para ver si el error es por el cálculo
-            const orderDataSimple = {
-              purchase_units: [{
-                amount: {
-                  value: totalAmount,
-                  currency_code: currency
-                },
-                description: description
-              }],
-              application_context: {
-                brand_name: config?.business?.name || 'Viajeromap',
-                landing_page: 'NO_PREFERENCE',
-                user_action: 'PAY_NOW',
-                return_url: returnUrl,
-                cancel_url: cancelUrl
-              }
-            };
-            
-            return actions.order.create(orderDataSimple).then((orderId: string) => {
-              return orderId;
-            }).catch((error: any) => {
-              console.error('❌ PayPal createOrder Error:', {
-                error,
-                errorDetails: error?.details || error,
-                errorDetailsArray: Array.isArray(error?.details) ? error.details : [],
-                errorMessage: error?.message || String(error),
-                errorName: error?.name,
-                orderData: orderDataSimple,
-                fullError: error
-              });
-              
-              // Mostrar mensaje de error más específico
-              let errorMsg = language === 'es' 
-                ? 'Error al crear la orden de PayPal.'
-                : 'Error creating PayPal order.';
-              
-              if (error?.message) {
-                errorMsg += `\n${error.message}`;
-              }
-              
-              if (Array.isArray(error?.details) && error.details.length > 0) {
-                const detailsMsg = error.details.map((d: any) => d.issue || d.description || String(d)).join('\n');
-                errorMsg += `\n${detailsMsg}`;
-              }
-              
-              console.error('Error completo:', errorMsg);
-              throw error;
-            });
-          },
-          onApprove: async (data: any, actions: any) => {
-            try {
-              // VALIDACIÓN OBLIGATORIA: Verificar autenticación o token válido antes de procesar pago
-              const token = localStorage.getItem('authToken');
-              const hasFirebaseUser = firebaseUser !== null || auth.currentUser !== null;
-              
-              if (!isAuthenticated && !token && !hasFirebaseUser) {
-                alert(language === 'es' 
-                  ? 'Tu sesión ha expirado. Por favor inicia sesión nuevamente.'
-                  : 'Your session has expired. Please log in again.');
-                setShowLoginModal(true);
-                return;
-              }
-              
-              // Capturar la orden con mejor manejo de errores
-              let order;
-              try {
-                order = await actions.order.capture();
-              } catch (captureError: any) {
-                console.error('❌ Error al capturar la orden de PayPal:', {
-                  captureError,
-                  errorDetails: captureError?.details || captureError,
-                  errorDetailsArray: Array.isArray(captureError?.details) ? captureError.details : [],
-                  errorMessage: captureError?.message || String(captureError),
-                  errorName: captureError?.name,
-                  orderID: data.orderID,
-                  payerID: data.payerID,
-                  fullError: captureError
-                });
-                
-                // Mostrar mensaje de error más específico
-                let errorMsg = language === 'es' 
-                  ? 'Error al capturar el pago con PayPal.'
-                  : 'Error capturing PayPal payment.';
-                
-                if (captureError?.message) {
-                  errorMsg += `\n${captureError.message}`;
-                }
-                
-                alert(errorMsg);
-                throw captureError;
-              }
-              
-              // Si el pago se captura directamente (sin redirección), procesar aquí
-              // Si PayPal redirige, se manejará en el useEffect de redirección
-              if (order.status === 'COMPLETED') {
-                // Procesar el pago completado usando la función compartida
-                const paymentInfo = {
-                  orderId: order.id,
-                  status: order.status,
-                  payerId: order.payer?.payer_id,
-                  amount: order.purchase_units?.[0]?.amount,
-                  fullOrder: order,
-                  paymentMethod: 'paypal'
-                };
-                
-                await processCompletedPayment(paymentInfo, 'paypal');
-              } else {
-                console.warn('⚠️ PayPal Order Status:', order.status, '- Expected: COMPLETED');
-              }
-            } catch (error) {
-              console.error('❌ Error processing PayPal payment:', {
-                error,
-                errorMessage: error instanceof Error ? error.message : String(error),
-                errorStack: error instanceof Error ? error.stack : undefined
-              });
-              const fallbackMessage = language === 'es' 
-                ? 'Error al procesar el pago. Por favor intenta nuevamente.'
-                : 'Error processing payment. Please try again.';
-              const message = error instanceof Error && error.message ? error.message : fallbackMessage;
-              alert(message);
-            }
-          },
-          onCancel: (data: any) => {
-            // El usuario canceló, no hacer nada o mostrar mensaje opcional
-          },
-          onError: (err: any) => {
-            console.error('🔴 PayPal onError - Error Data:', {
-              error: err,
-              errorMessage: err?.message || String(err),
-              errorDetails: err,
-              errorDetailsArray: err?.details || [],
-              stack: err?.stack,
-              fullError: err
-            });
-            
-            // Mensaje de error más descriptivo
-            let errorMessage = language === 'es' 
-              ? 'Error al procesar el pago con PayPal. Por favor intenta nuevamente.'
-              : 'Error processing PayPal payment. Please try again.';
-            
-            // Si hay detalles específicos del error, agregarlos
-            if (err?.message) {
-              errorMessage += `\n\n${err.message}`;
-            }
-            
-            alert(errorMessage);
-          }
-        }).render('#paypal-button-container').catch((err: any) => {
-          console.error('Error rendering PayPal buttons:', err);
-        });
-      } catch (error) {
-        console.error('Error loading PayPal SDK:', error);
-      }
-    };
-
-    loadPayPal();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paymentMethod, currentStep, bookingDetails, isAuthenticated]);
-
-  // Función para obtener la configuración de Google Pay
-  const getGooglePayConfig = () => {
-    const googlePayConfig = config?.googlePay || apiConfig.googlePay;
-    const { totalAmount, currency } = calculateGooglePayAmount();
-    const merchantId = googlePayConfig?.merchantId || '';
-    const merchantName = googlePayConfig?.merchantName || config?.business?.name || 'ViajeroMap';
-
-    // Calcular cantidad total de viajeros
-    const totalAdults = bookingDetails?.travelers?.adults || 1;
-    const totalChildren = bookingDetails?.travelers?.children || 0;
-    const totalTravelers = totalAdults + totalChildren;
-    
-    // Preparar descripción con título y cantidad de viajeros
-    const activityTitle = bookingDetails?.title || 'Reserva de actividad';
-    const travelersDescription = totalTravelers === 1 
-      ? getTranslation('checkout.traveler', language)
-      : getTranslationWithParams('checkout.travelers', language, { count: totalTravelers });
-    
-    const description = `${activityTitle} - ${travelersDescription}`;
-
-    return {
-      googlePayConfig,
-      totalAmount,
-      currency,
-      merchantId,
-      merchantName,
-      totalAdults,
-      totalChildren,
-      totalTravelers,
-      description
-    };
-  };
-
-
-
-  // Mostrar modal de login si el usuario no está autenticado (obligatorio)
-  // Verificar tanto isAuthenticated como firebaseUser (mismo flujo que Navbar)
-  // Con control para evitar parpadeo del modal
-  useEffect(() => {
-    // Esperar un momento para que se carguen los estados de autenticación
-    const timer = setTimeout(() => {
-      // Verificar si hay usuario de Firebase autenticado o estado de firebaseUser
-      const hasFirebaseUser = firebaseUser !== null || auth.currentUser !== null;
-      
-      // Verificar si hay token válido en localStorage
-      const hasToken = !!localStorage.getItem('authToken');
-      
-      // Solo mostrar el modal si NO está autenticado, NO hay usuario de Firebase Y NO hay token
-      if (!isAuthenticated && !hasFirebaseUser && !hasToken) {
-        // Solo mostrar el modal si no se ha mostrado antes o si ya se completó la verificación
-        if (!modalShownOnce.current || authCheckCompleted.current) {
-          setShowLoginModal(true);
-          setLoginDismissed(false); // No permitir descartar el modal
-          modalShownOnce.current = true;
-        }
-      } else {
-        // Usuario autenticado O tiene token válido, cerrar modal y marcar verificación como completada
-        setShowLoginModal(false);
-        setLoginDismissed(false);
-        // authCheckCompleted ya no es necesario
-      }
-      
-      // Finalizar validación
-      // setIsValidatingAuth ya no es necesario, usamos authLoading del contexto
-    }, 500); // Esperar 500ms para que se estabilicen los estados
-
-    return () => clearTimeout(timer);
-  }, [isAuthenticated, firebaseUser]);
-
-  // Validar token al llegar al paso 2 (pago) - SOLO UNA VEZ
-  useEffect(() => {
-    // Usar ref para evitar validaciones múltiples
-    let isValidating = false;
-    
-    const validateTokenOnStep2 = async () => {
-      // Solo validar si estamos en el paso 2 y no estamos ya validando
-      if (currentStep !== 2 || isValidating) return;
-      
-      isValidating = true;
-
-      const token = localStorage.getItem('authToken');
-      const hasFirebaseUser = firebaseUser !== null || auth.currentUser !== null;
-
-      // Si está autenticado por el contexto O tiene token O tiene usuario, permitir continuar
-      if (isAuthenticated || token || hasFirebaseUser) {
-        isValidating = false;
-        return;
-      }
-
-      // Si NO hay token NI usuario NI está autenticado, regresar al paso 1
-      if (!isAuthenticated && !token && !hasFirebaseUser) {
-        console.warn('⚠️ No hay autenticación válida en paso 2. Regresando al paso 1...');
-        setCurrentStep(1);
-        sessionStorage.setItem('checkoutCurrentStep', '1');
-        setShowLoginModal(true);
-        alert(language === 'es' 
-          ? 'Tu sesión ha expirado. Por favor inicia sesión nuevamente.'
-          : 'Your session has expired. Please log in again.');
-        isValidating = false;
-        return;
-      }
-      
-      isValidating = false;
-    };
-
-    // Esperar un momento antes de validar para evitar validaciones prematuras
-    const timer = setTimeout(() => {
-      validateTokenOnStep2();
-    }, 300);
-
-    return () => clearTimeout(timer);
-  }, [currentStep, isAuthenticated, firebaseUser]);
-
-  // Cargar códigos telefónicos
-  useEffect(() => {
-    const loadPhoneCodes = async () => {
-      setLoadingPhoneCodes(true);
-      try {
-        const response = await countriesApi.getPhoneCodes({
-          lang: language,
-          all: true,
-          sortBy: 'countryName'
-        });
-        
-        if (response.success && response.data.length > 0) {
-          // Verificar si los phoneCodes tienen id
-          console.log('📞 PhoneCodes recibidos:', response.data);
-          console.log('📞 Primer phoneCode:', response.data[0]);
-          console.log('📞 ¿Tiene id?:', response.data[0]?.id);
-          
-          setPhoneCodes(response.data);
-          // Buscar Perú específicamente y establecerlo como valor por defecto
-          setFormData(prev => {
-            // Buscar Perú por código (51, +51) o por código ISO (PE)
-            const peruCode = response.data.find(
-              (pc) => {
-                const codeWithoutPlus = pc.code?.replace('+', '').trim();
-                return (
-                  codeWithoutPlus === '51' || 
-                  pc.code === '51' ||
-                  pc.code === '+51' ||
-                  pc.code2?.toLowerCase() === 'pe' || 
-                  pc.countryName?.toLowerCase().includes('peru') ||
-                  pc.countryName?.toLowerCase().includes('perú')
-                );
-              }
-            );
-            
-            // Priorizar Perú, si no se encuentra usar el primer país
-            const defaultCode = peruCode || response.data[0];
-            
-            // Establecer Perú como valor por defecto solo si no hay un phoneCode seleccionado
-            if (defaultCode && !prev.phoneCode) {
-              return {
-                ...prev,
-                phoneCode: `(${defaultCode.code})`,
-                phonePostalCode: defaultCode.code,
-                phoneCodeId: defaultCode.id || prev.phoneCodeId || 0
-              };
-            }
-            return prev;
-          });
-        }
-      } catch (error) {
-        console.error('Error loading phone codes:', error);
-      } finally {
-        setLoadingPhoneCodes(false);
-      }
-    };
-
-    loadPhoneCodes();
-  }, [language]);
-
-  // Actualizar phoneCode cuando se cargan los phoneCodes, buscando el código asociado al usuario
-  useEffect(() => {
-    if (phoneCodes.length === 0 || loadingPhoneCodes) {
-      return;
-    }
-
-    let foundPhoneCode: PhoneCode | undefined = undefined;
-
-    // Si phonePostalCode existe, buscar el código telefónico que coincida con phoneCode.code
-    if (formData.phonePostalCode) {
-      foundPhoneCode = phoneCodes.find(pc => {
-        // Comparar phonePostalCode con phoneCode.code (normalizando formatos)
-        const postalCodeClean = formData.phonePostalCode.replace(/[()]/g, '').replace('+', '').trim();
-        const codeClean = pc.code?.replace(/[()]/g, '').replace('+', '').trim();
-        return codeClean === postalCodeClean || pc.code === formData.phonePostalCode;
-      });
-    }
-
-    // Si se encuentra el código, establecerlo
-    if (foundPhoneCode) {
-      const phoneCodeValue = `(${foundPhoneCode.code})`;
-      if (formData.phoneCode !== phoneCodeValue) {
-        setFormData(prev => ({
-          ...prev,
-          phoneCode: phoneCodeValue,
-          phonePostalCode: foundPhoneCode!.code,
-          phoneCodeId: foundPhoneCode!.id || prev.phoneCodeId || 0
-        }));
-      }
-    } else {
-      // Si phonePostalCode es null, no establecer ningún código (mostrará "Seleccione un código telefónico")
-      // Si phonePostalCode existe pero no se encontró, usar +51 (Perú) como predeterminado
-      if (formData.phonePostalCode) {
-        const defaultPeruCode = phoneCodes.find(pc => {
-          const codeClean = pc.code?.replace(/[()]/g, '').replace('+', '');
-          return codeClean === '51' || pc.code === '+51' || pc.code === '51';
-        });
-
-        if (defaultPeruCode && (!formData.phoneCode || formData.phoneCode === '')) {
-          setFormData(prev => ({
-            ...prev,
-            phoneCode: `(${defaultPeruCode.code})`,
-            phonePostalCode: defaultPeruCode.code,
-            phoneCodeId: defaultPeruCode.id || prev.phoneCodeId || 0
-          }));
-        }
-      } else if (!formData.phonePostalCode && formData.phoneCode) {
-        // Si phonePostalCode es null y hay un código seleccionado, limpiarlo para mostrar el option por defecto
-        setFormData(prev => ({
-          ...prev,
-          phoneCode: ''
-        }));
-      }
-    }
-  }, [phoneCodes, formData.phonePostalCode, loadingPhoneCodes, formData.phoneCode]);
-
-  // Cargar nacionalidades
-  useEffect(() => {
-    const loadNationalities = async () => {
-      setLoadingNationalities(true);
-      try {
-        const response = await countriesApi.getNationalities({
-          lang: language,
-          all: true,
-          sortBy: 'denomination'
-        });
-        
-        if (response.success && response.data.length > 0) {
-          setNationalities(response.data);
-        }
-      } catch (error) {
-        console.error('Error loading nationalities:', error);
-      } finally {
-        setLoadingNationalities(false);
-      }
-    };
-
-    loadNationalities();
-  }, [language]);
-
-  // Cargar título de actividad por idioma
-  useEffect(() => {
-    if (!bookingDetails) {
-      // Si no hay bookingDetails, limpiar el título, rating y commentsCount
-      setActivityTitle('');
-      setActivityRating(null);
-      setActivityCommentsCount(null);
-      return;
-    }
-
-    const loadActivityTitle = async () => {
-      // Si no hay activityId, usar el título del bookingDetails como fallback
-      if (!bookingDetails.activityId) {
-        if (bookingDetails.title) {
-          setActivityTitle(bookingDetails.title);
-        }
-        setActivityRating(null);
-        setActivityCommentsCount(null);
-        return;
-      }
-
-      try {
-        const activity = await activitiesApi.getById(
-          bookingDetails.activityId,
-          language,
-          currency || 'PEN',
-          bookingDetails.date
-        );
-        
-        if (activity) {
-          if (activity.title) {
-            setActivityTitle(activity.title);
-          } else if (bookingDetails.title) {
-            // Fallback al título del bookingDetails si la API no retorna título
-            setActivityTitle(bookingDetails.title);
-          }
-          
-          // Guardar el rating de la actividad (puede ser null)
-          setActivityRating(activity.rating);
-          // Guardar el conteo de comentarios de la actividad (puede ser null)
-          setActivityCommentsCount(activity.commentsCount);
-
-          // Buscar información de cancelación y lenguajes del bookingOption
-          if (activity.bookingOptions && activity.bookingOptions.length > 0) {
-            const bookingOption = activity.bookingOptions[0];
-            if (bookingOption) {
-              // Guardar el bookingOption completo para acceder a schedules
-              setCurrentBookingOption(bookingOption);
-              
-              setBookingOptionCancelInfo({
-                cancelBefore: bookingOption.cancelBefore ? String(bookingOption.cancelBefore) : undefined,
-                cancelBeforeMinutes: bookingOption.cancelBeforeMinutes || undefined
-              });
-
-              // Establecer lenguajes disponibles del guía si existen en el bookingOption
-              if (Array.isArray((bookingOption as any).languages) && (bookingOption as any).languages.length > 0) {
-                const langs = (bookingOption as any).languages as string[];
-                setAvailableGuideLanguages(langs);
-                // Si no hay valor de edición establecido, prefijar con el actual o el primero
-                setEditedLanguage(prev => prev || bookingDetails.guideLanguage || langs[0]);
-              }
-
-              // Calcular y persistir precio unitario (basado en priceTiers.totalPrice) y descuento
-              try {
-                const totalTravelers = (bookingDetails.travelers?.adults || 0) + (bookingDetails.travelers?.children || 0);
-                let matchingTier: any | null = null;
-                if (Array.isArray((bookingOption as any).priceTiers) && (bookingOption as any).priceTiers.length > 0) {
-                  matchingTier = (bookingOption as any).priceTiers.find((tier: any) => {
-                    const min = tier.minParticipants || 1;
-                    const max = tier.maxParticipants || Infinity;
-                    return totalTravelers >= min && totalTravelers <= max;
-                  }) || null;
-                }
-
-                const baseUnitPrice = matchingTier?.totalPrice != null && !isNaN(matchingTier.totalPrice)
-                  ? Number(matchingTier.totalPrice)
-                  : Number((bookingOption as any).pricePerPerson) || 0;
-                const resolvedCurrency = matchingTier?.currency || (bookingOption as any).currency || 'PEN';
-
-                const offer = (bookingOption as any).specialOfferPercentage;
-                const hasDiscount = offer != null && offer > 0;
-                const originalUnitPrice = Math.ceil(baseUnitPrice);
-                const finalUnitPrice = hasDiscount
-                  ? Math.ceil(baseUnitPrice - (baseUnitPrice * (offer / 100)))
-                  : originalUnitPrice;
-                const totalPrice = finalUnitPrice * (totalTravelers || 1);
-
-                if (matchingTier) {
-                  setActivePriceTier(matchingTier);
-                  sessionStorage.setItem('checkoutActivePriceTier', JSON.stringify(matchingTier));
-                } else {
-                  setActivePriceTier(null);
-                  sessionStorage.removeItem('checkoutActivePriceTier');
-                }
-
-                const updated: BookingDetails = {
-                  ...bookingDetails,
-                  bookingOptionId: bookingOption.id || bookingDetails.bookingOptionId,
-                  price: finalUnitPrice,
-                  originalPrice: originalUnitPrice,
-                  hasDiscount: !!hasDiscount,
-                  discountPercentage: hasDiscount ? Number(offer) : 0,
-                  currency: resolvedCurrency,
-                  totalPrice,
-                  commissionPercent: matchingTier?.commissionPercent ?? bookingDetails.commissionPercent
-                };
-                setBookingDetails(updated);
-                sessionStorage.setItem('checkoutBookingDetails', JSON.stringify(updated));
-                sessionStorage.setItem('bookingDetails', JSON.stringify(updated));
-              } catch (e) {
-                console.warn('No se pudo calcular el precio unitario desde priceTiers:', e);
-              }
-            }
-          }
-        } else if (bookingDetails.title) {
-          // Fallback al título del bookingDetails si la API no retorna nada
-          setActivityTitle(bookingDetails.title);
-          setActivityRating(null);
-          setActivityCommentsCount(null);
-        }
-      } catch (error) {
-        console.error('Error loading activity title:', error);
-        // En caso de error, usar el título del bookingDetails como fallback
-        if (bookingDetails.title) {
-        setActivityTitle(bookingDetails.title);
-      }
-      setActivityRating(null);
-      setActivityCommentsCount(null);
-    }
-    };
-
-    loadActivityTitle();
-  }, [bookingDetails?.activityId, bookingDetails?.date, language, currency]);
-
-  // Countdown timer
-  useEffect(() => {
-    if (timeLeft > 0) {
-      const timer = setTimeout(() => {
-        const newTimeLeft = timeLeft - 1;
-        setTimeLeft(newTimeLeft);
-        // Guardar el tiempo restante en sessionStorage
-        sessionStorage.setItem('checkoutTimeLeft', newTimeLeft.toString());
-      }, 1000);
-      return () => clearTimeout(timer);
-    } else {
-      // Tiempo expirado, enviar actividad al cart y limpiar datos
-      if (bookingDetails) {
-        try {
-          const cartItem = convertBookingDetailsToCartItem(bookingDetails);
-          const itemAdded = addItem(cartItem);
-        } catch (error) {
-          console.error('❌ Error al enviar actividad al carrito:', error);
-        }
-      }
-      
-      // Limpiar datos del checkout
-      sessionStorage.removeItem('checkoutBookingDetails');
-      sessionStorage.removeItem('checkoutTimeLeft');
-      
-      // Redirigir al carrito
-      navigate('/cart');
-    }
-  }, [timeLeft, navigate, bookingDetails, addItem]);
-
-  const formatTime = (seconds: number, lang: string = 'es'): string => {
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = seconds % 60;
-    
-    if (minutes > 0 && remainingSeconds > 0) {
-      const minutesText = minutes === 1 
-        ? (lang === 'es' ? 'minuto' : 'minute')
-        : (lang === 'es' ? 'minutos' : 'minutes');
-      const secondsText = remainingSeconds === 1
-        ? (lang === 'es' ? 'segundo' : 'second')
-        : (lang === 'es' ? 'segundos' : 'seconds');
-      const connector = lang === 'es' ? 'y' : 'and';
-      return `${minutes} ${minutesText} ${connector} ${remainingSeconds} ${secondsText}`;
-    } else if (minutes > 0) {
-      const minutesText = minutes === 1 
-        ? (lang === 'es' ? 'minuto' : 'minute')
-        : (lang === 'es' ? 'minutos' : 'minutes');
-      return `${minutes} ${minutesText}`;
-    } else {
-      const secondsText = remainingSeconds === 1
-        ? (lang === 'es' ? 'segundo' : 'second')
-        : (lang === 'es' ? 'segundos' : 'seconds');
-      return `${remainingSeconds} ${secondsText}`;
-    }
-  };
-
-  // Función para capitalizar la primera letra del nombre del país
-  const capitalizeCountryName = (countryName: string): string => {
-    if (!countryName) return countryName;
-    return countryName.charAt(0).toUpperCase() + countryName.slice(1).toLowerCase();
-  };
-
-  // Función para capitalizar la denominación de nacionalidad
-  const capitalizeDenomination = (denomination: string): string => {
-    if (!denomination) return denomination;
-    return denomination.charAt(0).toUpperCase() + denomination.slice(1).toLowerCase();
-  };
-
-  // Calcular el total de viajeros
-  const getTotalTravelers = (): number => {
-    if (!bookingDetails) return 0;
-    return bookingDetails.travelers.adults + bookingDetails.travelers.children;
-  };
-
-  // Calcular precio total considerando la cantidad de viajeros
-  // IMPORTANTE: bookingDetails.price es el precio FINAL (con descuento si existe)
-  const calculateTotalPrice = (): { originalTotal: number; finalTotal: number } => {
-    if (!bookingDetails) return { originalTotal: 0, finalTotal: 0 };
-    
-    const totalTravelers = getTotalTravelers();
-    // Redondear solo los precios unitarios con ceil
-    const ceilOriginalPrice = Math.ceil(bookingDetails.originalPrice);
-    const ceilFinalPrice = Math.ceil(bookingDetails.price); // Usar bookingDetails.price (precio FINAL)
-    // Calcular totales multiplicando el precio unitario redondeado por la cantidad de viajeros
-    const originalTotal = ceilOriginalPrice * totalTravelers;
-    const finalTotal = ceilFinalPrice * totalTravelers;
-    
-    return { originalTotal, finalTotal };
-  };
-
-  // Función para obtener el dayOfWeek (Lunes=0, Martes=1, etc.)
-  const getDayOfWeek = (dateString: string): number => {
-    const date = new Date(dateString);
-    const day = date.getDay(); // 0=Domingo, 1=Lunes, ..., 6=Sábado
-    // Convertir a: 0=Lunes, 1=Martes, ..., 6=Domingo
-    return day === 0 ? 6 : day - 1;
-  };
-
-  // Función para obtener horarios disponibles según el día de la semana
-  const getAvailableTimesForDate = (dateString: string): string[] => {
-    if (!currentBookingOption || !currentBookingOption.schedules || !Array.isArray(currentBookingOption.schedules)) {
-      return [];
-    }
-
-    const dayOfWeek = getDayOfWeek(dateString);
-    const schedulesForDay = currentBookingOption.schedules.filter(
-      (schedule: any) => schedule.dayOfWeek === dayOfWeek && schedule.isActive
-    );
-
-    // Extraer los startTime únicos y ordenarlos
-    const times: string[] = schedulesForDay
-      .map((schedule: any) => schedule.startTime)
-      .filter((time: any): time is string => typeof time === 'string' && time !== null && time !== undefined)
-      .sort();
-
-    return Array.from(new Set(times)); // Eliminar duplicados
-  };
-
-  // Función para formatear la fecha de salida (fecha original que no cambia)
-  const getDepartureDateFormatted = (): string | null => {
-    if (!bookingDetails?.date || !bookingDetails?.time) {
-      return null;
-    }
-
-    try {
-      const [year, month, day] = bookingDetails.date.split('-').map(Number);
-      const timeParts = bookingDetails.time.split(':');
-      const hours = timeParts[0] ? parseInt(timeParts[0], 10) : 0;
-      const minutes = timeParts[1] ? parseInt(timeParts[1], 10) : 0;
-      
-      const departureDate = new Date(year, month - 1, day, hours, minutes, 0);
-      
-      if (isNaN(departureDate.getTime())) {
-        return null;
-      }
-      
-      const dateOptions: Intl.DateTimeFormatOptions = {
-        day: 'numeric',
-        month: 'long',
-        year: 'numeric'
-      };
-      
-      const timeOptions: Intl.DateTimeFormatOptions = {
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: true
-      };
-      
-      if (language === 'es') {
-        const dateStr = departureDate.toLocaleDateString('es-ES', dateOptions);
-        const timeStr = departureDate.toLocaleTimeString('es-ES', timeOptions);
-        return `${dateStr} a las ${timeStr}`;
-      } else {
-        const dateStr = departureDate.toLocaleDateString('en-US', dateOptions);
-        const timeStr = departureDate.toLocaleTimeString('en-US', timeOptions);
-        return `${dateStr} at ${timeStr}`;
-      }
-    } catch (error) {
-      console.error('Error formatting departure date:', error);
-      return null;
-    }
-  };
-
-  // Verificar si la fecha límite de cancelación ya pasó
-  const isCancellationDeadlinePassed = (): boolean => {
-    if (!bookingDetails) {
-      return false;
-    }
-
-    const cancelBeforeMinutes = bookingDetails.cancelBeforeMinutes ?? bookingOptionCancelInfo?.cancelBeforeMinutes;
-    
-    if (cancelBeforeMinutes === undefined || cancelBeforeMinutes === null || cancelBeforeMinutes <= 0) {
-      return false;
-    }
-
-    if (!bookingDetails.date || !bookingDetails.time) {
-      return false;
-    }
-
-    try {
-      // Parsear fecha y hora de salida
-      const [year, month, day] = bookingDetails.date.split('-').map(Number);
-      const timeParts = bookingDetails.time.split(':');
-      const hours = timeParts[0] ? parseInt(timeParts[0], 10) : 0;
-      const minutes = timeParts[1] ? parseInt(timeParts[1], 10) : 0;
-      
-      // Crear fecha y hora de salida
-      const departureDate = new Date(year, month - 1, day, hours, minutes, 0);
-      
-      // Calcular fecha límite de cancelación
-      const cancellationDeadline = new Date(departureDate.getTime() - (cancelBeforeMinutes * 60 * 1000));
-      
-      // Comparar con la fecha/hora actual
-      const now = new Date();
-      
-      // Si la fecha límite es anterior a la fecha actual, significa que ya pasó
-      return cancellationDeadline < now;
-    } catch (error) {
-      console.error('Error verificando fecha límite de cancelación:', error);
-      return false;
-    }
-  };
-
-  // Calcular fecha límite para confirmar o cancelar la reserva (basado en cancelBefore)
-  const getReservationDeadline = (): string | null => {
-    // Verificar que tenemos los datos necesarios
-    if (!bookingDetails) {
-      return null;
-    }
-
-    // Obtener cancelBeforeMinutes de bookingDetails o de bookingOptionCancelInfo
-    const cancelBeforeMinutes = bookingDetails.cancelBeforeMinutes ?? bookingOptionCancelInfo?.cancelBeforeMinutes;
-    
-    // Si tenemos cancelBeforeMinutes, calcular desde fecha/hora de salida
-    if (cancelBeforeMinutes !== undefined && cancelBeforeMinutes !== null && cancelBeforeMinutes > 0) {
-      if (!bookingDetails.date || !bookingDetails.time) {
-        console.warn('No hay fecha o hora de salida para calcular la fecha límite de confirmación', {
-          date: bookingDetails.date,
-          time: bookingDetails.time
-        });
-        return null;
-      }
-
-      try {
-        // Parsear fecha y hora de salida de la actividad
-        const [year, month, day] = bookingDetails.date.split('-').map(Number);
-        const timeParts = bookingDetails.time.split(':');
-        const hours = timeParts[0] ? parseInt(timeParts[0], 10) : 0;
-        const minutes = timeParts[1] ? parseInt(timeParts[1], 10) : 0;
-        
-        // Crear fecha y hora de salida de la actividad
-        const departureDate = new Date(year, month - 1, day, hours, minutes, 0);
-        // La fecha límite es la fecha de salida menos los minutos de cancelBefore
-        const reservationDeadline = new Date(departureDate.getTime() - (cancelBeforeMinutes * 60 * 1000));
-        
-        // Verificar que la fecha es válida
-        if (isNaN(reservationDeadline.getTime())) {
-          console.error('Fecha límite de confirmación inválida');
-          return null;
-        }
-        
-        // Formatear según el idioma con formato más legible
-        const dateOptions: Intl.DateTimeFormatOptions = {
-          day: 'numeric',
-          month: 'long',
-          year: 'numeric'
-        };
-        
-        const timeOptions: Intl.DateTimeFormatOptions = {
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: true
-        };
-        
-        if (language === 'es') {
-          const dateStr = reservationDeadline.toLocaleDateString('es-ES', dateOptions);
-          const timeStr = reservationDeadline.toLocaleTimeString('es-ES', timeOptions);
-          return `${dateStr} a las ${timeStr}`;
-        } else {
-          const dateStr = reservationDeadline.toLocaleDateString('en-US', dateOptions);
-          const timeStr = reservationDeadline.toLocaleTimeString('en-US', timeOptions);
-          return `${dateStr} at ${timeStr}`;
-        }
-      } catch (error) {
-        console.error('Error calculating reservation deadline:', error);
-        return null;
-      }
-    }
-
-    // Si no hay cancelBeforeMinutes pero hay cancelBefore string, intentar usarlo
-    const cancelBefore = bookingDetails.cancelBefore || bookingOptionCancelInfo?.cancelBefore;
-    if (cancelBefore) {
-      return cancelBefore;
-    }
-
-    return null;
-  };
-
-  // Calcular fecha límite de cancelación
-  const getCancellationDeadline = (): string | null => {
-    // Verificar que tenemos los datos necesarios
-    if (!bookingDetails) {
-      return null;
-    }
-
-    // Obtener cancelBeforeMinutes de bookingDetails o de bookingOptionCancelInfo
-    const cancelBeforeMinutes = bookingDetails.cancelBeforeMinutes ?? bookingOptionCancelInfo?.cancelBeforeMinutes;
-    
-    // Si tenemos cancelBeforeMinutes, calcular desde fecha/hora de salida
-    if (cancelBeforeMinutes !== undefined && cancelBeforeMinutes !== null && cancelBeforeMinutes > 0) {
-      if (!bookingDetails.date || !bookingDetails.time) {
-        console.warn('No hay fecha o hora de salida para calcular la cancelación', {
-          date: bookingDetails.date,
-          time: bookingDetails.time
-        });
-        return null;
-      }
-
-      try {
-        // Parsear fecha y hora de salida de la actividad
-        const [year, month, day] = bookingDetails.date.split('-').map(Number);
-        const timeParts = bookingDetails.time.split(':');
-        const hours = timeParts[0] ? parseInt(timeParts[0], 10) : 0;
-        const minutes = timeParts[1] ? parseInt(timeParts[1], 10) : 0;
-        
-        // Crear fecha y hora de salida de la actividad
-        const departureDate = new Date(year, month - 1, day, hours, minutes, 0);
-        const cancellationDeadline = new Date(departureDate.getTime() - (cancelBeforeMinutes * 60 * 1000));
-        
-        // Verificar que la fecha es válida
-        if (isNaN(cancellationDeadline.getTime())) {
-          console.error('Fecha de cancelación inválida');
-          return null;
-        }
-        
-        // Formatear según el idioma con formato más legible
-        const dateOptions: Intl.DateTimeFormatOptions = {
-          day: 'numeric',
-          month: 'long',
-          year: 'numeric'
-        };
-        
-        const timeOptions: Intl.DateTimeFormatOptions = {
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: true
-        };
-        
-        if (language === 'es') {
-          const dateStr = cancellationDeadline.toLocaleDateString('es-ES', dateOptions);
-          const timeStr = cancellationDeadline.toLocaleTimeString('es-ES', timeOptions);
-          const result = `${dateStr} a las ${timeStr}`;
-          return result;
-        } else {
-          const dateStr = cancellationDeadline.toLocaleDateString('en-US', dateOptions);
-          const timeStr = cancellationDeadline.toLocaleTimeString('en-US', timeOptions);
-          const result = `${dateStr} at ${timeStr}`;
-          return result;
-        }
-      } catch (error) {
-        console.error('Error calculating cancellation deadline:', error);
-        return null;
-      }
-    }
-
-    return null;
-  };
-
+  // Manejar cambios en el formulario
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     
-    // Manejar phonePostalId como número (similar a nationality)
     if (name === 'phonePostalId') {
-      const phonePostalIdValue = value ? parseInt(value, 10) : 0;
-      
-      // Buscar el PhoneCode correspondiente para obtener el código y actualizar campos relacionados
-      const selectedPhoneCode = phoneCodes.find(pc => pc.id === phonePostalIdValue);
-      
-      setFormData(prev => ({
-        ...prev,
-        phonePostalId: phonePostalIdValue || prev.phonePostalId || 0,
-        phoneCodeId: selectedPhoneCode?.id || prev.phoneCodeId || 0,
-        phonePostalCode: selectedPhoneCode?.code || prev.phonePostalCode || '',
-        phoneCode: selectedPhoneCode ? `(${selectedPhoneCode.code})` : prev.phoneCode || ''
-      }));
+      const selectedPhoneCode = phoneCodes.find(pc => pc.id === Number(value));
+      if (selectedPhoneCode) {
+        setFormData(prev => ({
+          ...prev,
+          phonePostalId: Number(value),
+          phoneCodeId: selectedPhoneCode.id || 0,
+          phoneCode: `(${selectedPhoneCode.code})`,
+          phonePostalCode: selectedPhoneCode.code || '',
+        }));
+      }
     } else {
       setFormData(prev => ({
         ...prev,
-        [name]: value
+        [name]: value,
       }));
-      
-      // Sincronizar phoneNumber con phone para compatibilidad
-      if (name === 'phoneNumber') {
-        setFormData(prev => ({
-          ...prev,
-          phone: value
-        }));
+    }
+  };
+
+  // Guardar información de contacto
+  const handleSaveContactInfo = async () => {
+    if (!areRequiredFieldsComplete(formData)) {
+      alert(getTranslation('checkout.pleaseCompleteFields', language) || (language === 'es' 
+        ? 'Por favor completa todos los campos obligatorios'
+        : 'Please complete all required fields'));
+      return;
+    }
+
+    if (!isAuthenticated) {
+      alert(getTranslation('checkout.mustLoginToSaveContact', language) || (language === 'es' 
+        ? 'Debes iniciar sesión para guardar la información de contacto'
+        : 'You must log in to save contact information'));
+      return;
+    }
+
+    setIsSavingContactInfo(true);
+    try {
+      // Preparar el request para la API según la interfaz UpdateTravelerContactInfoRequest
+      const updateRequest: UpdateTravelerContactInfoRequest = {
+        firstName: formData.name.trim(),
+        lastName: formData.lastName.trim(),
+        email: formData.email.trim(),
+        phoneNumber: formData.phoneNumber.trim(),
+      };
+
+      // Agregar phonePostalId si está disponible
+      if (formData.phonePostalId > 0) {
+        updateRequest.phonePostalId = formData.phonePostalId;
       }
+
+      // Agregar phoneCodeId si está disponible
+      if (formData.phoneCodeId > 0) {
+        updateRequest.phoneCodeId = formData.phoneCodeId;
+      }
+
+      // Agregar countryBirthCode2 si está disponible (es un string con el código de 2 letras, ej: "PE", "US")
+      if (formData.nationality && formData.nationality !== 'none') {
+        updateRequest.countryBirthCode2 = formData.nationality;
+      }
+
+      // Mostrar el request completo que se enviará
+      console.log('📤 Request a enviar para actualizar información de contacto:');
+      console.log('📋 Datos del formulario original:', {
+        name: formData.name,
+        lastName: formData.lastName,
+        email: formData.email,
+        phoneNumber: formData.phoneNumber,
+        phonePostalId: formData.phonePostalId,
+        phoneCodeId: formData.phoneCodeId,
+        phonePostalCode: formData.phonePostalCode,
+        nationality: formData.nationality,
+        countryBirthCode2: formData.nationality !== 'none' ? formData.nationality : undefined
+      });
+      console.log('📤 Request final para la API (UpdateTravelerContactInfoRequest):', JSON.stringify(updateRequest, null, 2));
+      console.log('📋 Estructura del request:', {
+        firstName: updateRequest.firstName,
+        lastName: updateRequest.lastName,
+        email: updateRequest.email,
+        phoneNumber: updateRequest.phoneNumber,
+        phonePostalId: updateRequest.phonePostalId,
+        phoneCodeId: updateRequest.phoneCodeId,
+        countryBirthCode2: updateRequest.countryBirthCode2,
+        documentTypeId: updateRequest.documentTypeId,
+        documentNumber: updateRequest.documentNumber
+      });
+
+      // Llamar a la API para actualizar la información de contacto
+      const response = await authApi.updateTravelerContactInfo(updateRequest);
       
-      // Si se selecciona un phoneCode, también actualizar phonePostalCode y phoneCodeId
-      if (name === 'phoneCode') {
-        setFormData(prev => {
-          // Si se selecciona el option "Seleccione un código telefónico" (value vacío), establecer como null
-          if (!value || value.trim() === '') {
-            return {
-              ...prev,
-              phoneCode: '',
-              phonePostalCode: '', // Se guarda como string vacío pero se envía como null al backend
-              phoneCodeId: 0,
-              phonePostalId: 0
-            };
+      console.log('✅ Información de contacto guardada:', response);
+
+      // Refrescar los datos del usuario en el contexto
+      await refreshUserData();
+
+      // Actualizar el estado local
+      setIsEditingContactInfo(false);
+      
+      alert(getTranslation('checkout.contactInfoSaved', language) || (language === 'es' 
+        ? 'Información de contacto guardada exitosamente'
+        : 'Contact information saved successfully'));
+    } catch (error: any) {
+      console.error('Error saving contact info:', error);
+      const errorMessage = error?.message || error?.response?.data?.message || 
+        (language === 'es' 
+          ? 'Error al guardar la información de contacto'
+          : 'Error saving contact information');
+      alert(errorMessage);
+    } finally {
+      setIsSavingContactInfo(false);
+    }
+  };
+
+  // Manejar selección de método de pago
+  const handlePaymentMethodSelect = (method: 'paypal' | 'googlepay' | 'reserve' | 'reserveLater') => {
+    setPaymentMethod(method);
+  };
+
+  // Función helper para actualizar todas las órdenes
+  const updateAllOrders = useCallback(async (
+    orderStatus: "CREATED" | "CONFIRMED" | "CANCELLED" | "COMPLETED",
+    paymentStatus: "PENDING" | "PAID" | "CANCELLED" | "REFUNDED",
+    paymentMethod: "CARD" | "CASH" | "TRANSFER" | "NONE",
+    paymentProvider: "GOOGLE_PAY" | "PAYPAL" | "MERCADO_PAGO" | "STRIPE" | "YAPE" | "NIUBIZ" | "OTHER"
+  ): Promise<OrderResponse[]> => {
+    // Mostrar el request que se enviará para cada orden
+    console.log('📤 Request a enviar para actualizar órdenes:');
+    orders.forEach((order, index) => {
+      const request = {
+        orderId: order.id,
+        orderStatus,
+        paymentStatus,
+        paymentMethod,
+        paymentProvider
+      };
+      console.log(`  Orden ${index + 1}/${orders.length}:`, JSON.stringify(request, null, 2));
+    });
+
+    const updatePromises = orders.map(order => 
+      ordersApi.updateOrder(order.id, {
+        orderStatus,
+        paymentStatus,
+        paymentMethod,
+        paymentProvider
+      })
+    );
+
+    await Promise.all(updatePromises);
+    console.log(`✅ Todas las órdenes actualizadas: orderStatus=${orderStatus}, paymentStatus=${paymentStatus}, paymentMethod=${paymentMethod}, paymentProvider=${paymentProvider}`);
+
+    // Nota: getOrdersDraft solo obtiene órdenes DRAFT, no CREATED o CONFIRMED
+    // Por ahora, retornamos las órdenes originales actualizadas localmente
+    // TODO: Si se necesita obtener órdenes CREATED/CONFIRMED, crear una nueva función API
+    return orders;
+  }, [orders]);
+
+  // Inicializar PayPal Buttons
+  useEffect(() => {
+    if (paymentMethod === 'paypal' && paypalScriptLoaded && paypalButtonRef.current && (window as any).paypal) {
+      // Limpiar contenido previo
+      paypalButtonRef.current.innerHTML = '';
+
+      (window as any).paypal.Buttons({
+        style: {
+          layout: 'vertical',
+          color: 'blue',
+          shape: 'rect',
+          label: 'paypal'
+        },
+        createOrder: async (data: any, actions: any) => {
+          try {
+            // Crear orden en PayPal
+            return actions.order.create({
+              purchase_units: [{
+                amount: {
+                  value: totalAmount.toFixed(2),
+                  currency_code: currencyForTotal || 'USD'
+                },
+                description: `${checkoutSummaryItems.length} ${language === 'es' ? 'actividades' : 'activities'}`
+              }]
+            });
+          } catch (error) {
+            console.error('Error creating PayPal order:', error);
+            alert(getTranslation('checkout.errorCreatingOrder', language) || (language === 'es' 
+              ? 'Error al crear la orden de pago'
+              : 'Error creating payment order'));
+            throw error;
           }
-          
-          // Extraer el código del formato "(+51)" o similar
-          const codeMatch = value.match(/\(([^)]+)\)/);
-          const code = codeMatch ? codeMatch[1] : value;
-          
-          // Buscar el PhoneCode correspondiente para obtener el ID
-          const selectedPhoneCode = phoneCodes.find(pc => pc.code === code || `(${pc.code})` === value);
-          
-          return {
-            ...prev,
-            phonePostalCode: code || prev.phonePostalCode,
-            phoneCodeId: selectedPhoneCode?.id || prev.phoneCodeId || 0,
-            phonePostalId: selectedPhoneCode?.id || prev.phonePostalId || 0
-          };
+        },
+        onApprove: async (data: any, actions: any) => {
+          try {
+            setIsProcessingPayment(true);
+            // Capturar el pago
+            const details = await actions.order.capture();
+            console.log('💳 PayPal payment approved:', details);
+            console.log('🔄 Iniciando actualización de órdenes con PayPal...');
+
+            // Actualizar todas las órdenes con CONFIRMED
+            const updatedOrders = await updateAllOrders('CONFIRMED', 'PAID', 'CARD', 'PAYPAL');
+
+            // Redirigir a página de éxito
+            navigate('/payment-completed', { 
+              state: { 
+                paymentMethod: 'paypal',
+                paymentStatus: 'PAID',
+                paymentProvider: 'PAYPAL',
+                paymentDetails: details,
+                orders: updatedOrders,
+                totalAmount: totalAmount,
+                currency: currencyForTotal
+              } 
+            });
+          } catch (error) {
+            console.error('Error processing PayPal payment:', error);
+            alert(getTranslation('checkout.errorProcessingPayment', language) || (language === 'es' 
+              ? 'Error al procesar el pago'
+              : 'Error processing payment'));
+            setIsProcessingPayment(false);
+          }
+        },
+        onError: (err: any) => {
+          console.error('PayPal error:', err);
+          alert(getTranslation('checkout.paymentError', language) || (language === 'es' 
+            ? 'Error en el proceso de pago'
+            : 'Payment error'));
+          setIsProcessingPayment(false);
+        },
+        onCancel: () => {
+          console.log('PayPal payment cancelled');
+          setIsProcessingPayment(false);
+        }
+      }).render(paypalButtonRef.current);
+    }
+  }, [paymentMethod, paypalScriptLoaded, totalAmount, currencyForTotal, checkoutSummaryItems, language, navigate, orders, updateAllOrders]);
+
+  // Procesar pago para métodos que no son PayPal/Google Pay
+  const handleProcessPayment = async () => {
+    if (!paymentMethod) {
+      alert(getTranslation('checkout.pleaseSelectPaymentMethod', language) || (language === 'es' 
+        ? 'Por favor selecciona un método de pago'
+        : 'Please select a payment method'));
+      return;
+    }
+
+    if (paymentMethod === 'paypal' || paymentMethod === 'googlepay') {
+      // PayPal y Google Pay se manejan con sus propios botones
+      return;
+    }
+
+    if (!areRequiredFieldsComplete(formData)) {
+      alert(getTranslation('checkout.pleaseCompleteFields', language) || (language === 'es' 
+        ? 'Por favor completa todos los campos obligatorios'
+        : 'Please complete all required fields'));
+      return;
+    }
+
+    setIsProcessingPayment(true);
+    try {
+      // Procesar reserva sin pago inmediato
+      if (paymentMethod === 'reserveLater') {
+        console.log('📅 Processing reservation without immediate payment');
+        console.log('🔄 Iniciando actualización de órdenes para reservar y pagar después...');
+        
+        // Actualizar todas las órdenes con CREATED (reservar y pagar después)
+        const updatedOrders = await updateAllOrders('CREATED', 'PENDING', 'NONE', 'OTHER');
+
+        // Redirigir a página de éxito
+        navigate('/payment-completed', { 
+          state: { 
+            paymentMethod: 'reserve',
+            paymentStatus: 'PENDING',
+            paymentProvider: 'OTHER',
+            orders: updatedOrders,
+            totalAmount: totalAmount,
+            currency: currencyForTotal
+          } 
         });
       }
-      
-      // Si se selecciona una nationality, también actualizar countryBirthCode2
-      if (name === 'nationality') {
-        setFormData(prev => ({
-          ...prev,
-          countryBirthCode2: value || prev.countryBirthCode2
-        }));
-      }
+    } catch (error) {
+      console.error('Error processing payment:', error);
+      alert(getTranslation('checkout.errorProcessingPayment', language) || (language === 'es' 
+        ? 'Error al procesar el pago'
+        : 'Error processing payment'));
+      setIsProcessingPayment(false);
     }
   };
 
-  // Eliminada la función handleContinueWithoutLogin - el login ahora es obligatorio
+  // Manejar pago con Google Pay
+  const handleGooglePayPayment = async (paymentData: any) => {
+    try {
+      setIsProcessingPayment(true);
+      console.log('💳 Google Pay payment data:', paymentData);
+      console.log('🔄 Iniciando actualización de órdenes con Google Pay...');
 
-  // Login con Google (mismo flujo que Navbar)
+      // Actualizar todas las órdenes con CONFIRMED
+      const updatedOrders = await updateAllOrders('CONFIRMED', 'PAID', 'CARD', 'GOOGLE_PAY');
+
+      // Redirigir a página de éxito
+      navigate('/payment-completed', { 
+        state: { 
+          paymentMethod: 'googlepay',
+          paymentStatus: 'PAID',
+          paymentProvider: 'GOOGLE_PAY',
+          paymentDetails: paymentData,
+          orders: updatedOrders,
+          totalAmount: totalAmount,
+          currency: currencyForTotal
+        } 
+      });
+    } catch (error) {
+      console.error('Error processing Google Pay payment:', error);
+      alert(getTranslation('checkout.errorProcessingPayment', language) || (language === 'es' 
+        ? 'Error al procesar el pago'
+        : 'Error processing payment'));
+      setIsProcessingPayment(false);
+    }
+  };
+
+  // Manejar login con Google
   const handleLoginWithGoogle = async () => {
     try {
-      // Activar loading
-      setIsGoogleLoading(true);
-      
-      // Autenticar con Google usando Firebase
-      const result = await signInWithPopup(auth, googleProvider);
-      const user = result.user;
-      
-      // Obtener el ID token de Firebase para enviarlo al backend
-      const idToken = await user.getIdToken();
-      
-      // Llamar al backend para obtener el token de autenticación
-      try {
-        const backendResponse = await authApi.getInfoByTokenTravelerByGoogle(idToken);
-        
-        if (backendResponse.success) {
-          // Guardar el token de autenticación (del backend o Firebase token como fallback)
-          if (backendResponse.token) {
-            authApi.saveToken(backendResponse.token);
-          } else {
-            // Si no hay token del backend, guardar el token de Firebase
-            authApi.saveToken(idToken);
-          }
-          
-          // Actualizar información del usuario con la respuesta del backend
-          if (backendResponse.data) {
-            const userData = {
-              email: backendResponse.data.email || user.email || '',
-              displayName: backendResponse.data.nickname || backendResponse.data.username || user.displayName || '',
-              photoURL: backendResponse.data.profileImageUrl || user.photoURL || '',
-              uid: backendResponse.data.uid || user.uid,
-              username: backendResponse.data.username,
-              nickname: backendResponse.data.nickname,
-              firstname: backendResponse.data.firstname,
-              surname: backendResponse.data.surname,
-              roleId: backendResponse.data.roleId,
-              roleCode: backendResponse.data.roleCode
-            };
-            
-            // firebaseUser ahora viene del AuthContext
-            
-            // Extraer y cargar datos de contacto del backend al formulario
-            setFormData(prev => ({
-              ...prev,
-              email: backendResponse.data?.email || prev.email,
-              name: backendResponse.data?.firstname || prev.name,
-              lastName: backendResponse.data?.surname || prev.lastName,
-              phoneNumber: backendResponse.data?.phoneNumber || prev.phoneNumber,
-              phonePostalCode: backendResponse.data?.phonePostalCode || prev.phonePostalCode,
-              phonePostalId: backendResponse.data?.phonePostalId || prev.phonePostalId || 0,
-              phoneCodeId: backendResponse.data?.phoneCodeId || backendResponse.data?.phonePostalId || prev.phoneCodeId || 0,
-              countryBirthCode2: backendResponse.data?.countryBirthCode2 || prev.countryBirthCode2
-            }));
-            
-            // Buscar el código telefónico asociado al usuario
-            let foundPhoneCode: PhoneCode | undefined = undefined;
-            const phonePostalCode = backendResponse.data?.phonePostalCode;
-            
-            // Si phonePostalCode existe, buscar el código telefónico que coincida
-            if (phonePostalCode && phoneCodes.length > 0) {
-              foundPhoneCode = phoneCodes.find(pc => {
-                // Comparar phonePostalCode con phoneCode.code (normalizando formatos)
-                const postalCodeClean = phonePostalCode.replace(/[()]/g, '').replace('+', '').trim();
-                const codeClean = pc.code?.replace(/[()]/g, '').replace('+', '').trim();
-                return codeClean === postalCodeClean || pc.code === phonePostalCode;
-              });
-              
-              // Si se encuentra, establecerlo
-              if (foundPhoneCode) {
-                setFormData(prev => ({
-                  ...prev,
-                  phoneCode: `(${foundPhoneCode!.code})`,
-                  phonePostalCode: foundPhoneCode!.code,
-                  phoneCodeId: foundPhoneCode!.id || prev.phoneCodeId || 0
-                }));
-              }
-            }
-            
-            // Si phonePostalCode es null, no establecer ningún código (mostrará "Seleccione un código telefónico")
-            // Si phonePostalCode existe pero no se encontró, usar +51 (Perú) como predeterminado
-            if (phonePostalCode && !foundPhoneCode) {
-              const defaultPeruCode = phoneCodes.find(pc => {
-                const codeClean = pc.code?.replace(/[()]/g, '').replace('+', '');
-                return codeClean === '51' || pc.code === '+51' || pc.code === '51';
-              });
-              
-              if (defaultPeruCode) {
-                setFormData(prev => ({
-                  ...prev,
-                  phoneCode: `(${defaultPeruCode.code})`,
-                  phonePostalCode: defaultPeruCode.code,
-                  phoneCodeId: defaultPeruCode.id || prev.phoneCodeId || 0
-                }));
-              }
-            } else if (!phonePostalCode) {
-              // Si phonePostalCode es null, limpiar el código seleccionado para mostrar el option por defecto
-              setFormData(prev => ({
-                ...prev,
-                phoneCode: '',
-                phonePostalCode: ''
-              }));
-            }
-            
-            // Actualizar phone (compatibilidad) si phoneNumber está disponible
-            if (backendResponse.data?.phoneNumber) {
-              setFormData(prev => ({
-                ...prev,
-                phone: backendResponse.data?.phoneNumber || prev.phone
-              }));
-            }
-            
-            // Actualizar nationality si countryBirthCode2 está disponible
-            if (backendResponse.data?.countryBirthCode2) {
-              setFormData(prev => ({
-                ...prev,
-                nationality: backendResponse.data?.countryBirthCode2 || prev.nationality
-              }));
-            }
-          } else {
-            // Si no hay data en la respuesta, usar datos de Firebase
-            const userData = {
-              email: user.email || '',
-              displayName: user.displayName || '',
-              photoURL: user.photoURL || '',
-              uid: user.uid
-            };
-            
-            // firebaseUser ahora viene del AuthContext
-            
-            // Cargar datos básicos de Firebase al formulario
-            if (user.email) {
-              let firstName = '';
-              let lastName = '';
-              
-              if (user.displayName) {
-                const nameParts = user.displayName.trim().split(/\s+/);
-                if (nameParts.length > 0) {
-                  firstName = nameParts[0];
-                  if (nameParts.length > 1) {
-                    lastName = nameParts.slice(1).join(' ');
-                  }
-                }
-              }
-              
-              setFormData(prev => ({
-                ...prev,
-                email: user.email || prev.email,
-                name: prev.name || firstName,
-                lastName: prev.lastName || lastName
-              }));
-            }
-          }
-          
-          // Ya no necesitamos validar manualmente, el AuthContext lo hace automáticamente
-        } else {
-          // Guardar token de Firebase como fallback
-          authApi.saveToken(idToken);
-          
-          // Usar datos de Firebase
-          const userData = {
-            email: user.email || '',
-            displayName: user.displayName || '',
-            photoURL: user.photoURL || '',
-            uid: user.uid
-          };
-          
-          // firebaseUser ahora viene del AuthContext
-          
-          // Cargar datos en el formulario
-          if (user.email) {
-            let firstName = '';
-            let lastName = '';
-            
-            if (user.displayName) {
-              const nameParts = user.displayName.trim().split(/\s+/);
-              if (nameParts.length > 0) {
-                firstName = nameParts[0];
-                if (nameParts.length > 1) {
-                  lastName = nameParts.slice(1).join(' ');
-                }
-              }
-            }
-            
-            setFormData(prev => ({
-              ...prev,
-              email: user.email || prev.email,
-              name: firstName || prev.name,
-              lastName: lastName || prev.lastName
-            }));
-          }
-        }
-      } catch (backendError: any) {
-        // Guardar token de Firebase como fallback
-        authApi.saveToken(idToken);
-        
-        // Usar datos de Firebase
-        const userData = {
-          email: user.email || '',
-          displayName: user.displayName || '',
-          photoURL: user.photoURL || '',
-          uid: user.uid
-        };
-        
-        // firebaseUser ahora viene del AuthContext
-        
-        // Cargar datos en el formulario
-        if (user.email) {
-          setFormData(prev => ({
-            ...prev,
-            email: user.email || prev.email
-          }));
-        }
+      setIsLoggingIn(true);
+      const success = await loginWithGoogle();
+      if (success) {
+        setShowLoginModal(false);
+      } else {
+        alert(getTranslation('checkout.errorSigningIn', language) || (language === 'es' 
+          ? 'Error al iniciar sesión con Google. Por favor, intenta nuevamente.'
+          : 'Error signing in with Google. Please try again.'));
       }
-      
-      // Los datos ya se han cargado en el formulario arriba desde backendResponse.data
-      
-      // Cerrar modal y marcar autenticación como completada
-      setShowLoginModal(false);
-      authCheckCompleted.current = true;
-      
-      // Desactivar loading después de cerrar modal
-      setIsGoogleLoading(false);
-      
-    } catch (error: any) {
-      console.error('Error en login con Google:', error);
-      
-      // Desactivar loading
-      setIsGoogleLoading(false);
-      
-      // Mostrar mensaje de error al usuario
-      alert(language === 'es' 
-        ? 'Error al iniciar sesión con Google' 
-        : 'Error signing in with Google'
-      );
-    }
-  };
-
-  // Login con correo electrónico
-  const handleEmailLogin = async () => {
-    if (!isValidEmail(loginEmail)) return;
-    
-    try {
-      // Aquí implementar la lógica de login por correo electrónico
-      
-      // Guardar el email en estado (no en localStorage)
-      const userData = {
-        email: loginEmail,
-        displayName: null,
-        photoURL: null,
-        uid: null
-      };
-      
-      // firebaseUser ahora viene del AuthContext
-      
-      // Cargar email en el formulario de contacto
-      setFormData(prev => ({
-        ...prev,
-        email: loginEmail || prev.email
-      }));
-      
-      setShowLoginModal(false);
-      authCheckCompleted.current = true;
-      setLoginEmail('');
     } catch (error) {
-      console.error('Error en login:', error);
+      console.error('Error logging in:', error);
+      alert(getTranslation('checkout.errorSigningIn', language) || (language === 'es' 
+        ? 'Error al iniciar sesión con Google. Por favor, intenta nuevamente.'
+        : 'Error signing in with Google. Please try again.'));
+    } finally {
+      setIsLoggingIn(false);
     }
   };
 
-  const handleContinueToPayment = async () => {
-    // VALIDACIÓN OBLIGATORIA: Verificar autenticación o token válido antes de continuar
-    const hasToken = !!localStorage.getItem('authToken');
-    const hasFirebaseUser = firebaseUser !== null || auth.currentUser !== null;
-    
-    // Permitir continuar si está autenticado O tiene token válido O tiene usuario de Firebase
-    if (!isAuthenticated && !hasToken && !hasFirebaseUser) {
-      setShowLoginModal(true);
-      alert(language === 'es' 
-        ? 'Debes iniciar sesión para continuar con el pago o reserva.'
-        : 'You must log in to continue with payment or reservation.');
-      return;
-    }
-
-    // VALIDACIÓN DEL TOKEN: Verificar que el token sea válido antes de continuar
-    if (hasToken && auth.currentUser) {
-      try {
-        const idToken = await auth.currentUser.getIdToken();
-        const validationResponse = await authApi.getInfoByTokenTravelerByGoogle(idToken);
-        
-        if (!validationResponse.success) {
-          // Token no válido, limpiar y solicitar login
-          localStorage.removeItem('authToken');
-          setShowLoginModal(true);
-          alert(language === 'es' 
-            ? 'Tu sesión ha expirado. Por favor inicia sesión nuevamente.'
-            : 'Your session has expired. Please log in again.');
-          return;
-        }
-        
-        // Token válido, actualizar si hay uno nuevo
-        if (validationResponse.token) {
-          localStorage.setItem('authToken', validationResponse.token);
-        }
-      } catch (error) {
-        console.error('Error validando token:', error);
-        // Si hay error en la validación, limpiar y solicitar login
-        localStorage.removeItem('authToken');
-        setShowLoginModal(true);
-        alert(language === 'es' 
-          ? 'Error al validar tu sesión. Por favor inicia sesión nuevamente.'
-          : 'Error validating your session. Please log in again.');
-        return;
-      }
-    }
-
-    // Validar que la fecha/hora de salida no haya pasado
-    if (isDepartureDatePast()) {
-      alert(language === 'es' 
-        ? 'La fecha y hora de salida ya pasó. Por favor modifica la fecha y hora de salida para continuar.'
-        : 'The departure date and time has already passed. Please modify the departure date and time to continue.');
-      return;
-    }
-    
-    // Validar formulario
-    if (!formData.name || !formData.lastName || !formData.email || !formData.phoneNumber || !formData.nationality || formData.nationality === 'none') {
-      alert(getTranslation('checkout.pleaseCompleteFields', language));
-      return;
-    }
-    
-    // Preparar datos del formulario para envío (convertir phonePostalCode vacío a null)
-    const formDataToSave = {
-      ...formData,
-      phonePostalCode: formData.phonePostalCode === '' || !formData.phonePostalCode ? null : formData.phonePostalCode,
-      phoneCodeId: formData.phoneCodeId === 0 ? null : formData.phoneCodeId,
-      phonePostalId: formData.phonePostalId === 0 ? null : formData.phonePostalId
-    };
-    
-    // Guardar datos del formulario y avanzar al paso 2
-    sessionStorage.setItem('checkoutFormData', JSON.stringify(formDataToSave));
-    setCurrentStep(2);
-    sessionStorage.setItem('checkoutCurrentStep', '2');
+  // Función para navegar a home
+  const handleLogoClick = () => {
+    navigate('/');
   };
 
-
-  const handlePayNow = async () => {
-    // VALIDACIÓN OBLIGATORIA: Verificar autenticación o token válido antes de procesar cualquier pago/reserva
-    const token = localStorage.getItem('authToken');
-    const hasFirebaseUser = firebaseUser !== null || auth.currentUser !== null;
-    
-    // Permitir continuar si está autenticado O tiene token válido O tiene usuario de Firebase
-    if (!isAuthenticated && !token && !hasFirebaseUser) {
-      setShowLoginModal(true);
-      alert(language === 'es' 
-        ? 'Debes iniciar sesión para procesar el pago o reserva.'
-        : 'You must log in to process payment or reservation.');
-      return;
-    }
-
-    // VALIDACIÓN DEL TOKEN: Verificar que el token sea válido antes de procesar pago
-    if (token && auth.currentUser) {
-      try {
-        const idToken = await auth.currentUser.getIdToken();
-        const validationResponse = await authApi.getInfoByTokenTravelerByGoogle(idToken);
-        
-        if (!validationResponse.success) {
-          // Token no válido, limpiar y solicitar login
-          localStorage.removeItem('authToken');
-          setShowLoginModal(true);
-          alert(language === 'es' 
-            ? 'Tu sesión ha expirado. Por favor inicia sesión nuevamente.'
-            : 'Your session has expired. Please log in again.');
-          return;
-        }
-        
-        // Token válido, actualizar si hay uno nuevo
-        if (validationResponse.token) {
-          localStorage.setItem('authToken', validationResponse.token);
-        }
-      } catch (error) {
-        console.error('Error validando token:', error);
-        // Si hay error en la validación, limpiar y solicitar login
-        localStorage.removeItem('authToken');
-        setShowLoginModal(true);
-        alert(language === 'es' 
-          ? 'Error al validar tu sesión. Por favor inicia sesión nuevamente.'
-          : 'Error validating your session. Please log in again.');
-        return;
-      }
-    } else if (!token && hasFirebaseUser) {
-      // Si no hay token pero sí usuario, intentar obtener uno
-      console.warn('Usuario autenticado pero sin token. Obteniendo token...');
-      try {
-        if (auth.currentUser) {
-          const idToken = await auth.currentUser.getIdToken();
-          const validationResponse = await authApi.getInfoByTokenTravelerByGoogle(idToken);
-          
-          if (validationResponse.success && validationResponse.token) {
-            localStorage.setItem('authToken', validationResponse.token);
-          } else {
-            setShowLoginModal(true);
-            alert(language === 'es' 
-              ? 'Error al obtener token de autenticación. Por favor inicia sesión nuevamente.'
-              : 'Error obtaining authentication token. Please log in again.');
-            return;
-          }
-        }
-      } catch (error) {
-        console.error('Error obteniendo token:', error);
-        setShowLoginModal(true);
-        alert(language === 'es' 
-          ? 'Error al validar tu sesión. Por favor inicia sesión nuevamente.'
-          : 'Error validating your session. Please log in again.');
-        return;
-      }
-    }
-
-    // Validar que se haya seleccionado un método de pago
-    if (!paymentMethod) {
-      alert(getTranslation('checkout.pleaseSelectPaymentMethod', language));
-      return;
-    }
-
-    // Si el método de pago es PayPal, los botones ya se cargaron automáticamente
-    // No hacer nada adicional aquí, solo validar que esté seleccionado
-    if (paymentMethod === 'paypal') {
-      // PayPal manejará el pago a través de los botones de login
-      // El token ya está verificado arriba
-      return;
-    }
-
-    if (paymentMethod === 'reserveLater' || paymentMethod === 'reserve') {
-      try {
-        await finalizeReservation('reserveLater');
-      } catch (error: any) {
-        const message = error?.message || getTranslation('checkout.paymentError', language);
-        alert(message);
-      }
-      return;
-    }
-    
-    // Manejo preventivo para otros métodos (no debería ocurrir porque PayPal/Google Pay gestionan sus propios flujos)
-    try {
-      await finalizeReservation(paymentMethod as 'paypal' | 'googlepay' | 'reserveLater');
-    } catch (error: any) {
-      const message = error?.message || getTranslation('checkout.paymentError', language);
-      alert(message);
-    }
+  // Handlers para editar items (ya se manejan en CheckoutCartItem, solo pasamos funciones vacías)
+  const handleRemoveSummaryItem = () => {
+    // La eliminación se maneja en CheckoutCartItem
   };
 
-  const handleBackToContact = () => {
-    setCurrentStep(1);
-    sessionStorage.setItem('checkoutCurrentStep', '1');
+  const handleLanguageChange = () => {
+    // Ya se maneja en CheckoutCartItem
   };
 
-  // Función para limpiar datos de reserva (útil para otros casos)
-  const clearBookingData = () => {
-    clearCheckoutData();
-    localStorage.removeItem('checkoutBookingDetails');
+  const handleMeetingPointChange = () => {
+    // Ya se maneja en CheckoutCartItem
   };
 
-  if (!bookingDetails) {
+  const handleCommentChange = () => {
+    // Ya se maneja en CheckoutCartItem
+  };
+
+  const handleDateChange = () => {
+    // Ya se maneja en CheckoutCartItem
+  };
+
+  const handleTravelersChange = () => {
+    // Ya se maneja en CheckoutCartItem
+  };
+
+  // Mostrar loading mientras se valida autenticación
+  if (authLoading) {
+    return (
+      <div className="min-vh-100 bg-light d-flex align-items-center justify-content-center">
+        <div className="text-center">
+          <div className="spinner-border text-primary mb-3" role="status" style={{ width: '3rem', height: '3rem' }}>
+            <span className="visually-hidden">{getTranslation('common.loading', language)}</span>
+          </div>
+          <h5 className="text-muted">
+            {getTranslation('common.validatingAuth', language) || getTranslation('checkout.validatingAuth', language) || (language === 'es' ? 'Validando autenticación...' : 'Validating authentication...')}
+          </h5>
+        </div>
+      </div>
+    );
+  }
+
+  // Mostrar modal de login si no está autenticado
+  if (!isAuthenticated) {
     return (
       <div className="min-vh-100 bg-light">
-        {/* CSS para animaciones */}
-        <style>{`
-          @keyframes fadeIn {
-            from { 
-              opacity: 0; 
-              transform: scale(0.95);
-            }
-            to { 
-              opacity: 1; 
-              transform: scale(1);
-            }
-          }
-          
-          @keyframes fadeOut {
-            from { 
-              opacity: 1; 
-              transform: scale(1);
-            }
-            to { 
-              opacity: 0; 
-              transform: scale(0.95);
-            }
-          }
-          
-          .modal-fade-in {
-            animation: fadeIn 0.3s ease-in-out;
-          }
-          
-          .modal-fade-out {
-            animation: fadeOut 0.3s ease-in-out;
-          }
-          
-          .step-line {
-            width: 60px;
-            height: 2px;
-            background-color: #dee2e6;
-            margin: 0 15px;
-          }
-          
-          .step-line.active {
-            background-color: #007bff;
-          }
-        `}</style>
-        
-        {/* Header con Logo y Progress Steps */}
-        <div className="bg-white shadow-sm py-4">
-          <div className="container">
-            {/* Desktop Layout */}
-            <div className="d-none d-lg-flex align-items-center justify-content-between w-100">
-              {/* Logo */}
-              <div 
-                className="d-flex align-items-center" 
-                style={{ cursor: 'pointer' }}
-                onClick={handleLogoClick}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.opacity = '0.7';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.opacity = '1';
-                }}
-              >
-                <img
-                  src={config.business.urlLogo}
-                  alt="Viajero Map Logo"
-                  height="50"
-                  className="d-inline-block align-text-top me-3"
-                  style={{ pointerEvents: 'none' }}
-                />
-                <span className="fw-bold fs-3 text-primary">{config.business.name}</span>
-              </div>
-
-              {/* Progress Steps centrados */}
-              <div className="d-flex align-items-center">
-                <div className="d-flex align-items-center">
-                  <div className="bg-primary text-white rounded-circle d-flex align-items-center justify-content-center" 
-                       style={{ width: '30px', height: '30px', fontSize: '0.9rem' }}>
-                    1
-                  </div>
-                  <span className="fw-medium text-primary ms-2">Contacto</span>
-                </div>
-                
-                {/* Línea conectora */}
-                <div className="step-line active"></div>
-                
-                <div className="d-flex align-items-center">
-                  <div className="bg-light text-muted rounded-circle d-flex align-items-center justify-content-center" 
-                       style={{ width: '30px', height: '30px', fontSize: '0.9rem' }}>
-                    2
-                  </div>
-                  <span className="fw-medium text-muted ms-2">Pago</span>
-                </div>
-              </div>
-
-              {/* Espacio vacío para balancear el layout */}
-              <div style={{ width: '200px' }}></div>
-            </div>
-
-            {/* Mobile Layout */}
-            <div className="d-lg-none">
-              {/* Logo y nombre centrados */}
-              <div 
-                className="d-flex align-items-center justify-content-center mb-3"
-                style={{ cursor: 'pointer' }}
-                onClick={handleLogoClick}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.opacity = '0.7';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.opacity = '1';
-                }}
-              >
-                <img
-                  src={config.business.urlLogo}
-                  alt="Viajero Map Logo"
-                  height="45"
-                  className="d-inline-block align-text-top me-3"
-                  style={{ pointerEvents: 'none' }}
-                />
-                <span className="fw-bold fs-4 text-primary">{config.business.name}</span>
-              </div>
-
-              {/* Progress Steps centrados */}
-              <div className="d-flex align-items-center justify-content-center">
-                <div className="d-flex align-items-center">
-                  <div className="bg-primary text-white rounded-circle d-flex align-items-center justify-content-center" 
-                       style={{ width: '28px', height: '28px', fontSize: '0.8rem' }}>
-                    1
-                  </div>
-                  <span className="fw-medium text-primary ms-2" style={{ fontSize: '0.9rem' }}>Contacto</span>
-                </div>
-                
-                {/* Línea conectora */}
-                <div className="step-line active" style={{ width: '40px', height: '2px' }}></div>
-                
-                <div className="d-flex align-items-center">
-                  <div className="bg-light text-muted rounded-circle d-flex align-items-center justify-content-center" 
-                       style={{ width: '28px', height: '28px', fontSize: '0.8rem' }}>
-                    2
-                  </div>
-                  <span className="fw-medium text-muted ms-2" style={{ fontSize: '0.9rem' }}>Pago</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
         <div className="container py-5">
           <div className="row justify-content-center">
-            <div className="col-lg-8">
-              <div className="text-center">
-                <h2 className="mb-4">Cargando detalles de reserva...</h2>
-                <div className="spinner-border text-primary" role="status">
-                  <span className="visually-hidden">Cargando...</span>
+            <div className="col-lg-6">
+              <div className="card shadow">
+                <div className="card-body text-center p-5">
+                  <i className="fas fa-lock fa-3x text-primary mb-4"></i>
+                  <h2 className="mb-3">
+                    {getTranslation('checkout.loginRequired', language) || (language === 'es' ? 'Inicio de sesión requerido' : 'Login required')}
+                  </h2>
+                  <p className="text-muted mb-4">
+                    {getTranslation('checkout.mustLoginToContinue', language) || (language === 'es' 
+                      ? 'Debes iniciar sesión para continuar con el pago.'
+                      : 'You must log in to continue with payment.')}
+                  </p>
+                  <button
+                    className="btn btn-primary btn-lg"
+                    onClick={() => setShowLoginModal(true)}
+                  >
+                    <i className="fab fa-google me-2"></i>
+                    {getTranslation('common.continueWithGoogle', language) || (language === 'es' ? 'Continuar con Google' : 'Continue with Google')}
+                  </button>
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Login Modal con fade */}
+        {/* Login Modal */}
         {showLoginModal && (
           <div 
-            className="modal show d-block modal-fade-in" 
-            style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
+            className="modal show d-block" 
+            style={{ backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 1050 }}
           >
             <div className="modal-dialog modal-dialog-centered">
-              <div className="modal-content modal-fade-in">
-                <div className="modal-header border-0 d-flex align-items-between px-4 py-3">
-                  <div className="d-flex align-items-center justify-content-center w-100">
-                    <h4 className="fw-bold mb-0">{getTranslation('checkout.loginModal.title', language)}</h4>
-                  </div>
-                  {/* El modal no se puede cerrar sin autenticarse - login obligatorio */}
+              <div className="modal-content">
+                <div className="modal-header border-0">
+                  <h4 className="fw-bold mb-0">
+                    {getTranslation('checkout.loginModal.title', language) || (language === 'es' ? '¿Quieres iniciar sesión?' : 'Do you want to sign in?')}
+                  </h4>
+                  <button
+                    type="button"
+                    className="btn-close"
+                    onClick={() => setShowLoginModal(false)}
+                    aria-label="Close"
+                  ></button>
                 </div>
                 <div className="modal-body text-center">
-                  <p className="text-muted mb-4 fw-medium">
-                    {language === 'es' 
-                      ? 'Para continuar con el pago o reserva, debes iniciar sesión.'
-                      : 'To continue with payment or reservation, you must log in.'}
-                  </p>
-                  
                   <p className="text-muted mb-4">
-                    {getTranslation('checkout.loginModal.benefits', language)}
+                    {getTranslation('checkout.mustSignInToContinue', language) || (language === 'es' 
+                      ? 'Para continuar con el pago, debes iniciar sesión.'
+                      : 'To continue with payment, you must sign in.')}
                   </p>
-
-                  {/* Google Login Button */}
                   <button
-                    className="btn btn-outline-primary w-100 mb-3"
+                    className="btn btn-outline-primary w-100"
                     onClick={handleLoginWithGoogle}
-                    disabled={isGoogleLoading}
+                    disabled={isLoggingIn}
                   >
-                    {isGoogleLoading ? (
+                    {isLoggingIn ? (
                       <>
                         <span className="spinner-border spinner-border-sm me-2" role="status"></span>
-                        {getTranslation('common.signingIn', language)}
+                        {getTranslation('common.signingIn', language) || (language === 'es' ? 'Iniciando sesión...' : 'Signing in...')}
                       </>
                     ) : (
                       <>
                         <i className="fab fa-google me-2"></i>
-                        {getTranslation('common.continueWithGoogle', language)}
+                        {getTranslation('common.continueWithGoogle', language) || (language === 'es' ? 'Continuar con Google' : 'Continue with Google')}
                       </>
                     )}
-                  </button>
-
-                  {/* Email Login */}
-                  <div className="mb-3">
-                    <input
-                      type="email"
-                      className="form-control"
-                      placeholder={getTranslation('common.enterEmail', language)}
-                      value={loginEmail}
-                      onChange={(e) => setLoginEmail(e.target.value)}
-                    />
-                  </div>
-                  <button
-                    className={`btn w-100 ${isValidEmail(loginEmail) ? 'btn-outline-primary' : 'btn-outline-secondary'}`}
-                    onClick={handleEmailLogin}
-                    disabled={!isValidEmail(loginEmail)}
-                  >
-                    {getTranslation('common.continueWithEmail', language)}
                   </button>
                 </div>
               </div>
@@ -2677,17 +876,69 @@ const Checkout: React.FC = () => {
     );
   }
 
-  // Mostrar loading mientras se valida la autenticación
-  if (isValidatingAuth) {
+  // Mostrar loading mientras se cargan las órdenes
+  if (loading) {
     return (
-      <div className="checkout-page bg-light min-vh-100 d-flex align-items-center justify-content-center">
+      <div className="min-vh-100 bg-light d-flex align-items-center justify-content-center">
         <div className="text-center">
           <div className="spinner-border text-primary mb-3" role="status" style={{ width: '3rem', height: '3rem' }}>
-            <span className="visually-hidden">{getTranslation('common.validating', language)}</span>
+            <span className="visually-hidden">{getTranslation('common.loading', language)}</span>
           </div>
           <h5 className="text-muted">
-            {getTranslation('common.validatingAuth', language)}
+            {getTranslation('common.loading', language)}
           </h5>
+        </div>
+      </div>
+    );
+  }
+
+  // Mostrar error si hay
+  if (error) {
+    return (
+      <div className="min-vh-100 bg-light">
+        <div className="container py-5">
+          <div className="row justify-content-center">
+            <div className="col-lg-6">
+              <div className="alert alert-danger">
+                <h4>{getTranslation('common.error', language) || (language === 'es' ? 'Error' : 'Error')}</h4>
+                <p>{error}</p>
+                <button className="btn btn-primary" onClick={() => navigate('/cart')}>
+                  {getTranslation('common.backToCart', language) || (language === 'es' ? 'Volver al carrito' : 'Back to cart')}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Mostrar mensaje si no hay items
+  if (checkoutSummaryItems.length === 0) {
+    return (
+      <div className="min-vh-100 bg-light">
+        <div className="container py-5">
+          <div className="row justify-content-center">
+            <div className="col-lg-6">
+              <div className="card shadow text-center">
+                <div className="card-body p-5">
+                  <i className="fas fa-shopping-cart fa-3x text-muted mb-4"></i>
+                  <h3 className="mb-3">
+                    {getTranslation('checkout.noItemsToPay', language) || (language === 'es' ? 'No hay items para pagar' : 'No items to pay')}
+                  </h3>
+                  <p className="text-muted mb-4">
+                    {getTranslation('checkout.emptyCartMessage', language) || (language === 'es' 
+                      ? 'No tienes actividades en tu carrito. Agrega actividades antes de proceder al pago.'
+                      : 'You don\'t have any activities in your cart. Add activities before proceeding to payment.')}
+                  </p>
+                  <button className="btn btn-primary" onClick={() => navigate('/cart')}>
+                    <i className="fas fa-arrow-left me-2"></i>
+                    {getTranslation('common.backToCart', language) || (language === 'es' ? 'Volver al carrito' : 'Back to cart')}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -2695,124 +946,14 @@ const Checkout: React.FC = () => {
 
   return (
     <div className="min-vh-100 bg-light">
-      {/* CSS para animaciones */}
-      <style>{`
-        @keyframes fadeIn {
-          from { 
-            opacity: 0; 
-            transform: scale(0.95);
-          }
-          to { 
-            opacity: 1; 
-            transform: scale(1);
-          }
-        }
-        
-        @keyframes fadeOut {
-          from { 
-            opacity: 1; 
-            transform: scale(1);
-          }
-          to { 
-            opacity: 0; 
-            transform: scale(0.95);
-          }
-        }
-        
-        .modal-fade-in {
-          animation: fadeIn 0.3s ease-in-out;
-        }
-        
-        .modal-fade-out {
-          animation: fadeOut 0.3s ease-in-out;
-        }
-        
-        .step-line {
-          width: 60px;
-          height: 2px;
-          background-color: #dee2e6;
-          margin: 0 15px;
-        }
-        
-        .step-line.active {
-          background-color: #007bff;
-        }
-        
-        /* Floating Footer - Mobile Only */
-        @media (max-width: 767.98px) {
-          .checkout-floating-footer {
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            z-index: 1000;
-            background: white;
-            box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);
-            padding: 0;
-          }
-          
-          .checkout-floating-container {
-            padding: 10px 12px;
-            padding-bottom: calc(10px + env(safe-area-inset-bottom));
-          }
-          
-          .checkout-floating-content {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 10px;
-          }
-          
-          .checkout-floating-total {
-            flex: 1;
-            min-width: 0;
-            max-width: calc(100% - 140px);
-          }
-          
-          .checkout-floating-info {
-            line-height: 1.2;
-          }
-          
-          .checkout-floating-total-text {
-            white-space: nowrap;
-          }
-          
-          .checkout-floating-button {
-            flex-shrink: 0;
-            white-space: nowrap;
-            padding: 10px 16px;
-            font-size: 0.9rem;
-            min-width: 120px;
-          }
-          
-          /* Agregar padding inferior al body para que el contenido no se oculte detrás del footer flotante */
-          body {
-            padding-bottom: 80px;
-          }
-          
-          /* Asegurar que el contenido principal tenga margen inferior en móviles */
-          .checkout-main-content {
-            padding-bottom: 100px;
-          }
-        }
-      `}</style>
-      
-      {/* Header con Logo y Progress Steps */}
+      {/* Header con Logo */}
       <div className="bg-white shadow-sm py-4">
         <div className="container">
-          {/* Desktop Layout */}
-          <div className="d-none d-lg-flex align-items-center justify-content-between w-100">
-            {/* Logo */}
+          <div className="d-flex align-items-center justify-content-between">
             <div 
               className="d-flex align-items-center" 
               style={{ cursor: 'pointer' }}
               onClick={handleLogoClick}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.opacity = '0.7';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.opacity = '1';
-              }}
             >
               <img
                 src={config.business.urlLogo}
@@ -2823,2153 +964,385 @@ const Checkout: React.FC = () => {
               />
               <span className="fw-bold fs-3 text-primary">{config.business.name}</span>
             </div>
-
-            {/* Progress Steps centrados */}
-            <div className="d-flex align-items-center">
-              <div className="d-flex align-items-center">
-                {(() => {
-                  const step1Complete = currentStep === 2 || (currentStep === 1 && areRequiredFieldsComplete(formData));
-                  return (
-                    <>
-                      <div className={`${currentStep === 1 && !step1Complete ? 'bg-primary text-white' : 'bg-success text-white'} rounded-circle d-flex align-items-center justify-content-center`} 
-                     style={{ width: '30px', height: '30px', fontSize: '0.9rem' }}>
-                        {step1Complete ? <i className="fas fa-check"></i> : '1'}
-                </div>
-                <span className={`fw-medium ${currentStep >= 1 ? 'text-primary' : 'text-muted'} ms-2`}>Contacto</span>
-                    </>
-                  );
-                })()}
-              </div>
-              
-              {/* Línea conectora */}
-              <div className={`step-line ${currentStep >= 2 || (currentStep === 1 && areRequiredFieldsComplete(formData)) ? 'active' : ''}`}></div>
-              
-              <div className="d-flex align-items-center">
-                <div className={`${currentStep === 2 ? 'bg-primary text-white' : currentStep > 2 ? 'bg-success text-white' : 'bg-light text-muted'} rounded-circle d-flex align-items-center justify-content-center`} 
-                     style={{ width: '30px', height: '30px', fontSize: '0.9rem' }}>
-                  {currentStep > 2 ? <i className="fas fa-check"></i> : '2'}
-                </div>
-                <span className={`fw-medium ${currentStep === 2 ? 'text-primary' : 'text-muted'} ms-2`}>Pago</span>
-              </div>
-            </div>
-
-            {/* Espacio vacío para balancear el layout */}
-            <div style={{ width: '200px' }}></div>
-          </div>
-
-          {/* Mobile Layout */}
-          <div className="d-lg-none">
-            {/* Logo y nombre centrados */}
-            <div 
-              className="d-flex align-items-center justify-content-center mb-3"
-              style={{ cursor: 'pointer' }}
-              onClick={handleLogoClick}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.opacity = '0.7';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.opacity = '1';
-              }}
-            >
-              <img
-                src={config.business.urlLogo}
-                alt="Viajero Map Logo"
-                height="45"
-                className="d-inline-block align-text-top me-3"
-                style={{ pointerEvents: 'none' }}
-              />
-              <span className="fw-bold fs-4 text-primary">{config.business.name}</span>
-            </div>
-
-            {/* Progress Steps centrados */}
-            <div className="d-flex align-items-center justify-content-center">
-              <div className="d-flex align-items-center">
-                {(() => {
-                  const step1Complete = currentStep === 2 || (currentStep === 1 && areRequiredFieldsComplete(formData));
-                  return (
-                    <>
-                      <div className={`${currentStep === 1 && !step1Complete ? 'bg-primary text-white' : 'bg-success text-white'} rounded-circle d-flex align-items-center justify-content-center`} 
-                     style={{ width: '28px', height: '28px', fontSize: '0.8rem' }}>
-                        {step1Complete ? <i className="fas fa-check" style={{ fontSize: '0.7rem' }}></i> : '1'}
-                </div>
-                <span className={`fw-medium ${currentStep >= 1 ? 'text-primary' : 'text-muted'} ms-2`} style={{ fontSize: '0.9rem' }}>Contacto</span>
-                    </>
-                  );
-                })()}
-              </div>
-              
-              {/* Línea conectora */}
-              <div className={`step-line ${currentStep >= 2 || (currentStep === 1 && areRequiredFieldsComplete(formData)) ? 'active' : ''}`} style={{ width: '40px', height: '2px' }}></div>
-              
-              <div className="d-flex align-items-center">
-                <div className={`${currentStep === 2 ? 'bg-primary text-white' : currentStep > 2 ? 'bg-success text-white' : 'bg-light text-muted'} rounded-circle d-flex align-items-center justify-content-center`} 
-                     style={{ width: '28px', height: '28px', fontSize: '0.8rem' }}>
-                  {currentStep > 2 ? <i className="fas fa-check" style={{ fontSize: '0.7rem' }}></i> : '2'}
-                </div>
-                <span className={`fw-medium ${currentStep === 2 ? 'text-primary' : 'text-muted'} ms-2`} style={{ fontSize: '0.9rem' }}>Pago</span>
-              </div>
+            <div className="text-muted">
+              {getTranslation('checkout.title', language) || (language === 'es' ? 'Pago' : 'Checkout')}
             </div>
           </div>
         </div>
       </div>
 
-      <div className="container py-4 checkout-main-content">
+      <div className="container py-5">
         <div className="row">
-          {/* Left Column - Personal Data (Step 1) or Payment (Step 2) */}
-          <div className="col-lg-6">
-            {currentStep === 1 ? (
-              <>
-                {/* Warning if departure date is past */}
-                {isDepartureDatePast() && (
-                  <div className="alert alert-danger mb-4" style={{ backgroundColor: '#fee', borderColor: '#fcc' }}>
-                    <div className="d-flex align-items-start">
-                      <i className="fas fa-exclamation-circle me-2 mt-1"></i>
-                      <div className="flex-grow-1">
-                        <strong className="d-block mb-1">
-                          {getTranslation('checkout.departureDatePassed', language)}
-                        </strong>
-                        <div className="small">
-                          {getTranslation('checkout.departureDatePassedMessage', language)}
-                        </div>
-                      </div>
+          {/* Columna izquierda - Items del carrito */}
+          <div className="col-lg-7 mb-4 mb-lg-0">
+            <CheckoutCartSummary
+              items={checkoutSummaryItems}
+              language={language}
+              onRemoveItem={handleRemoveSummaryItem}
+              onEditLanguage={handleLanguageChange}
+              onEditMeetingPoint={handleMeetingPointChange}
+              onEditComment={handleCommentChange}
+              onEditDate={handleDateChange}
+              onEditTravelers={handleTravelersChange}
+            />
+          </div>
+
+          {/* Columna derecha - Información de contacto y métodos de pago */}
+          <div className="col-lg-5">
+            {/* Información de contacto */}
+            <div className="card mb-4">
+              <div className="card-body">
+                <div className="d-flex justify-content-between align-items-center mb-3">
+                  <h5 className="fw-bold mb-0">
+                    {getTranslation('checkout.contactInfo', language)}
+                  </h5>
+                  {!isEditingContactInfo && (
+                    <button
+                      type="button"
+                      className="btn btn-link text-primary p-0"
+                      onClick={() => setIsEditingContactInfo(true)}
+                      style={{ textDecoration: 'underline', fontSize: '0.9rem' }}
+                    >
+                      {getTranslation('common.edit', language) || (language === 'es' ? 'Editar' : 'Edit')}
+                    </button>
+                  )}
+                </div>
+
+                {/* Mostrar información si no está editando */}
+                {!isEditingContactInfo && (
+                  <div className="border rounded p-3 mb-3" style={{ backgroundColor: '#f8f9fa' }}>
+                    <div className="mb-2">
+                      <strong>{formData.name} {formData.lastName}</strong>
+                    </div>
+                    <div className="mb-2">
+                      <span>{formData.email}</span>
+                    </div>
+                    <div>
+                      <span>{formData.phoneCode} {formData.phoneNumber}</span>
                     </div>
                   </div>
                 )}
 
-                {/* Reservation Timer - Solo mostrar si la fecha de salida no ha pasado */}
-                {!isDepartureDatePast() && (
-            <div className="alert alert-warning mb-4" style={{ backgroundColor: '#fff3cd', borderColor: '#ffeaa7' }}>
-              <div className="d-flex align-items-center">
-                <i className="fas fa-clock me-2"></i>
-                <span className="fw-medium">
-                  {getTranslation('checkout.reservationTimer', language)} {formatTime(timeLeft, language)}.
-                </span>
-              </div>
-            </div>
-                )}
-
-                {/* Reservation Deadline Warning - Step 1 */}
-                {/* Solo mostrar si la fecha de salida menos hoy es mayor o igual a 24 horas */}
-                {(() => {
-                  const deadline = getReservationDeadline();
-                  
-                  // Verificar si falta menos de 24 horas hasta la salida
-                  if (!bookingDetails?.date || !bookingDetails?.time) {
-                    return null;
-                  }
-                  
-                  try {
-                    // Construir la fecha/hora de salida
-                    const [year, month, day] = bookingDetails.date.split('-').map(Number);
-                    const timeParts = bookingDetails.time.split(':');
-                    const hours = timeParts[0] ? parseInt(timeParts[0], 10) : 0;
-                    const minutes = timeParts[1] ? parseInt(timeParts[1], 10) : 0;
-                    
-                    const departureDate = new Date(year, month - 1, day, hours, minutes, 0);
-                    
-                    // Verificar que la fecha es válida
-                    if (isNaN(departureDate.getTime())) {
-                      return null;
-                    }
-                    
-                    // Calcular la diferencia en minutos entre la fecha de salida y ahora
-                    const now = new Date();
-                    const diffInMilliseconds = departureDate.getTime() - now.getTime();
-                    const diffInMinutes = diffInMilliseconds / (1000 * 60);
-                    
-                    // 24 horas = 1440 minutos
-                    // Si la diferencia es menor a 24 horas, no mostrar el mensaje
-                    if (diffInMinutes < 1440) {
-                      return null;
-                    }
-                  } catch (error) {
-                    console.error('Error calculating time until departure:', error);
-                  }
-                  
-                  // Si hay deadline y falta más de 24 horas, mostrar el mensaje
-                  return deadline ? (
-                    <div className="alert alert-warning mb-4" style={{ backgroundColor: '#fff3cd', borderColor: '#ffc107' }}>
-                      <div className="d-flex align-items-start">
-                        <i className="fas fa-exclamation-triangle me-2 mt-1"></i>
-                        <div className="flex-grow-1">
-                          <strong className="d-block mb-1">
-                            {getTranslation('checkout.deadlineConfirmCancel', language)}
-                          </strong>
-                          <div className="small">
-                            {getTranslationWithParams('checkout.deadlineMessage', language, { deadline })}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ) : null;
-                })()}
-
-            {/* Personal Data Form */}
-            <div className="card">
-              <div className="card-body">
-                <h2 className="fw-bold mb-3">
-                  {firebaseUser && !isEditingContactInfo 
-                    ? getTranslation('checkout.reviewPersonalData', language)
-                    : getTranslation('checkout.reviewPersonalData', language)
-                  }
-                </h2>
-                <div className="d-flex align-items-center mb-4">
-                  <i className="fas fa-lock text-success me-2"></i>
-                  <span className="text-success fw-medium">{getTranslation('checkout.fastSecureReservation', language)}</span>
-                </div>
-
-                {/* Mostrar información del usuario si está autenticado y no está editando */}
-                {firebaseUser && !isEditingContactInfo ? (
-                  <>
-                    <div className="border rounded p-4 mb-4" style={{ backgroundColor: '#fff' }}>
-                      <div className="d-flex justify-content-between align-items-start">
-                        <div className="flex-grow-1">
-                          <div className="mb-2">
-                            <strong className="d-block">{formData.name && formData.lastName ? `${formData.name} ${formData.lastName}` : (user?.nickname || user?.username || firebaseUser?.displayName || 'Usuario')}</strong>
-                          </div>
-                          <div className="mb-2">
-                            <span>{formData.email || firebaseUser.email || ''}</span>
-                          </div>
-                          <div>
-                            <span>{formData.phoneCode ? `${formData.phoneCode} ` : ''}{formData.phoneNumber || formData.phone || ''}</span>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          className="btn btn-link text-primary p-0"
-                          onClick={() => {
-                            // Guardar los valores actuales del formulario antes de editar
-                            setOriginalFormData({ ...formData });
-                            setIsEditingContactInfo(true);
-                          }}
-                          style={{ textDecoration: 'underline', fontSize: '0.9rem' }}
-                        >
-                          {getTranslation('common.edit', language)}
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Botón Continuar con el pago - Mostrar cuando se muestra la info del usuario */}
-                    <button
-                      type="button"
-                      className="btn btn-primary btn-lg w-100 d-none d-md-block mb-3"
-                      onClick={handleContinueToPayment}
-                      disabled={isDepartureDatePast()}
-                      style={isDepartureDatePast() ? { opacity: 0.6, cursor: 'not-allowed' } : {}}
-                    >
-                      {getTranslation('checkout.continuePayment', language)}
-                    </button>
-
-                    {/* Mostrar mensaje de fecha límite solo si se puede reservar y pagar después 
-                        y NO se ha seleccionado PayPal o Google Pay (porque ya está pagando) */}
-                    {canReserveAndPayLater() && paymentMethod !== 'paypal' && paymentMethod !== 'googlepay' && (() => {
-                      const deadline = getReservationDeadline();
-                      return deadline ? (
-                        <div className="mt-3 d-flex align-items-start">
-                          <i className="fas fa-check-circle text-success me-2 mt-1"></i>
-                          <div className="flex-grow-1">
-                            <span className="fw-medium d-block mb-1">
-                              {getTranslation('checkout.reserveNowPayLater', language)}
-                            </span>
-                            <span className="small text-muted">
-                              {getTranslationWithParams('checkout.deadlineConfirmCancelInfo', language, { deadline })}
-                            </span>
-                          </div>
-                        </div>
-                      ) : null;
-                    })()}
-
-                    {/* Booking Policies - Solo mostrar si se puede reservar y pagar después 
-                        y NO se ha seleccionado PayPal o Google Pay (porque ya está pagando) */}
-                    <div className="mt-4">
-                      {(() => {
-                        const cancelBefore = bookingDetails?.cancelBefore || bookingOptionCancelInfo?.cancelBefore;
-                        if (cancelBefore && canReserveAndPayLater() && paymentMethod !== 'paypal' && paymentMethod !== 'googlepay') {
-                          const deadline = getReservationDeadline();
-                          if (deadline) {
-                            return (
-                              <>
-                                <div className="d-flex align-items-center mb-2">
-                                  <i className="fas fa-check text-success me-2"></i>
-                                  <span className="fw-medium">{getTranslation('checkout.noPayToday', language)}</span>
-                                </div>
-                                <div className="d-flex align-items-center mb-2">
-                                  <i className="fas fa-check text-success me-2"></i>
-                                  <span className="fw-medium">
-                                    {getTranslationWithParams('checkout.bookNowPayLater', language, { deadline })}
-                                  </span>
-                                </div>
-                              </>
-                            );
-                          }
-                        }
-                        return <></>;
-                      })()}
-                      {!isCancellationDeadlinePassed() && (
-                        <div className="d-flex align-items-center mb-2">
-                          <i className="fas fa-check text-success me-2"></i>
-                          <span className="fw-medium">
-                            {(() => {
-                              const deadline = getCancellationDeadline();
-                              const cancelBefore = bookingDetails?.cancelBefore || bookingOptionCancelInfo?.cancelBefore;
-                              
-                              if (deadline) {
-                                return (
-                                  <>
-                                    {getTranslation('checkout.easyCancellation', language)} {deadline}
-                                  </>
-                                );
-                              } else if (cancelBefore) {
-                                return `${getTranslation('checkout.easyCancellation', language)} - ${cancelBefore}`;
-                              }
-                              return getTranslation('checkout.easyCancellation', language);
-                            })()}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  </>
-                ) : null}
-
-                <form style={{ display: !firebaseUser || isEditingContactInfo ? 'block' : 'none' }}>
-                  <div className="mb-3">
-                    <label className="form-label fw-medium">
-                      {getTranslation('checkout.nameRequired', language)}
-                    </label>
-                    <div className="position-relative">
+                {/* Formulario de contacto */}
+                {isEditingContactInfo && (
+                  <form>
+                    <div className="mb-3">
+                      <label className="form-label fw-medium">
+                        {getTranslation('checkout.nameRequired', language) || (language === 'es' ? 'Nombre *' : 'Name *')}
+                      </label>
                       <input
                         type="text"
                         className="form-control"
                         name="name"
                         value={formData.name}
                         onChange={handleInputChange}
-                        placeholder={getTranslation('checkout.namePlaceholder', language)}
-                        style={{ paddingRight: formData.name && formData.name.trim() !== '' ? '2.5rem' : '' }}
+                        placeholder={getTranslation('checkout.namePlaceholder', language) || (language === 'es' ? 'Ingresa tu nombre' : 'Enter your name')}
                       />
-                      {formData.name && formData.name.trim() !== '' && (
-                        <i className="fas fa-check-circle text-success position-absolute" 
-                           style={{ 
-                             right: '0.75rem', 
-                             top: '50%', 
-                             transform: 'translateY(-50%)',
-                             fontSize: '1rem',
-                             pointerEvents: 'none'
-                           }}></i>
-                      )}
                     </div>
-                  </div>
-                  <div className="mb-3">
-                    <label className="form-label fw-medium">
-                      {getTranslation('checkout.lastNameRequired', language)}
-                    </label>
-                    <div className="position-relative">
+
+                    <div className="mb-3">
+                      <label className="form-label fw-medium">
+                        {getTranslation('checkout.lastNameRequired', language) || (language === 'es' ? 'Apellido *' : 'Last name *')}
+                      </label>
                       <input
                         type="text"
                         className="form-control"
                         name="lastName"
                         value={formData.lastName}
                         onChange={handleInputChange}
-                        placeholder={getTranslation('checkout.lastNamePlaceholder', language)}
-                        style={{ paddingRight: formData.lastName && formData.lastName.trim() !== '' ? '2.5rem' : '' }}
+                        placeholder={getTranslation('checkout.lastNamePlaceholder', language) || (language === 'es' ? 'Ingresa tu apellido' : 'Enter your last name')}
                       />
-                      {formData.lastName && formData.lastName.trim() !== '' && (
-                        <i className="fas fa-check-circle text-success position-absolute" 
-                           style={{ 
-                             right: '0.75rem', 
-                             top: '50%', 
-                             transform: 'translateY(-50%)',
-                             fontSize: '1rem',
-                             pointerEvents: 'none'
-                           }}></i>
-                      )}
                     </div>
-                  </div>
-                  <div className="mb-3">
-                    <label className="form-label fw-medium">
-                      {getTranslation('checkout.emailRequired', language)}
-                      {(firebaseUser || auth.currentUser) && (
-                        <span className="text-muted ms-2" style={{ fontSize: '0.85rem', fontWeight: 'normal' }}>
-                          ({getTranslation('checkout.emailNotEditable', language)})
-                        </span>
-                      )}
-                    </label>
-                    <div className="position-relative">
+
+                    <div className="mb-3">
+                      <label className="form-label fw-medium">
+                        {getTranslation('checkout.emailRequired', language) || (language === 'es' ? 'Email *' : 'Email *')}
+                      </label>
                       <input
                         type="email"
                         className="form-control"
                         name="email"
                         value={formData.email}
                         onChange={handleInputChange}
-                        placeholder={getTranslation('checkout.emailPlaceholder', language)}
-                        style={{ 
-                          paddingRight: formData.email && isValidEmail(formData.email) ? '2.5rem' : '',
-                          backgroundColor: (firebaseUser || auth.currentUser) ? '#f8f9fa' : '',
-                          cursor: (firebaseUser || auth.currentUser) ? 'not-allowed' : 'text'
-                        }}
-                        disabled={!!(firebaseUser || auth.currentUser)}
+                        placeholder={getTranslation('checkout.emailPlaceholder', language) || (language === 'es' ? 'tu@email.com' : 'your@email.com')}
+                        disabled={!!firebaseUser}
+                        style={{ backgroundColor: firebaseUser ? '#f8f9fa' : '', cursor: firebaseUser ? 'not-allowed' : 'text' }}
                       />
-                      {formData.email && isValidEmail(formData.email) && (
-                        <i className="fas fa-check-circle text-success position-absolute" 
-                           style={{ 
-                             right: '0.75rem', 
-                             top: '50%', 
-                             transform: 'translateY(-50%)',
-                             fontSize: '1rem',
-                             pointerEvents: 'none'
-                           }}></i>
-                      )}
                     </div>
-                  </div>
 
-                  <div className="mb-3">
-                    <label className="form-label fw-medium">
-                      {getTranslation('checkout.phoneCodeRequired', language)}
-                    </label>
-                    <div className="position-relative">
+                    <div className="mb-3">
+                      <label className="form-label fw-medium">
+                        {getTranslation('checkout.phoneCodeRequired', language) || (language === 'es' ? 'Código telefónico *' : 'Phone code *')}
+                      </label>
                       {loadingPhoneCodes ? (
-                        <div className="d-flex align-items-center">
-                          <div className="spinner-border spinner-border-sm text-primary me-2" role="status">
-                            <span className="visually-hidden">{getTranslation('common.loading', language)}</span>
-                          </div>
-                          <select
-                            className="form-select"
-                            disabled
-                          >
-                            <option>{getTranslation('common.loading', language)}...</option>
-                          </select>
+                        <div className="spinner-border spinner-border-sm text-primary" role="status">
+                          <span className="visually-hidden">{getTranslation('common.loading', language)}</span>
                         </div>
                       ) : (
-                        <>
-                          <select
-                            className="form-select"
-                            name="phonePostalId"
-                            value={formData.phonePostalId ? String(formData.phonePostalId) : ''}
-                            onChange={handleInputChange}
-                            style={{ paddingRight: formData.phonePostalId && formData.phonePostalId > 0 ? '2.5rem' : '' }}
-                          >
-                            <option value="">
-                              {getTranslation('checkout.selectPhoneCode', language)}
+                        <select
+                          className="form-select"
+                          name="phonePostalId"
+                          value={formData.phonePostalId ? String(formData.phonePostalId) : ''}
+                          onChange={handleInputChange}
+                        >
+                          <option value="">
+                            {getTranslation('checkout.selectPhoneCode', language) || (language === 'es' ? 'Selecciona código' : 'Select code')}
+                          </option>
+                          {phoneCodes.map((phoneCode) => (
+                            <option 
+                              key={phoneCode.id || `${phoneCode.code2}-${phoneCode.code}`} 
+                              value={phoneCode.id ? String(phoneCode.id) : ''}
+                            >
+                              {capitalizeCountryName(phoneCode.countryName)} ({phoneCode.code})
                             </option>
-                            {phoneCodes.length === 0 ? (
-                              <option value="" disabled>{getTranslation('checkout.noPhoneCodesAvailable', language)}</option>
-                            ) : (
-                              phoneCodes.map((phoneCode) => {
-                                const countryNameCapitalized = capitalizeCountryName(phoneCode.countryName);
-                                // Usar phoneCode.id como phonePostalId, si no está disponible usar un identificador único
-                                const phonePostalId = phoneCode.id || `${phoneCode.code2}-${phoneCode.code}`;
-                                
-                                return (
-                                  <option 
-                                    key={phoneCode.id || `${phoneCode.code2}-${phoneCode.code}`} 
-                                    value={phoneCode.id ? String(phoneCode.id) : ''}
-                                  >
-                                    {countryNameCapitalized} ({phoneCode.code})
-                                  </option>
-                                );
-                              })
-                            )}
-                          </select>
-                          {formData.phoneCode && formData.phoneCode.trim() !== '' && (
-                            <i className="fas fa-check-circle text-success position-absolute" 
-                               style={{ 
-                                 right: '1.75rem', 
-                                 top: '50%', 
-                                 transform: 'translateY(-50%)',
-                                 fontSize: '1rem',
-                                 pointerEvents: 'none',
-                                 zIndex: 10
-                               }}></i>
-                          )}
-                        </>
+                          ))}
+                        </select>
                       )}
                     </div>
-                  </div>
 
-                  <div className="mb-4">
-                    <label className="form-label fw-medium">
-                      {getTranslation('checkout.phoneRequired', language)}
-                    </label>
-                    <div className="position-relative">
+                    <div className="mb-3">
+                      <label className="form-label fw-medium">
+                        {getTranslation('checkout.phoneRequired', language) || (language === 'es' ? 'Teléfono *' : 'Phone *')}
+                      </label>
                       <input
                         type="tel"
                         className="form-control"
                         name="phoneNumber"
                         value={formData.phoneNumber}
                         onChange={handleInputChange}
-                        placeholder={getTranslation('checkout.phonePlaceholder', language)}
-                        style={{ paddingRight: formData.phoneNumber && formData.phoneNumber.trim() !== '' ? '2.5rem' : '' }}
+                        placeholder={getTranslation('checkout.phonePlaceholder', language) || (language === 'es' ? 'Ingresa tu teléfono' : 'Enter your phone')}
                       />
-                      {formData.phoneNumber && formData.phoneNumber.trim() !== '' && (
-                        <i className="fas fa-check-circle text-success position-absolute" 
-                           style={{ 
-                             right: '0.75rem', 
-                             top: '50%', 
-                             transform: 'translateY(-50%)',
-                             fontSize: '1rem',
-                             pointerEvents: 'none'
-                           }}></i>
-                      )}
                     </div>
-                  </div>
-                  <div className="mb-3">
-                    <label className="form-label fw-medium">
-                      {getTranslation('checkout.nationalityRequired', language)}
-                    </label>
-                    <div className="position-relative">
+
+                    <div className="mb-3">
+                      <label className="form-label fw-medium">
+                        {getTranslation('checkout.nationalityRequired', language) || (language === 'es' ? 'Nacionalidad *' : 'Nationality *')}
+                      </label>
                       {loadingNationalities ? (
-                        <div className="d-flex align-items-center">
-                          <div className="spinner-border spinner-border-sm text-primary me-2" role="status">
-                            <span className="visually-hidden">{getTranslation('common.loading', language)}</span>
-                          </div>
-                          <select
-                            className="form-select"
-                            disabled
-                          >
-                            <option>{getTranslation('common.loading', language)}...</option>
-                          </select>
+                        <div className="spinner-border spinner-border-sm text-primary" role="status">
+                          <span className="visually-hidden">{getTranslation('common.loading', language)}</span>
                         </div>
                       ) : (
-                        <>
-                          <select
-                            className="form-select"
-                            name="nationality"
-                            value={formData.nationality}
-                            onChange={handleInputChange}
-                            style={{ paddingRight: formData.nationality && formData.nationality !== 'none' ? '2.5rem' : '' }}
-                          >
-                            <option value="none">
-                              {getTranslation('checkout.selectNationality', language) || 'Seleccione una nacionalidad'}
+                        <select
+                          className="form-select"
+                          name="nationality"
+                          value={formData.nationality}
+                          onChange={handleInputChange}
+                        >
+                          <option value="none">
+                            {getTranslation('checkout.selectNationality', language) || (language === 'es' ? 'Selecciona nacionalidad' : 'Select nationality')}
+                          </option>
+                          {nationalities.map((nationality) => (
+                            <option key={nationality.code2} value={nationality.code2}>
+                              {capitalizeCountryName(nationality.denomination)}
                             </option>
-                            {nationalities.length === 0 ? (
-                              <option value="">{getTranslation('checkout.noNationalitiesAvailable', language) || 'No hay nacionalidades disponibles'}</option>
-                            ) : (
-                              nationalities.map((nationality) => {
-                                const denominationCapitalized = capitalizeDenomination(nationality.denomination);
-                                return (
-                                  <option 
-                                    key={nationality.code2} 
-                                    value={nationality.code2}
-                                  >
-                                    {denominationCapitalized}
-                                  </option>
-                                );
-                              })
-                            )}
-                          </select>
-                          {formData.nationality && formData.nationality !== 'none' && (
-                            <i className="fas fa-check-circle text-success position-absolute" 
-                               style={{ 
-                                 right: '1.75rem', 
-                                 top: '50%', 
-                                 transform: 'translateY(-50%)',
-                                 fontSize: '1rem',
-                                 pointerEvents: 'none',
-                                 zIndex: 10
-                               }}></i>
-                          )}
-                        </>
+                          ))}
+                        </select>
                       )}
                     </div>
-                  </div>
-                  <div className="mb-4">
-                    <small className="text-muted">
-                      {getTranslation('checkout.contactDisclaimer', language)}
-                    </small>
-                  </div>
 
-                  {/* Botones cuando está editando */}
-                  {isEditingContactInfo && firebaseUser ? (
                     <div className="d-flex gap-2">
                       <button
                         type="button"
-                        className="btn btn-outline-secondary btn-lg flex-fill d-none d-md-block"
+                        className="btn btn-primary flex-grow-1"
+                        onClick={handleSaveContactInfo}
                         disabled={isSavingContactInfo}
-                        onClick={() => {
-                          // Restaurar los datos originales del formulario sin guardar cambios
-                          if (originalFormData) {
-                            setFormData(originalFormData);
-                          }
-                          setIsEditingContactInfo(false);
-                          setOriginalFormData(null);
-                        }}
-                      >
-                        {getTranslation('common.cancel', language)}
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-primary btn-lg flex-fill d-none d-md-block"
-                        disabled={isSavingContactInfo}
-                        onClick={async () => {
-                          try {
-                            // Validar que los campos obligatorios estén completos
-                            if (!areRequiredFieldsComplete(formData)) {
-                              alert(getTranslation('checkout.pleaseCompleteFields', language));
-                              return;
-                            }
-
-                            // Activar loading
-                            setIsSavingContactInfo(true);
-
-                            // Preparar los datos para la API
-                            const updateRequest: any = {
-                              firstName: formData.name || undefined,
-                              lastName: formData.lastName || undefined,
-                              email: formData.email || undefined,
-                              phoneNumber: formData.phoneNumber || undefined,
-                            };
-
-                            // Agregar phoneCodeId si está disponible
-                            if (formData.phoneCodeId > 0) {
-                              updateRequest.phoneCodeId = formData.phoneCodeId;
-                            }
-
-                            // Agregar phonePostalId - se debe enviar siempre que tenga un valor válido
-                            // Priorizar phoneCodeId si está disponible, sino usar phonePostalId directamente
-                            if (formData.phoneCodeId > 0) {
-                              updateRequest.phonePostalId = formData.phoneCodeId;
-                            } else if (formData.phonePostalId > 0) {
-                              updateRequest.phonePostalId = formData.phonePostalId;
-                            } else if (formData.phonePostalId !== undefined && formData.phonePostalId !== null) {
-                              // Enviar phonePostalId incluso si es 0, si está definido
-                              updateRequest.phonePostalId = formData.phonePostalId;
-                            }
-
-                            // Agregar countryBirthCode2 si está disponible
-                            // Nota: El backend espera un número (ID del país), pero el formulario guarda el código de 2 letras (code2)
-                            // Por ahora, intentamos convertir el código de 2 letras a número si es posible
-                            // Si el backend requiere un ID específico, necesitaríamos una API adicional para obtenerlo
-                            if (formData.nationality && formData.nationality !== 'none') {
-                              // El backend espera countryBirthCode2 como número (ID)
-                              // Por ahora, intentamos enviar el código de 2 letras
-                              // Si el backend no lo acepta, necesitaremos ajustar esto para obtener el ID del país
-                              // Nota: Si el backend requiere un ID numérico, necesitaríamos buscar el país por code2
-                              // y obtener su ID desde una API de países
-                              updateRequest.countryBirthCode2 = formData.nationality;
-                            }
-
-                            // Llamar a la API para actualizar la información de contacto
-                            const response = await authApi.updateTravelerContactInfo(updateRequest);
-                            
-                            // Si la actualización fue exitosa, mantener el formulario abierto
-                            // El usuario debe pulsar "Guardar cambios" nuevamente o "Cancelar" para cerrar
-                            if (response) {
-                              // Mostrar mensaje de éxito
-                              alert(language === 'es' 
-                                ? 'Información de contacto actualizada exitosamente'
-                                : 'Contact information updated successfully');
-                              
-                              // Actualizar los datos originales con los nuevos valores guardados
-                              // para que si el usuario cancela después, no se reviertan los cambios
-                              setOriginalFormData({ ...formData });
-                              
-                              // Guardar los datos actualizados en sessionStorage
-                              const formDataToSave = {
-                                ...formData,
-                                phonePostalCode: formData.phonePostalCode === '' || !formData.phonePostalCode ? null : formData.phonePostalCode,
-                                phoneCodeId: formData.phoneCodeId === 0 ? null : formData.phoneCodeId,
-                                phonePostalId: formData.phonePostalId === 0 ? null : formData.phonePostalId
-                              };
-                              sessionStorage.setItem('checkoutFormData', JSON.stringify(formDataToSave));
-                              
-                              // Avanzar automáticamente al paso 2 (pago) después de guardar exitosamente
-                              // Solo si estamos en el paso 1 y los campos obligatorios están completos
-                              if (currentStep === 1 && areRequiredFieldsComplete(formData) && bookingDetails && !isDepartureDatePast()) {
-                                // Pequeño delay para que el usuario vea el mensaje de éxito
-                                setTimeout(() => {
-                                  handleContinueToPayment();
-                                }, 300);
-                              }
-
-                              if (response.personId) {
-                                setContactPersonId(response.personId);
-                                sessionStorage.setItem('checkoutPersonId', String(response.personId));
-                                try {
-                                  await refreshUserData();
-                                } catch {
-                                  // Ignorar errores al refrescar datos del usuario
-                                }
-                              }
-                            }
-                          } catch (error: any) {
-                            // Mostrar mensaje de error
-                            const errorMessage = error.message || (language === 'es' 
-                              ? 'Error al actualizar la información de contacto'
-                              : 'Error updating contact information');
-                            alert(errorMessage);
-                          } finally {
-                            // Desactivar loading
-                            setIsSavingContactInfo(false);
-                          }
-                        }}
                       >
                         {isSavingContactInfo ? (
                           <>
-                            <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-                            {getTranslation('common.saving', language) || 'Guardando...'}
+                            <span className="spinner-border spinner-border-sm me-2" role="status"></span>
+                            {getTranslation('common.saving', language) || (language === 'es' ? 'Guardando...' : 'Saving...')}
                           </>
                         ) : (
-                          getTranslation('common.saveChanges', language)
+                          getTranslation('common.save', language) || (language === 'es' ? 'Guardar' : 'Save')
                         )}
                       </button>
+                      {firebaseUser && (
+                        <button
+                          type="button"
+                          className="btn btn-outline-secondary"
+                          onClick={() => setIsEditingContactInfo(false)}
+                        >
+                          {getTranslation('common.cancel', language) || (language === 'es' ? 'Cancelar' : 'Cancel')}
+                        </button>
+                      )}
                     </div>
-                  ) : (
-                    /* Botón Continuar con el pago - Solo mostrar cuando NO está editando */
-                    !isEditingContactInfo && (
-                      <button
-                        type="button"
-                        className="btn btn-primary btn-lg w-100 d-none d-md-block"
-                        onClick={handleContinueToPayment}
-                        disabled={isDepartureDatePast()}
-                        style={isDepartureDatePast() ? { opacity: 0.6, cursor: 'not-allowed' } : {}}
-                      >
-                        {getTranslation('checkout.continuePayment', language)}
-                      </button>
-                    )
-                  )}
-
-                  {/* Mostrar mensaje de fecha límite solo si se puede reservar y pagar después 
-                      y NO se ha seleccionado PayPal o Google Pay (porque ya está pagando) */}
-                  {canReserveAndPayLater() && paymentMethod !== 'paypal' && paymentMethod !== 'googlepay' && (() => {
-                    const deadline = getReservationDeadline();
-                    return deadline ? (
-                      <div className="mt-3 d-flex align-items-start">
-                        <i className="fas fa-check-circle text-success me-2 mt-1"></i>
-                        <div className="flex-grow-1">
-                          <span className="fw-medium d-block mb-1">
-                            {getTranslation('checkout.reserveNowPayLater', language)}
-                          </span>
-                          <span className="small text-muted">
-                            {getTranslationWithParams('checkout.deadlineConfirmCancelInfo', language, { deadline })}
-                          </span>
-                        </div>
-                      </div>
-                    ) : null;
-                  })()}
-
-                  {/* Booking Policies - Solo mostrar si se puede reservar y pagar después 
-                      y NO se ha seleccionado PayPal o Google Pay (porque ya está pagando) */}
-                  <div className="mt-4">
-                    
-                    {(() => {
-                      const cancelBefore = bookingDetails?.cancelBefore || bookingOptionCancelInfo?.cancelBefore;
-                      if (cancelBefore && canReserveAndPayLater() && paymentMethod !== 'paypal' && paymentMethod !== 'googlepay') {
-                        const deadline = getReservationDeadline();
-                        if (deadline) {
-                          return (
-                            <>
-                    <div className="d-flex align-items-center mb-2">
-                      <i className="fas fa-check text-success me-2"></i>
-                      <span className="fw-medium">{getTranslation('checkout.noPayToday', language)}</span>
-                    </div>
-                    <div className="d-flex align-items-center mb-2">
-                      <i className="fas fa-check text-success me-2"></i>
-                                <span className="fw-medium">
-                                  {getTranslationWithParams('checkout.bookNowPayLater', language, { deadline })}
-                                </span>
-                    </div>
-                            </>
-                          );
-                        }
-                      }
-                      return <></>;
-                    })()}
-                    {!isCancellationDeadlinePassed() && (
-                    <div className="d-flex align-items-center mb-2">
-                      <i className="fas fa-check text-success me-2"></i>
-                        <span className="fw-medium">
-                          {(() => {
-                            const deadline = getCancellationDeadline();
-                            const cancelBefore = bookingDetails?.cancelBefore || bookingOptionCancelInfo?.cancelBefore;
-                            
-                            if (deadline) {
-                              return (
-                                <>
-                                  {getTranslation('checkout.easyCancellation', language)} {deadline}
-                                </>
-                              );
-                            } else if (cancelBefore) {
-                              return `${getTranslation('checkout.easyCancellation', language)} - ${cancelBefore}`;
-                            }
-                            return getTranslation('checkout.easyCancellation', language);
-                          })()}
-                        </span>
-                    </div>
-                    )}
-                  </div>
-                </form>
-              </div>
-            </div>
-          </>
-        ) : (
-          <>
-            {/* Spot Hold Timer - Step 2 */}
-            <div className="alert mb-4" style={{ backgroundColor: '#fce4ec', borderColor: '#f8bbd0', color: '#880e4f' }}>
-              <div className="d-flex align-items-center">
-                <span className="fw-medium">
-                  {getTranslation('checkout.holdSpotFor', language)} {formatTime(timeLeft, language)}.
-                </span>
+                  </form>
+                )}
               </div>
             </div>
 
-            {/* Reservation Deadline Warning - Step 2 */}
-            {(() => {
-              const deadline = getReservationDeadline();
-              return deadline ? (
-                <div className="alert alert-warning mb-4" style={{ backgroundColor: '#fff3cd', borderColor: '#ffc107' }}>
-                  <div className="d-flex align-items-start">
-                    <i className="fas fa-exclamation-triangle me-2 mt-1"></i>
-                    <div className="flex-grow-1">
-                      <strong className="d-block mb-1">
-                        {getTranslation('checkout.deadlineConfirmCancel', language)}
-                      </strong>
-                      <div className="small">
-                        {getTranslationWithParams('checkout.deadlineMessage', language, { deadline })}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ) : null;
-            })()}
-
-            {/* Payment Method Selection */}
+            {/* Métodos de pago */}
             <div className="card">
               <div className="card-body">
-                <h2 className="fw-bold mb-3">
-                  {getTranslation('checkout.selectPaymentMethod', language)}
-                </h2>
-                
-                {/* Bloqueo si no está autenticado */}
-                {!isAuthenticated && (
-                  <div className="alert alert-warning mb-4" role="alert">
-                    <div className="d-flex align-items-center">
-                      <i className="fas fa-exclamation-triangle me-2"></i>
-                      <div>
-                        <strong className="d-block mb-1">
-                          {language === 'es' 
-                            ? 'Inicio de sesión requerido'
-                            : 'Login required'}
-                        </strong>
-                        <p className="mb-0">
-                          {language === 'es' 
-                            ? 'Debes iniciar sesión para poder realizar el pago o reserva.'
-                            : 'You must log in to proceed with payment or reservation.'}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
+                <h5 className="fw-bold mb-3">
+                  {getTranslation('checkout.paymentMethod', language)}
+                </h5>
 
-                <div className="d-flex align-items-center mb-4">
-                  <i className="fas fa-lock text-success me-2"></i>
-                  <span className="text-success fw-medium">
-                    {getTranslation('checkout.paymentsSecure', language)}
-                  </span>
-                </div>
-
-                {/* Payment Methods */}
-                <div className="mb-4">
-                  {/* PayPal */}
-                  <div className="form-check mb-3 p-3 border rounded" style={{ 
-                    cursor: (!isAuthenticated && !localStorage.getItem('authToken') && !firebaseUser && !auth.currentUser) ? 'not-allowed' : 'pointer', 
-                    backgroundColor: paymentMethod === 'paypal' ? '#f8f9fa' : 'transparent', 
-                    borderColor: paymentMethod === 'paypal' ? '#007bff' : '#dee2e6', 
-                    opacity: (!isAuthenticated && !localStorage.getItem('authToken') && !firebaseUser && !auth.currentUser) ? 0.6 : 1 
-                  }}>
+                {/* PayPal */}
+                <div className="mb-3">
+                  <label className="d-flex align-items-center p-3 border rounded" style={{ cursor: 'pointer', backgroundColor: paymentMethod === 'paypal' ? '#f0f8ff' : 'white' }}>
                     <input
-                      className="form-check-input"
                       type="radio"
                       name="paymentMethod"
-                      id="paymentPayPal"
                       value="paypal"
                       checked={paymentMethod === 'paypal'}
-                      onChange={(e) => {
-                        const hasToken = !!localStorage.getItem('authToken');
-                        const hasFirebaseUser = firebaseUser !== null || auth.currentUser !== null;
-                        
-                        if (!isAuthenticated && !hasToken && !hasFirebaseUser) {
-                          setShowLoginModal(true);
-                          alert(language === 'es' 
-                            ? 'Debes iniciar sesión para seleccionar un método de pago.'
-                            : 'You must log in to select a payment method.');
-                          return;
-                        }
-                        setPaymentMethod(e.target.value as 'paypal');
-                      }}
-                      disabled={!isAuthenticated && !localStorage.getItem('authToken') && !firebaseUser && !auth.currentUser}
-                      style={{ cursor: (!isAuthenticated && !localStorage.getItem('authToken') && !firebaseUser && !auth.currentUser) ? 'not-allowed' : 'pointer' }}
+                      onChange={() => handlePaymentMethodSelect('paypal')}
+                      className="me-3"
                     />
-                    <label className="form-check-label d-flex align-items-center justify-content-between w-100" htmlFor="paymentPayPal" style={{ cursor: 'pointer' }}>
-                      <div className="d-flex align-items-center">
-                        <i className="fab fa-paypal me-3" style={{ fontSize: '2rem', color: '#003087' }}></i>
-                        <span className="fw-medium">PayPal</span>
-                      </div>
-                      <img 
-                        src="https://www.paypalobjects.com/webstatic/mktg/logo/pp_cc_mark_111x69.jpg" 
-                        alt="PayPal" 
-                        style={{ height: '24px', width: 'auto' }}
-                      />
-                    </label>
-                  </div>
+                    <i className="fab fa-paypal text-primary me-2" style={{ fontSize: '1.5rem' }}></i>
+                    <span className="fw-medium">PayPal</span>
+                  </label>
+                  {paymentMethod === 'paypal' && (
+                    <div className="mt-3" ref={paypalButtonRef}>
+                      {!paypalScriptLoaded && (
+                        <div className="text-center py-3">
+                          <div className="spinner-border spinner-border-sm text-primary" role="status">
+                            <span className="visually-hidden">{getTranslation('common.loading', language)}</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
 
-                  {/* Google Pay */}
-                  <div className="form-check mb-3 p-3 border rounded" style={{ 
-                    cursor: (!isAuthenticated && !localStorage.getItem('authToken') && !firebaseUser && !auth.currentUser) ? 'not-allowed' : 'pointer', 
-                    backgroundColor: paymentMethod === 'googlepay' ? '#f8f9fa' : 'transparent', 
-                    borderColor: paymentMethod === 'googlepay' ? '#007bff' : '#dee2e6', 
-                    opacity: (!isAuthenticated && !localStorage.getItem('authToken') && !firebaseUser && !auth.currentUser) ? 0.6 : 1 
-                  }}>
+                {/* Google Pay */}
+                <div className="mb-3">
+                  <label className="d-flex align-items-center p-3 border rounded" style={{ cursor: 'pointer', backgroundColor: paymentMethod === 'googlepay' ? '#f0f8ff' : 'white' }}>
                     <input
-                      className="form-check-input"
                       type="radio"
                       name="paymentMethod"
-                      id="paymentGooglePay"
                       value="googlepay"
                       checked={paymentMethod === 'googlepay'}
-                      onChange={(e) => {
-                        const hasToken = !!localStorage.getItem('authToken');
-                        const hasFirebaseUser = firebaseUser !== null || auth.currentUser !== null;
-                        
-                        if (!isAuthenticated && !hasToken && !hasFirebaseUser) {
-                          setShowLoginModal(true);
-                          alert(language === 'es' 
-                            ? 'Debes iniciar sesión para seleccionar un método de pago.'
-                            : 'You must log in to select a payment method.');
-                          return;
-                        }
-                        setPaymentMethod(e.target.value as 'googlepay');
-                      }}
-                      disabled={!isAuthenticated && !localStorage.getItem('authToken') && !firebaseUser && !auth.currentUser}
-                      style={{ cursor: (!isAuthenticated && !localStorage.getItem('authToken') && !firebaseUser && !auth.currentUser) ? 'not-allowed' : 'pointer' }}
+                      onChange={() => handlePaymentMethodSelect('googlepay')}
+                      className="me-3"
                     />
-                    <label className="form-check-label d-flex align-items-center w-100" htmlFor="paymentGooglePay" style={{ cursor: 'pointer' }}>
-                      <i className="fab fa-google-pay me-3" style={{ fontSize: '2rem', color: '#4285F4' }}></i>
-                      <span className="fw-medium">Google Pay</span>
-                      {paymentMethod === 'googlepay' && (
-                        <i className="fas fa-check-circle text-success ms-auto" style={{ fontSize: '1.5rem' }}></i>
-                      )}
-                    </label>
-                  </div>
-
-                  {/* Reserva ahora y paga después - Siempre disponible */}
-                  <div 
-                    className="form-check mb-3 p-3 border rounded" 
-                    style={{ 
-                      cursor: (!isAuthenticated && !localStorage.getItem('authToken') && !firebaseUser && !auth.currentUser) ? 'not-allowed' : 'pointer', 
-                      backgroundColor: paymentMethod === 'reserveLater' ? '#f8f9fa' : 'transparent', 
-                      borderColor: paymentMethod === 'reserveLater' ? '#28a745' : '#dee2e6', 
-                      opacity: (!isAuthenticated && !localStorage.getItem('authToken') && !firebaseUser && !auth.currentUser) ? 0.6 : 1 
-                    }}
-                    onClick={() => {
-                      const hasToken = !!localStorage.getItem('authToken');
-                      const hasFirebaseUser = firebaseUser !== null || auth.currentUser !== null;
-                      
-                      if (!isAuthenticated && !hasToken && !hasFirebaseUser) {
-                        setShowLoginModal(true);
-                        alert(language === 'es' 
-                          ? 'Debes iniciar sesión para seleccionar un método de pago.'
-                          : 'You must log in to select a payment method.');
-                        return;
-                      }
-                      setPaymentMethod('reserveLater');
-                    }}
-                  >
-                    <input
-                      className="form-check-input"
-                      type="radio"
-                      name="paymentMethod"
-                      id="paymentReserveLater"
-                      value="reserveLater"
-                      checked={paymentMethod === 'reserveLater'}
-                      onChange={(e) => {
-                        const hasToken = !!localStorage.getItem('authToken');
-                        const hasFirebaseUser = firebaseUser !== null || auth.currentUser !== null;
-                        
-                        if (!isAuthenticated && !hasToken && !hasFirebaseUser) {
-                          setShowLoginModal(true);
-                          alert(language === 'es' 
-                            ? 'Debes iniciar sesión para seleccionar un método de pago.'
-                            : 'You must log in to select a payment method.');
-                          return;
-                        }
-                        setPaymentMethod(e.target.value as 'reserveLater');
-                      }}
-                      disabled={!isAuthenticated && !localStorage.getItem('authToken') && !firebaseUser && !auth.currentUser}
-                      style={{ cursor: (!isAuthenticated && !localStorage.getItem('authToken') && !firebaseUser && !auth.currentUser) ? 'not-allowed' : 'pointer' }}
-                    />
-                    <label className="form-check-label d-flex align-items-center w-100" htmlFor="paymentReserveLater" style={{ cursor: 'pointer' }}>
-                      <i className="fas fa-calendar-check me-3" style={{ fontSize: '2rem', color: '#28a745' }}></i>
-                      <div className="flex-grow-1">
-                          <h5 className="fw-bold mb-1">
-                            {getTranslation('checkout.reserveNowPayLater', language)}
-                          </h5>
-                          <p className="text-muted mb-1 small">
-                            {getTranslation('checkout.reserveNowPayLaterDescription', language)}
-                          </p>
-                        {(() => {
-                          const deadline = getReservationDeadline();
-                          return deadline ? (
-                            <p className="text-muted mb-0 small fw-medium" style={{ color: '#6c757d' }}>
-                              <i className="fas fa-info-circle me-1"></i>
-                              {getTranslationWithParams('checkout.deadlineConfirmCancelInfo', language, { deadline })}
-                            </p>
-                          ) : null;
-                        })()}
-                      </div>
-                      {paymentMethod === 'reserveLater' && (
-                        <i className="fas fa-check-circle text-success ms-2" style={{ fontSize: '1.5rem' }}></i>
-                      )}
-                    </label>
-                  </div>
-                </div>
-
-                {/* PayPal Option Content - Show when PayPal is selected */}
-                {paymentMethod === 'paypal' && (
-                  <div className="mb-4 p-3 border rounded" style={{ backgroundColor: '#f8f9fa' }}>
-                    <p className="text-muted mb-3">
-                      {getTranslation('checkout.paypalRedirect', language)}
-                    </p>
-                    <div id="paypal-button-container" className="d-flex justify-content-center align-items-center" style={{ minHeight: '80px' }}>
-                      {isProcessingPayPal && (
-                        <div className="text-center">
-                          <div className="spinner-border text-primary" role="status">
-                            <span className="visually-hidden">Loading...</span>
-                          </div>
-                          <p className="mt-2 text-muted">
-                            {getTranslation('checkout.loadingPayPal', language)}
-                          </p>
-                        </div>
-                      )}
-                    </div>
+                    <i className="fab fa-google-pay text-primary me-2" style={{ fontSize: '1.5rem' }}></i>
+                    <span className="fw-medium">Google Pay</span>
+                  </label>
+                  {paymentMethod === 'googlepay' && (
                     <div className="mt-3">
-                      <small className="text-muted">
-                        {getTranslation('checkout.termsAgreement', language)}
-                      </small>
-                    </div>
-                  </div>
-                )}
-
-                {/* Google Pay Option Content - Show when Google Pay is selected */}
-                {paymentMethod === 'googlepay' && bookingDetails && (() => {
-                  const gpConfig = getGooglePayConfig();
-                  const googlePayConfig = config?.googlePay || apiConfig.googlePay;
-                  
-                  return (
-                    <div className="mb-4 p-3 border rounded" style={{ backgroundColor: '#f8f9fa' }}>
-                      <p className="text-muted mb-3">
-                        {language === 'es' 
-                          ? 'Completa el pago con Google Pay.'
-                          : 'Complete payment with Google Pay.'}
-                      </p>
-                      <div className="d-flex justify-content-center align-items-center" style={{ minHeight: '80px' }}>
-                        <GooglePayButton
-                          environment="TEST"
-                          paymentRequest={{
-                            apiVersion: 2,
-                            apiVersionMinor: 0,
-                            allowedPaymentMethods: [
-                              {
-                                type: 'CARD',
-                                parameters: {
-                                  allowedAuthMethods: ['PAN_ONLY', 'CRYPTOGRAM_3DS'],
-                                  allowedCardNetworks: ['MASTERCARD', 'VISA'],
-                                },
-                                tokenizationSpecification: {
-                                  type: 'PAYMENT_GATEWAY',
-                                  parameters: {
-                                    gateway: 'example',
-                                    gatewayMerchantId: googlePayConfig?.merchantId || '',
-                                  },
-                                },
+                      <GooglePayButton
+                        environment={config.googlePay?.environment === 'PRODUCTION' ? 'PRODUCTION' : 'TEST'}
+                        paymentRequest={{
+                          apiVersion: 2,
+                          apiVersionMinor: 0,
+                          allowedPaymentMethods: [
+                            {
+                              type: 'CARD',
+                              parameters: {
+                                allowedAuthMethods: ['PAN_ONLY', 'CRYPTOGRAM_3DS'],
+                                allowedCardNetworks: ['AMEX', 'DISCOVER', 'JCB', 'MASTERCARD', 'VISA']
                               },
-                            ],
-                            merchantInfo: {
-                              merchantId: googlePayConfig?.merchantId || '',
-                              merchantName: googlePayConfig?.merchantName || config?.business?.name || 'ViajeroMap',
-                            },
-                            transactionInfo: {
-                              totalPriceStatus: 'FINAL',
-                              totalPriceLabel: 'Total',
-                              totalPrice: gpConfig.totalAmount,
-                              currencyCode: gpConfig.currency,
-                              countryCode: 'PE',
-                            },
-                          }}
-                          onLoadPaymentData={async (paymentData) => {
-                            try {
-                              // Extraer el token
-                              const token = paymentData?.paymentMethodData?.tokenizationData?.token || '';
-                              
-                              // Procesar el pago completado usando la función existente
-                              const paymentInfo = {
-                                paymentMethod: 'googlepay',
-                                paymentData: paymentData,
-                                transactionId: token,
-                                description: gpConfig.description,
-                                amount: {
-                                  total: gpConfig.totalAmount,
-                                  currency: gpConfig.currency
-                                },
-                                bookingDetails: {
-                                  title: bookingDetails?.title,
-                                  activityId: bookingDetails?.activityId,
-                                  travelers: {
-                                    adults: gpConfig.totalAdults,
-                                    children: gpConfig.totalChildren,
-                                    total: gpConfig.totalTravelers
-                                  }
+                              tokenizationSpecification: {
+                                type: 'PAYMENT_GATEWAY',
+                                parameters: {
+                                  gateway: 'stripe', // Cambiar según tu gateway de pago (stripe, braintree, etc.)
+                                  gatewayMerchantId: config.googlePay?.merchantId || ''
                                 }
-                              };
-                              
-                              // Mostrar alerta de éxito
-                              alert('✅ Pago simulado con Google Pay completado.');
-                              
-                              await processCompletedPayment(paymentInfo, 'googlepay');
-                            } catch (error) {
-                              console.error('❌ Google Pay - Error:', error);
-                              const fallbackMessage = language === 'es' 
-                                ? 'Error al procesar el pago con Google Pay. Por favor intenta nuevamente.'
-                                : 'Error processing Google Pay payment. Please try again.';
-                              const message = error instanceof Error && error.message ? error.message : fallbackMessage;
-                              alert(message);
+                              }
                             }
-                          }}
-                          onError={(error) => {
-                            console.error('❌ Google Pay - Error:', error);
-                            alert(language === 'es' 
-                              ? 'Error al procesar el pago con Google Pay. Por favor intenta nuevamente.'
-                              : 'Error processing Google Pay payment. Please try again.');
-                          }}
-                        />
-                      </div>
-                      <div className="mt-3">
-                        <small className="text-muted">
-                          {getTranslation('checkout.termsAgreement', language)}
-                        </small>
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                {/* Legal Information */}
-                <div className="mb-4">
-                  <small className="text-muted">
-                    {language === 'es' 
-                      ? 'Al continuar, aceptas los términos y condiciones generales de viajeromap. Lee más sobre el derecho de retracto y la información sobre la ley de viajes aplicable.'
-                      : "By continuing, you agree to viajeromap's general terms and conditions. Read more on the right of withdrawal and information on the applicable travel law."}
-                  </small>
-                </div>
-
-                {/* Pay Now Button - Solo mostrar si no es PayPal o Google Pay (que manejan su propio flujo) */}
-                {paymentMethod !== 'paypal' && paymentMethod !== 'googlepay' && (
-                  <button
-                    type="button"
-                    className="btn btn-primary btn-lg w-100 d-none d-md-block"
-                    onClick={handlePayNow}
-                    disabled={!paymentMethod || isProcessingOrder}
-                  >
-                    <i className="fas fa-lock me-2"></i>
-                    {paymentMethod === 'reserveLater'
-                      ? getTranslation('checkout.reserveNow', language)
-                      : getTranslation('checkout.payNow', language)}
-                  </button>
-                )}
-              </div>
-            </div>
-          </>
-        )}
-          </div>
-
-          {/* Right Column - Order Summary */}
-          <div className="col-lg-6">
-            <div className="card">
-              <div className="card-body">
-                <h2 className="fw-bold mb-4">{getTranslation('checkout.orderSummary', language)}</h2>
-
-                {/* Activity Card */}
-                <div className="d-flex mb-4">
-                  <img
-                    src={bookingDetails.imageUrl}
-                    alt={activityTitle || bookingDetails.title}
-                    className="rounded me-3"
-                    style={{ width: '80px', height: '80px', objectFit: 'cover' }}
-                  />
-                  <div className="flex-grow-1">
-                    <h5 className="fw-bold mb-1">{activityTitle || bookingDetails.title}</h5>
-                    {bookingDetails?.hasDiscount && bookingDetails?.discountPercentage > 0 && (
-                      <span className="badge bg-success small">-{bookingDetails.discountPercentage}%</span>
-                    )}
-                    <div className="mb-2">
-                      <RatingStars
-                        rating={activityRating ?? null}
-                        commentsCount={activityCommentsCount ?? null}
-                        starSize={16}
+                          ],
+                          merchantInfo: {
+                            merchantId: config.googlePay?.merchantId || '',
+                            merchantName: config.googlePay?.merchantName || config.business.name
+                          },
+                          transactionInfo: {
+                            totalPriceStatus: 'FINAL',
+                            totalPriceLabel: getTranslation('checkout.total', language) || 'Total',
+                            totalPrice: totalAmount.toFixed(2),
+                            currencyCode: currencyForTotal || config.googlePay?.currency || 'USD',
+                            countryCode: 'PE'
+                          }
+                        }}
+                        onLoadPaymentData={handleGooglePayPayment}
+                        onError={(error: any) => {
+                          console.error('Google Pay error:', error);
+                          alert(getTranslation('checkout.paymentError', language) || (language === 'es' 
+                            ? 'Error en el proceso de pago'
+                            : 'Payment error'));
+                          setIsProcessingPayment(false);
+                        }}
+                        buttonColor="black"
+                        buttonType="pay"
+                        buttonLocale={language === 'es' ? 'es' : 'en'}
                       />
                     </div>
-                  </div>
-                </div>
-
-                {/* Booking Details */}
-                <div className="mb-4">
-                  {/* Idioma del guía */}
-                  <div className="d-flex align-items-center justify-content-between mb-2">
-                    <div className="d-flex align-items-center flex-grow-1">
-                      <i className="fas fa-language text-primary me-2"></i>
-                      {isEditingLanguage ? (
-                        <select
-                          className="form-select form-select-sm"
-                          style={{ width: 'auto', maxWidth: '200px' }}
-                          value={editedLanguage}
-                          onChange={(e) => setEditedLanguage(e.target.value)}
-                          disabled={availableGuideLanguages.length === 0}
-                        >
-                          {availableGuideLanguages.length === 0 ? (
-                            <option value="">{getTranslation('checkout.noOptions', language)}</option>
-                          ) : (
-                            availableGuideLanguages.map((langOpt) => (
-                              <option key={langOpt} value={langOpt}>
-                                {getLanguageName(langOpt, language)}
-                              </option>
-                            ))
-                          )}
-                        </select>
-                      ) : (
-                        <span className="small">
-                          {getTranslation('checkout.language', language)}: {getLanguageName(bookingDetails.guideLanguage, language)}
-                        </span>
-                      )}
-                    </div>
-                    {isEditingLanguage ? (
-                      <div className="d-flex gap-2 ms-2" style={{ alignSelf: 'center' }}>
-                        <button
-                          className="btn btn-sm btn-primary"
-                          onClick={() => {
-                            if (bookingDetails) {
-                              setBookingDetails({
-                                ...bookingDetails,
-                                guideLanguage: editedLanguage
-                              });
-                              // Guardar en sessionStorage (usar la misma clave que se usa al cargar)
-                              const updatedDetails = {
-                                ...bookingDetails,
-                                guideLanguage: editedLanguage
-                              };
-                              sessionStorage.setItem('checkoutBookingDetails', JSON.stringify(updatedDetails));
-                              // También guardar en bookingDetails para compatibilidad
-                              sessionStorage.setItem('bookingDetails', JSON.stringify(updatedDetails));
-                            }
-                            setIsEditingLanguage(false);
-                          }}
-                        >
-                          <i className="fas fa-check me-1"></i>
-                          {getTranslation('common.save', language)}
-                        </button>
-                        <button
-                          className="btn btn-sm btn-secondary"
-                          onClick={() => {
-                            setEditedLanguage(bookingDetails?.guideLanguage || '');
-                            setIsEditingLanguage(false);
-                          }}
-                        >
-                          <i className="fas fa-times me-1"></i>
-                          {getTranslation('common.cancel', language)}
-                        </button>
-                      </div>
-                    ) : (
-                      <a href="#" className="text-primary text-decoration-none small ms-2" style={{ alignSelf: 'center', whiteSpace: 'nowrap' }} onClick={(e) => {
-                        e.preventDefault();
-                        setEditedLanguage(bookingDetails?.guideLanguage || '');
-                        setIsEditingLanguage(true);
-                      }}>
-                        <i className="fas fa-pencil-alt me-1"></i>
-                        {getTranslation('common.edit', language)}
-                      </a>
-                    )}
-                  </div>
-                  
-                  {/* Punto de encuentro o recogida */}
-                  <div className="d-flex align-items-start mb-2">
-                    <i className="fas fa-map-marker-alt text-primary me-2 mt-1"></i>
-                    <div className="flex-grow-1 d-flex justify-content-between align-items-start">
-                      <div className="flex-grow-1">
-                        <span className="small fw-medium d-block">
-                          {getTranslation('checkout.meetingPoint', language)}:
-                        </span>
-                        {!isEditingPickupPoint ? (
-                          <span className="small">
-                            {bookingDetails.pickupPoint ? (
-                              <>
-                                {bookingDetails.pickupPoint.name}
-                                {bookingDetails.pickupPoint.address && (
-                                  <span className="text-muted d-block mt-1">
-                                    {bookingDetails.pickupPoint.address}
-                                  </span>
-                                )}
-                              </>
-                            ) : (
-                              bookingDetails.meetingPoint
-                            )}
-                          </span>
-                        ) : (
-                          <div className="d-flex align-items-center gap-2">
-                            <select
-                              className="form-select form-select-sm"
-                              style={{ maxWidth: '360px' }}
-                              value={selectedPickupPointId}
-                              onChange={(e) => {
-                                const v = e.target.value;
-                                setSelectedPickupPointId(v === '' ? '' : Number(v));
-                              }}
-                            >
-                              <option value="">
-                                {getTranslation('checkout.selectMeetingPoint', language)}
-                              </option>
-                              {Array.isArray(currentBookingOption?.pickupPoints) && currentBookingOption.pickupPoints.map((p: any) => (
-                                <option key={p.id} value={p.id}>
-                                  {p.name}
-                                </option>
-                              ))}
-                            </select>
-                            <div className="d-flex gap-2">
-                              <button
-                                className="btn btn-sm btn-primary"
-                                onClick={() => {
-                                  if (!Array.isArray(currentBookingOption?.pickupPoints)) {
-                                    setIsEditingPickupPoint(false);
-                                    return;
-                                  }
-                                  const chosen = currentBookingOption.pickupPoints.find((p: any) => p.id === selectedPickupPointId) || null;
-                                  const newPickup = chosen ? { name: chosen.name, address: chosen.address } : undefined;
-                                  const updated: BookingDetails = {
-                                    ...bookingDetails,
-                                    pickupPoint: newPickup
-                                  };
-                                  setBookingDetails(updated);
-                                  sessionStorage.setItem('checkoutBookingDetails', JSON.stringify(updated));
-                                  sessionStorage.setItem('bookingDetails', JSON.stringify(updated));
-                                  setIsEditingPickupPoint(false);
-                                }}
-                              >
-                                <i className="fas fa-check me-1"></i>
-                                {getTranslation('common.save', language)}
-                              </button>
-                              <button
-                                className="btn btn-sm btn-secondary"
-                                onClick={() => {
-                                  // Restaurar selección según bookingDetails actual
-                                  if (bookingDetails?.pickupPoint && Array.isArray(currentBookingOption?.pickupPoints)) {
-                                    const found = currentBookingOption.pickupPoints.find((p: any) => p?.name === bookingDetails.pickupPoint?.name);
-                                    if (found?.id != null) setSelectedPickupPointId(found.id);
-                                  } else {
-                                    setSelectedPickupPointId('');
-                                  }
-                                  setIsEditingPickupPoint(false);
-                                }}
-                              >
-                                <i className="fas fa-times me-1"></i>
-                                {getTranslation('common.cancel', language)}
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                      {!isEditingPickupPoint && currentBookingOption?.meetingType === 'REFERENCE_CITY_WITH_LIST' && Array.isArray(currentBookingOption?.pickupPoints) && currentBookingOption.pickupPoints.length > 0 && (
-                        <a
-                          href="#"
-                          className="text-primary text-decoration-none small ms-2"
-                          style={{ alignSelf: 'center', whiteSpace: 'nowrap' }}
-                          onClick={(e) => {
-                            e.preventDefault();
-                            // Prellenar id seleccionado con la selección actual si existe
-                            try {
-                              if (bookingDetails?.pickupPoint && Array.isArray(currentBookingOption?.pickupPoints)) {
-                                const found = currentBookingOption.pickupPoints.find((p: any) => p?.name === bookingDetails.pickupPoint?.name);
-                                if (found?.id != null) {
-                                  setSelectedPickupPointId(found.id);
-                                } else {
-                                  setSelectedPickupPointId('');
-                                }
-                              } else {
-                                setSelectedPickupPointId('');
-                              }
-                            } catch {}
-                            setIsEditingPickupPoint(true);
-                          }}
-                        >
-                          <i className="fas fa-pencil-alt me-1"></i>
-                          {getTranslation('common.edit', language)}
-                        </a>
-                      )}
-                    </div>
-                  </div>
-                  
-                  {/* Comentario */}
-                  <div className="d-flex align-items-start mb-2">
-                    <i className="fas fa-comment text-primary me-2 mt-1"></i>
-                    <div className="flex-grow-1 d-flex justify-content-between align-items-start">
-                      <div className="flex-grow-1">
-                        <span className="small fw-medium d-block mb-2">
-                          {getTranslation('checkout.specialRequest', language)}:
-                        </span>
-                        {isEditingComment ? (
-                          <div>
-                            <textarea
-                              className="form-control form-control-sm mb-2"
-                              rows={3}
-                              value={editedComment}
-                              onChange={(e) => {
-                                const value = e.target.value;
-                                // Limitar a 150 caracteres
-                                if (value.length <= 150) {
-                                  setEditedComment(value);
-                                }
-                              }}
-                              placeholder={getTranslation('checkout.specialRequestPlaceholder', language)}
-                              maxLength={150}
-                              style={{ fontSize: '0.875rem' }}
-                            />
-                            <div className="text-muted small text-end">
-                              {editedComment.length}/150 {getTranslation('checkout.characters', language)}
-                            </div>
-                            <div className="d-flex gap-2">
-                              <button
-                                className="btn btn-sm btn-primary"
-                                onClick={() => {
-                                  if (bookingDetails) {
-                                    setBookingDetails({
-                                      ...bookingDetails,
-                                      comment: editedComment.trim() || undefined
-                                    });
-                                    // Guardar en sessionStorage (usar la misma clave que se usa al cargar)
-                                    const updatedDetails = {
-                                      ...bookingDetails,
-                                      comment: editedComment.trim() || undefined
-                                    };
-                                    sessionStorage.setItem('checkoutBookingDetails', JSON.stringify(updatedDetails));
-                                    // También guardar en bookingDetails para compatibilidad
-                                    sessionStorage.setItem('bookingDetails', JSON.stringify(updatedDetails));
-                                  }
-                                  setIsEditingComment(false);
-                                }}
-                              >
-                                <i className="fas fa-check me-1"></i>
-                                {getTranslation('common.save', language) || 'Guardar'}
-                              </button>
-                              <button
-                                className="btn btn-sm btn-secondary"
-                                onClick={() => {
-                                  setEditedComment(bookingDetails?.comment || '');
-                                  setIsEditingComment(false);
-                                }}
-                              >
-                                <i className="fas fa-times me-1"></i>
-                                {getTranslation('common.cancel', language) || (language === 'es' ? 'Cancelar' : 'Cancel')}
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div>
-                            {bookingDetails.comment ? (
-                              <span className="small text-muted">
-                                {bookingDetails.comment}
-                              </span>
-                            ) : (
-                              <span className="small text-muted">
-                                {getTranslation('checkout.noComment', language)}
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                      {!isEditingComment && (
-                        <a href="#" className="text-primary text-decoration-none small ms-2" style={{ alignSelf: 'flex-start', whiteSpace: 'nowrap', marginTop: '20px' }} onClick={(e) => {
-                          e.preventDefault();
-                          setEditedComment(bookingDetails?.comment || '');
-                          setIsEditingComment(true);
-                        }}>
-                          <i className="fas fa-pencil-alt me-1"></i>
-                          {getTranslation('common.edit', language)}
-                        </a>
-                      )}
-                    </div>
-                  </div>
-                  
-                  {/* Fecha y hora de salida */}
-                  <div className="d-flex align-items-start justify-content-between mb-2">
-                    <div className="d-flex align-items-start flex-grow-1">
-                      <i className="fas fa-calendar-alt text-primary me-2 mt-1"></i>
-                      {isEditingDateTime ? (
-                        <div className="flex-grow-1">
-                          <div className="mb-2">
-                            <label className="form-label small fw-medium d-block mb-1">
-                              {getTranslation('checkout.departureDate', language)}:
-                            </label>
-                            <input
-                              type="date"
-                              className="form-control form-control-sm"
-                              value={editedDate}
-                              min={new Date().toISOString().split('T')[0]}
-                              onChange={(e) => {
-                                const newDate = e.target.value;
-                                setEditedDate(newDate);
-                                // Actualizar horarios disponibles según la nueva fecha
-                                const times = getAvailableTimesForDate(newDate);
-                                setAvailableTimes(times);
-                                // Si hay horarios disponibles y no hay uno seleccionado, seleccionar el primero
-                                if (times.length > 0 && !editedTime) {
-                                  setEditedTime(times[0]);
-                                } else if (times.length > 0 && !times.includes(editedTime)) {
-                                  // Si el horario actual no está disponible, seleccionar el primero
-                                  setEditedTime(times[0]);
-                                } else if (times.length === 0) {
-                                  setEditedTime('');
-                                }
-                              }}
-                              style={{ fontSize: '0.875rem' }}
-                            />
-                          </div>
-                          <div className="mb-2">
-                            <label className="form-label small fw-medium d-block mb-1">
-                              {getTranslation('checkout.departureTime', language)}:
-                            </label>
-                            <select
-                              className="form-select form-select-sm"
-                              value={editedTime}
-                              onChange={(e) => setEditedTime(e.target.value)}
-                              disabled={availableTimes.length === 0}
-                              style={{ fontSize: '0.875rem' }}
-                            >
-                              {availableTimes.length === 0 ? (
-                                <option value="">{getTranslation('checkout.noSchedulesForDay', language)}</option>
-                              ) : (
-                                availableTimes.map((time) => (
-                                  <option key={time} value={time}>
-                                    {convertTo12HourFormat(time)}
-                                  </option>
-                                ))
-                              )}
-                            </select>
-                          </div>
-                          <div className="d-flex gap-2">
-                            <button
-                              className="btn btn-sm btn-primary"
-                              onClick={async () => {
-                                if (!bookingDetails || !editedDate || !editedTime) {
-                                  return;
-                                }
-
-                                try {
-                                  // Llamar a la API con la nueva fecha para obtener precios actualizados
-                                  const activity = await activitiesApi.getById(
-                                    bookingDetails.activityId,
-                                    language,
-                                    currency || 'PEN',
-                                    editedDate
-                                  );
-
-                                  if (activity && activity.bookingOptions && activity.bookingOptions.length > 0) {
-                                    const bookingOption = activity.bookingOptions[0];
-                                    
-                                    // Calcular nuevos precios en base a priceTiers.totalPrice
-                                    const totalTravelers = bookingDetails.travelers.adults + bookingDetails.travelers.children;
-                                    let matchingTier: any | null = null;
-                                    if (bookingOption.priceTiers && bookingOption.priceTiers.length > 0) {
-                                      matchingTier = bookingOption.priceTiers.find((tier: any) => {
-                                        const min = tier.minParticipants || 1;
-                                        const max = tier.maxParticipants || Infinity;
-                                        return totalTravelers >= min && totalTravelers <= max;
-                                      }) || null;
-                                    }
-
-                                    const baseUnitPrice = matchingTier?.totalPrice != null && !isNaN(matchingTier.totalPrice)
-                                      ? Number(matchingTier.totalPrice)
-                                      : Number(bookingOption.pricePerPerson) || 0;
-                                    const currencyResolved = matchingTier?.currency || bookingOption.currency || 'PEN';
-
-                                    const specialOfferPercentage = bookingOption.specialOfferPercentage;
-                                    const hasDiscount = specialOfferPercentage != null && specialOfferPercentage > 0;
-                                    const originalUnitPrice = Math.ceil(baseUnitPrice);
-                                    const finalUnitPrice = hasDiscount
-                                      ? Math.ceil(baseUnitPrice - (baseUnitPrice * (specialOfferPercentage! / 100)))
-                                      : originalUnitPrice;
-
-                                    // Actualizar bookingDetails con nueva fecha, hora y precios
-                                    const updatedDetails: BookingDetails = {
-                                      ...bookingDetails,
-                                      date: editedDate,
-                                      time: editedTime,
-                                      currency: currencyResolved,
-                                      price: finalUnitPrice,
-                                      originalPrice: originalUnitPrice,
-                                      hasDiscount: !!hasDiscount,
-                                      discountPercentage: hasDiscount ? Number(specialOfferPercentage) : 0
-                                    };
-
-                                    setBookingDetails(updatedDetails);
-                                    
-                                    // Actualizar bookingOption con schedules actualizados
-                                    setCurrentBookingOption(bookingOption);
-
-                                    // Guardar en sessionStorage
-                                    sessionStorage.setItem('checkoutBookingDetails', JSON.stringify(updatedDetails));
-                                    sessionStorage.setItem('bookingDetails', JSON.stringify(updatedDetails));
-
-                                    setIsEditingDateTime(false);
-                                  } else {
-                                    console.error('No se pudo obtener la actividad actualizada');
-                                  }
-                                } catch (error) {
-                                  console.error('Error al actualizar fecha y hora:', error);
-                                }
-                              }}
-                              disabled={!editedDate || !editedTime || availableTimes.length === 0}
-                            >
-                              <i className="fas fa-check me-1"></i>
-                              {getTranslation('common.save', language)}
-                            </button>
-                            <button
-                              className="btn btn-sm btn-secondary"
-                              onClick={() => {
-                                setEditedDate(bookingDetails?.date || '');
-                                setEditedTime(bookingDetails?.time || '');
-                                setIsEditingDateTime(false);
-                              }}
-                            >
-                              <i className="fas fa-times me-1"></i>
-                              {getTranslation('common.cancel', language)}
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="small">
-                          <div>
-                          <span className="fw-medium">{getTranslation('checkout.departureDate', language)}: </span>
-                          {(() => {
-                            const formattedDate = getDepartureDateFormatted();
-                            if (formattedDate) {
-                              return formattedDate;
-                            }
-                            // Fallback al formato anterior si hay error
-                            return `${new Date(bookingDetails.date).toLocaleDateString(language === 'es' ? 'es-ES' : 'en-US', {
-                              weekday: 'long',
-                              year: 'numeric',
-                              month: 'long',
-                              day: 'numeric'
-                            })}, ${convertTo12HourFormat(bookingDetails.time)}`;
-                          })()}
-                          </div>
-                          {currentStep === 2 && (
-                            <a href="#" className="text-primary text-decoration-none" onClick={(e) => {
-                              e.preventDefault();
-                              handleBackToContact();
-                            }}>
-                              {getTranslation('checkout.changeDateParticipants', language)}
-                            </a>
-                      )}
-                    </div>
-                      )}
-                    </div>
-                    {!isEditingDateTime && currentStep === 1 && (
-                      <a href="#" className="text-primary text-decoration-none small ms-2" style={{ alignSelf: 'center', whiteSpace: 'nowrap' }} onClick={(e) => {
-                        e.preventDefault();
-                        setEditedDate(bookingDetails?.date || '');
-                        setEditedTime(bookingDetails?.time || '');
-                        // Obtener horarios disponibles para la fecha actual
-                        const times = getAvailableTimesForDate(bookingDetails?.date || '');
-                        setAvailableTimes(times);
-                        if (times.length > 0 && bookingDetails?.time && times.includes(bookingDetails.time)) {
-                          setEditedTime(bookingDetails.time);
-                        } else if (times.length > 0) {
-                          setEditedTime(times[0]);
-                        }
-                        setIsEditingDateTime(true);
-                      }}>
-                        <i className="fas fa-pencil-alt me-1"></i>
-                        {getTranslation('common.edit', language)}
-                      </a>
-                    )}
-                  </div>
-                  
-                  {/* Viajeros */}
-                  <div className="mb-2">
-                    <div className="d-flex align-items-center justify-content-between">
-                      <div className="d-flex align-items-center flex-grow-1">
-                        <i className="fas fa-user text-primary me-2"></i>
-                        {!isEditingTravelers ? (
-                          <div className="small">
-                            <div>
-                            {bookingDetails.travelers.adults} {bookingDetails.travelers.adults === 1 ? getTranslation('checkout.adult', language) : getTranslation('checkout.adults', language)}
-                            {bookingDetails.travelers.children > 0 && (
-                              <> • {bookingDetails.travelers.children} {bookingDetails.travelers.children === 1 ? getTranslation('checkout.child', language) : getTranslation('checkout.children', language)}</>
-                            )}
-                            </div>
-                            {currentStep === 2 && (
-                              <a href="#" className="text-primary text-decoration-none" onClick={(e) => {
-                                e.preventDefault();
-                                handleBackToContact();
-                              }}>
-                                {getTranslation('checkout.changeDateParticipants', language)}
-                              </a>
-                            )}
-                          </div>
-                        ) : (
-                          <div className="d-flex gap-2">
-                            <div className="d-flex align-items-center">
-                              <label className="small me-2">{getTranslation('checkout.adultsLabel', language)}</label>
-                              <input
-                                type="number"
-                                className="form-control form-control-sm"
-                                style={{ width: '80px' }}
-                                min={Math.max(1, currentBookingOption?.groupMinSize || 1)}
-                                max={currentBookingOption?.groupMaxSize || undefined}
-                                value={editedAdults}
-                                onChange={(e) => {
-                                  const v = parseInt(e.target.value || '0', 10);
-                                  setEditedAdults(isNaN(v) ? 1 : v);
-                                }}
-                              />
-                            </div>
-                            <div className="d-flex align-items-center">
-                              <label className="small me-2">{getTranslation('checkout.childrenLabel', language)}</label>
-                              <input
-                                type="number"
-                                className="form-control form-control-sm"
-                                style={{ width: '80px' }}
-                                min={0}
-                                max={currentBookingOption?.groupMaxSize || undefined}
-                                value={editedChildren}
-                                onChange={(e) => {
-                                  const v = parseInt(e.target.value || '0', 10);
-                                  setEditedChildren(isNaN(v) ? 0 : v);
-                                }}
-                              />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                      {!isEditingTravelers ? (
-                        <a href="#" className="text-primary text-decoration-none small ms-2" style={{ alignSelf: 'center', whiteSpace: 'nowrap' }} onClick={(e) => {
-                          e.preventDefault();
-                          setEditedAdults(bookingDetails.travelers.adults || 1);
-                          setEditedChildren(bookingDetails.travelers.children || 0);
-                          setIsEditingTravelers(true);
-                        }}>
-                          <i className="fas fa-pencil-alt me-1"></i>
-                          {getTranslation('common.edit', language)}
-                        </a>
-                      ) : (
-                        <div className="d-flex gap-2 ms-2" style={{ alignSelf: 'center' }}>
-                          <button
-                            className="btn btn-sm btn-primary"
-                            onClick={() => {
-                              if (!bookingDetails) return;
-                              // Validaciones básicas
-                              const min = Math.max(1, currentBookingOption?.groupMinSize || 1);
-                              const max = currentBookingOption?.groupMaxSize || Infinity;
-                              const newAdults = Math.max(min, Math.min(editedAdults || 1, max));
-                              const newChildren = Math.max(0, Math.min(editedChildren || 0, max));
-                              const newTotal = newAdults + newChildren;
-
-                              // Recalcular precios usando currentBookingOption
-                              try {
-                                let matchingTier: any | null = null;
-                                if (currentBookingOption?.priceTiers && currentBookingOption.priceTiers.length > 0) {
-                                  matchingTier = currentBookingOption.priceTiers.find((tier: any) => {
-                                    const tmin = tier.minParticipants || 1;
-                                    const tmax = tier.maxParticipants || Infinity;
-                                    return newTotal >= tmin && newTotal <= tmax;
-                                  }) || null;
-                                }
-
-                                const baseUnitPrice = matchingTier?.totalPrice != null && !isNaN(matchingTier.totalPrice)
-                                  ? Number(matchingTier.totalPrice)
-                                  : Number(currentBookingOption?.pricePerPerson) || 0;
-                                const resolvedCurrency = matchingTier?.currency || currentBookingOption?.currency || 'PEN';
-                                const offer = currentBookingOption?.specialOfferPercentage;
-                                const hasDiscount = offer != null && offer > 0;
-                                const originalUnitPrice = Math.ceil(baseUnitPrice);
-                                const finalUnitPrice = hasDiscount
-                                  ? Math.ceil(baseUnitPrice - (baseUnitPrice * (offer / 100)))
-                                  : originalUnitPrice;
-                                const totalPrice = finalUnitPrice * newTotal;
-
-                                if (matchingTier) {
-                                  setActivePriceTier(matchingTier);
-                                  sessionStorage.setItem('checkoutActivePriceTier', JSON.stringify(matchingTier));
-                                } else {
-                                  setActivePriceTier(null);
-                                  sessionStorage.removeItem('checkoutActivePriceTier');
-                                }
-
-                                const updatedDetails: BookingDetails = {
-                                  ...bookingDetails,
-                                  bookingOptionId: currentBookingOption?.id || bookingDetails.bookingOptionId,
-                                  travelers: { adults: newAdults, children: newChildren },
-                                  price: finalUnitPrice,
-                                  originalPrice: originalUnitPrice,
-                                  hasDiscount: !!hasDiscount,
-                                  discountPercentage: hasDiscount ? Number(offer) : 0,
-                                  currency: resolvedCurrency,
-                                  totalPrice,
-                                  commissionPercent: matchingTier?.commissionPercent ?? bookingDetails.commissionPercent
-                                };
-                                setBookingDetails(updatedDetails);
-                                sessionStorage.setItem('checkoutBookingDetails', JSON.stringify(updatedDetails));
-                                sessionStorage.setItem('bookingDetails', JSON.stringify(updatedDetails));
-                              } catch (e) {
-                                console.warn('No se pudo recalcular precio al editar pasajeros:', e);
-                                setBookingDetails({
-                                  ...bookingDetails,
-                                  travelers: { adults: newAdults, children: newChildren }
-                                });
-                              }
-
-                              setIsEditingTravelers(false);
-                            }}
-                          >
-                            <i className="fas fa-check me-1"></i>
-                            {getTranslation('common.save', language)}
-                          </button>
-                          <button
-                            className="btn btn-sm btn-secondary"
-                            onClick={() => {
-                              setEditedAdults(bookingDetails.travelers.adults || 1);
-                              setEditedChildren(bookingDetails.travelers.children || 0);
-                              setIsEditingTravelers(false);
-                            }}
-                          >
-                            <i className="fas fa-times me-1"></i>
-                            {getTranslation('common.cancel', language)}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                    {currentBookingOption?.groupMaxSize && (
-                      <div className="small text-muted mt-1">
-                        {getTranslation('checkout.maxGroupSize', language)}{currentBookingOption.groupMaxSize}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Contact Information - Show in Step 2 */}
-                {currentStep === 2 && (
-                  <div className="mb-4 border-top pt-3">
-                    <div className="d-flex justify-content-between align-items-start mb-3">
-                      <h6 className="fw-bold mb-0">
-                        {getTranslation('checkout.contactInformation', language)}
-                      </h6>
-                      <button
-                        className="btn btn-sm btn-link text-primary p-0"
-                        onClick={handleBackToContact}
-                        style={{ fontSize: '0.875rem' }}
-                      >
-                        {getTranslation('checkout.edit', language)}
-                      </button>
-                    </div>
-                    <div className="small">
-                      <div className="mb-1">
-                        <strong>{formData.name} {formData.lastName}</strong>
-                      </div>
-                      <div className="mb-1 text-muted">
-                        {formData.email}
-                      </div>
-                      <div className="mb-1 text-muted">
-                        {formData.phoneCode} {formData.phoneNumber || formData.phone}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Cancellation & Quality */}
-                <div className="mb-4">
-                  {!isCancellationDeadlinePassed() && (
-                  <div className="d-flex align-items-center mb-2">
-                    <i className="fas fa-check text-success me-2"></i>
-                      <span className="small">
-                        {getTranslation('checkout.easyCancellation', language)}
-                        {(() => {
-                          const deadline = getCancellationDeadline();
-                          if (deadline) {
-                            return (
-                              <>
-                                {deadline}
-                              </>
-                            );
-                          } else if (bookingDetails?.cancelBefore) {
-                            return ` - ${bookingDetails.cancelBefore}`;
-                          }
-                          return '';
-                        })()}
-                      </span>
-                  </div>
                   )}
-                  <div className="mb-2">
-                    <RatingStars
-                      rating={activityRating ?? null}
-                      commentsCount={activityCommentsCount ?? null}
-                      starSize={14}
+                </div>
+
+                {/* Reservar ahora, pagar después */}
+                <div className="mb-3">
+                  <label className="d-flex align-items-center p-3 border rounded" style={{ cursor: 'pointer', backgroundColor: paymentMethod === 'reserveLater' ? '#f0f8ff' : 'white' }}>
+                    <input
+                      type="radio"
+                      name="paymentMethod"
+                      value="reserveLater"
+                      checked={paymentMethod === 'reserveLater'}
+                      onChange={() => handlePaymentMethodSelect('reserveLater')}
+                      className="me-3"
                     />
-                  </div>
+                    <i className="fas fa-calendar-check text-primary me-2" style={{ fontSize: '1.5rem' }}></i>
+                    <div>
+                      <div className="fw-medium">
+                        {getTranslation('checkout.reserveNowPayLater', language) || (language === 'es' ? 'Reservar ahora, pagar después' : 'Reserve now, pay later')}
+                      </div>
+                      <small className="text-muted">
+                        {getTranslation('checkout.reserveNowPayLaterDesc', language)}
+                      </small>
+                    </div>
+                  </label>
                 </div>
 
-                {/* Promotional Code */}
-                <div className="mb-4">
-                  <div className="d-flex align-items-center">
-                    <i className="fas fa-gift text-primary me-2"></i>
-                    <a href="#" className="text-primary text-decoration-none small">
-                      {getTranslation('checkout.promotionalCode', language)}
-                    </a>
-                  </div>
-                </div>
-
-                {/* Total Price */}
-                <div className="border-top pt-3 d-none d-md-block">
+                {/* Resumen de total */}
+                <div className="border-top pt-3 mt-3">
                   <div className="d-flex justify-content-between align-items-center mb-2">
-                    <span className="fw-bold">{getTranslation('checkout.total', language)}</span>
-                    <div className="text-end">
-                      {(() => {
-                        const { originalTotal, finalTotal } = calculateTotalPrice();
-                        const totalTravelers = getTotalTravelers();
-                        const safeOriginalTotal = typeof originalTotal === 'number' ? originalTotal : 0;
-                        const safeFinalTotal = typeof finalTotal === 'number' ? finalTotal : 0;
-                        const ceilFinalPrice = Math.ceil(bookingDetails.price);
-                        const showDiscount = !!bookingDetails.hasDiscount && safeOriginalTotal > safeFinalTotal;
+                    <span className="text-muted">
+                      {getTranslation('checkout.total', language) || (language === 'es' ? 'Total' : 'Total')}:
+                    </span>
+                    <span className="fs-5 fw-bold text-danger">
+                      {getCurrencySymbol(currencyForTotal)} {totalAmount.toFixed(2)}
+                    </span>
+                  </div>
+                  <small className="text-muted d-block mb-3">
+                    {getTranslation('checkout.allTaxesIncluded', language) || (language === 'es' ? 'Todos los impuestos incluidos' : 'All taxes included')}
+                  </small>
 
-                        return (
-                          <>
-                            {showDiscount && (
-                              <div className="text-muted small">
-                                {getTranslation('checkout.totalWithoutDiscount', language)}
-                                <span className="text-decoration-line-through">
-                                  {bookingDetails.currency === 'PEN' ? 'S/ ' : '$ '}{safeOriginalTotal}
-                                </span>
-                              </div>
-                            )}
-                            <div className="fw-bold fs-5" style={{ color: showDiscount ? '#dc3545' : 'inherit' }}>
-                              {getTranslation('checkout.totalToPay', language)}{showDiscount ? getTranslation('checkout.withDiscount', language) : ': '}
-                              {bookingDetails.currency === 'PEN' ? 'S/ ' : '$ '}{safeFinalTotal}
-                            </div>
-                            {showDiscount && bookingDetails.discountPercentage > 0 && (
-                              <div className="text-success small">
-                                {getTranslation('checkout.discountApplied', language)}-{bookingDetails.discountPercentage}%
-                              </div>
-                            )}
-                            {totalTravelers > 1 && (
-                              <div className="text-muted small mt-1">
-                                {getTranslation('checkout.unitPrice', language)}{showDiscount ? getTranslation('checkout.unitPriceWithDiscount', language) : ''}: {bookingDetails.currency === 'PEN' ? 'S/ ' : '$ '}{ceilFinalPrice} × {totalTravelers} {getTranslation('checkout.travelers', language) || 'viajeros'}
-                              </div>
-                            )}
-                          </>
-                        );
-                      })()}
+                  {/* Botón de procesar pago (solo para reservar sin pago) */}
+                  {paymentMethod === 'reserveLater' && (
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-lg w-100"
+                      onClick={handleProcessPayment}
+                      disabled={!paymentMethod || isProcessingPayment || !areRequiredFieldsComplete(formData)}
+                    >
+                      {isProcessingPayment ? (
+                        <>
+                          <span className="spinner-border spinner-border-sm me-2" role="status"></span>
+                          {getTranslation('checkout.processing', language) || (language === 'es' ? 'Procesando...' : 'Processing...')}
+                        </>
+                      ) : (
+                        getTranslation('checkout.reserveNow', language) || (language === 'es' ? 'Reservar ahora' : 'Reserve now')
+                      )}
+                    </button>
+                  )}
+                  
+                  {/* Mensaje informativo para PayPal y Google Pay */}
+                  {(paymentMethod === 'paypal' || paymentMethod === 'googlepay') && (
+                    <div className="alert alert-info mb-0" role="alert">
+                      <small>
+                        {getTranslation('checkout.useButtonBelow', language) || (language === 'es' 
+                          ? 'Usa el botón de arriba para completar el pago'
+                          : 'Use the button above to complete payment')}
+                      </small>
                     </div>
-                  </div>
-                  <div className="text-muted small">
-                    {getTranslation('checkout.allTaxesIncluded', language)}
-                  </div>
-                  {bookingDetails.hasDiscount && (() => {
-                    const { originalTotal, finalTotal } = calculateTotalPrice();
-                    const safeOriginalTotal = typeof originalTotal === 'number' ? originalTotal : 0;
-                    const safeFinalTotal = typeof finalTotal === 'number' ? finalTotal : 0;
-                    // El ahorro se calcula de los totales (que ya vienen de precios unitarios redondeados)
-                    const savings = safeOriginalTotal - safeFinalTotal;
-                    return (
-                    <div className="text-success small mt-2">
-                      <i className="fas fa-check me-1"></i>
-                        {getTranslation('checkout.saveWithOffer', language)} {bookingDetails.currency === 'PEN' ? 'S/ ' : '$ '}{savings}
-                    </div>
-                    );
-                  })()}
+                  )}
                 </div>
               </div>
             </div>
           </div>
         </div>
       </div>
-
-      {/* Floating Total & Payment Button - Mobile Only */}
-      {/* No mostrar si PayPal está seleccionado (maneja su propio flujo) */}
-      {bookingDetails && (currentStep === 1 || (currentStep === 2 && paymentMethod !== 'paypal' && paymentMethod !== 'googlepay')) && (
-        <div className="d-md-none checkout-floating-footer">
-        <div className="checkout-floating-container">
-          <div className="checkout-floating-content">
-            {/* Total a pagar */}
-            <div className="checkout-floating-total">
-              {(() => {
-                const { originalTotal, finalTotal } = calculateTotalPrice();
-                const safeOriginalTotal = typeof originalTotal === 'number' ? originalTotal : 0;
-                const safeFinalTotal = typeof finalTotal === 'number' ? finalTotal : 0;
-                const showDiscount = !!bookingDetails?.hasDiscount && safeOriginalTotal > safeFinalTotal;
-                const savings = safeOriginalTotal - safeFinalTotal;
-                const totalTravelers = getTotalTravelers();
-                const ceilFinalPrice = Math.ceil(bookingDetails.price);
-
-                return (
-                  <div className="checkout-floating-info">
-                    <div className="d-flex align-items-center justify-content-between gap-2 mb-1 flex-wrap">
-                      {showDiscount && bookingDetails.discountPercentage > 0 && (
-                        <span className="badge bg-danger" style={{ fontSize: '0.7rem', padding: '2px 6px' }}>
-                          -{bookingDetails.discountPercentage}%
-                        </span>
-                      )}
-                      <div className="fw-bold checkout-floating-total-text" style={{ fontSize: '1rem', color: showDiscount ? '#dc3545' : 'inherit', lineHeight: '1.2' }}>
-                        {getTranslation('checkout.total', language)}: {bookingDetails?.currency === 'PEN' ? 'S/ ' : '$ '}{safeFinalTotal}
-                      </div>
-                    </div>
-                    {showDiscount && (
-                      <div className="d-flex align-items-center gap-2 flex-wrap" style={{ fontSize: '0.65rem', lineHeight: '1.2' }}>
-                        <span className="text-muted text-decoration-line-through">
-                          {bookingDetails?.currency === 'PEN' ? 'S/ ' : '$ '}{safeOriginalTotal}
-                        </span>
-                        <span className="text-success">
-                          <i className="fas fa-piggy-bank me-1" style={{ fontSize: '0.6rem' }}></i>
-                          {getTranslation('checkout.save', language)} {bookingDetails?.currency === 'PEN' ? 'S/ ' : '$ '}{savings}
-                        </span>
-                        {totalTravelers > 1 && (
-                          <span className="text-muted">
-                            {bookingDetails?.currency === 'PEN' ? 'S/ ' : '$ '}{ceilFinalPrice} × {totalTravelers}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                    {!showDiscount && totalTravelers > 1 && (
-                      <div className="text-muted" style={{ fontSize: '0.65rem', lineHeight: '1.2' }}>
-                        {bookingDetails?.currency === 'PEN' ? 'S/ ' : '$ '}{ceilFinalPrice} × {totalTravelers} {getTranslation('checkout.pax', language)}
-                      </div>
-                    )}
-                  </div>
-                );
-              })()}
-            </div>
-            {/* Botón Continuar con el pago (Step 1) o Pay Now/Reserve Now (Step 2) */}
-            <button
-              type="button"
-              className="btn btn-primary btn-lg checkout-floating-button"
-              onClick={currentStep === 1 ? handleContinueToPayment : handlePayNow}
-              disabled={
-                (currentStep === 1 && isDepartureDatePast()) ||
-                (currentStep === 2 && (isProcessingOrder || !paymentMethod))
-              }
-              style={
-                currentStep === 1 && isDepartureDatePast()
-                  ? { opacity: 0.6, cursor: 'not-allowed' }
-                  : {}
-              }
-            >
-              {currentStep === 1 
-                ? getTranslation('checkout.continuePayment', language)
-                : (paymentMethod === 'reserveLater'
-                    ? getTranslation('checkout.reserveNow', language)
-                    : getTranslation('checkout.payNow', language))}
-            </button>
-          </div>
-        </div>
-        </div>
-      )}
-
-      {/* Login Modal */}
-      {showLoginModal && (
-        <div 
-          className="modal show d-block modal-fade-in" 
-          style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
-        >
-          <div className="modal-dialog modal-dialog-centered">
-            <div className="modal-content modal-fade-in">
-              <div className="modal-header border-0 d-flex align-items-between px-4 py-3">
-                <div className="d-flex align-items-center justify-content-center w-100">
-                  <h4 className="fw-bold mb-0">{getTranslation('checkout.loginModal.title', language)}</h4>
-                </div>
-                {/* El modal no se puede cerrar sin autenticarse - login obligatorio */}
-              </div>
-              <div className="modal-body text-center">
-                <p className="text-muted mb-4 fw-medium">
-                  {language === 'es' 
-                    ? 'Para continuar con el pago o reserva, debes iniciar sesión.'
-                    : 'To continue with payment or reservation, you must log in.'}
-                </p>
-                
-                <p className="text-muted mb-4">
-                  {getTranslation('checkout.loginModal.benefits', language)}
-                </p>
-
-                {/* Google Login Button */}
-                <button
-                  className="btn btn-outline-primary w-100 mb-3"
-                  onClick={handleLoginWithGoogle}
-                  disabled={isGoogleLoading}
-                >
-                  {isGoogleLoading ? (
-                    <>
-                      <span className="spinner-border spinner-border-sm me-2" role="status"></span>
-                      {getTranslation('common.signingIn', language)}
-                    </>
-                  ) : (
-                    <>
-                      <i className="fab fa-google me-2"></i>
-                      {getTranslation('common.continueWithGoogle', language)}
-                    </>
-                  )}
-                </button>
-
-                <div className="d-flex align-items-center mb-3">
-                  <hr className="flex-grow-1" />
-                  <span className="mx-3 text-muted small">
-                    {getTranslation('common.or', language)}
-                  </span>
-                  <hr className="flex-grow-1" />
-                </div>
-
-                {/* Email Login */}
-                <div className="mb-3">
-                  <input
-                    type="email"
-                    className="form-control"
-                    placeholder={getTranslation('common.enterEmail', language)}
-                    value={loginEmail}
-                    onChange={(e) => setLoginEmail(e.target.value)}
-                  />
-                </div>
-                <button
-                  className={`btn w-100 ${isValidEmail(loginEmail) ? 'btn-outline-primary' : 'btn-outline-secondary'}`}
-                  onClick={handleEmailLogin}
-                  disabled={!isValidEmail(loginEmail)}
-                >
-                  {getTranslation('common.continueWithEmail', language)}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Loading flotante pequeño para procesos asíncronos */}
-      {(isSavingContactInfo || isProcessingOrder) && (
-        <div 
-          style={{
-            position: 'fixed',
-            top: '20px',
-            right: '20px',
-            zIndex: 9999,
-            backgroundColor: 'white',
-            padding: '12px 16px',
-            borderRadius: '8px',
-            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '10px',
-            minWidth: '200px'
-          }}
-        >
-          <div className="spinner-border spinner-border-sm text-primary" role="status" style={{ width: '1rem', height: '1rem' }}>
-            <span className="visually-hidden">Cargando...</span>
-          </div>
-          <span style={{ fontSize: '0.9rem', color: '#333' }}>
-            {isProcessingOrder
-              ? (language === 'es' ? 'Procesando tu reserva...' : 'Processing your reservation...')
-              : (language === 'es' ? 'Espere por favor...' : 'Please wait...')}
-          </span>
-        </div>
-      )}
     </div>
   );
 };

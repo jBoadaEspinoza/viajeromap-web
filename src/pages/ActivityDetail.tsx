@@ -9,16 +9,19 @@ declare global {
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { activitiesApi } from '../api/activities';
 import { specialOfferApi } from '../api/specialOffer';
-import type { Activity, BookingOption, Schedule } from '../api/activities';
+import { ordersItemApi } from '../api/ordersItem';
+import type { Activity, BookingOption } from '../api/activities';
 import Itinerary from '../components/Itinerary';
 import Reviews from '../components/Reviews';
 import RatingStars from '../components/RatingStars';
 import { useLanguage } from '../context/LanguageContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { useCart } from '../context/CartContext';
+import { useAuth } from '../context/AuthContext';
 import { getTranslation, getTranslationWithParams, getLanguageName } from '../utils/translations';
 import { useGlobalLoading } from '../hooks/useGlobalLoading';
 import { appConfig } from '../config/appConfig';
+import { auth } from '../config/firebase';
 
 interface Review {
   id: string;
@@ -39,15 +42,15 @@ const ActivityDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { language } = useLanguage();
-  const { currency } = useCurrency();
+  const { currency, getCurrencySymbol } = useCurrency();
   const { addItem } = useCart();
+  const { isAuthenticated, loginWithGoogle } = useAuth();
   const { withLoading } = useGlobalLoading();
   const [activity, setActivity] = useState<Activity | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedImage, setSelectedImage] = useState<number | null>(null);
   const [showBookingOptions, setShowBookingOptions] = useState(true);
   const [selectedLanguage, setSelectedLanguage] = useState<string | null>(null);
-  const [selectedSchedule, setSelectedSchedule] = useState<string | null>(null);
   const [selectedMeetingPoints, setSelectedMeetingPoints] = useState<{ [key: string]: string }>({});
   const [hotelSearchResults, setHotelSearchResults] = useState<{ [key: string]: any[] }>({});
   const [showFullDescription, setShowFullDescription] = useState(false);
@@ -68,6 +71,9 @@ const ActivityDetail: React.FC = () => {
   const [showPickupPointsPageView, setShowPickupPointsPageView] = useState(false); // Estado para pageview de pickup points (mobile)
   const [selectedPickupPoint, setSelectedPickupPoint] = useState<any | null>(null); // Punto de recogida seleccionado (objeto con name y address)
   const [pickupComment, setPickupComment] = useState<string>(''); // Comentario para el punto de recogida
+  const [showLoginModal, setShowLoginModal] = useState(false); // Estado para modal de login
+  const [isLoggingIn, setIsLoggingIn] = useState(false); // Estado para loading del login
+  const [pendingAction, setPendingAction] = useState<'addToCart' | 'bookNow' | null>(null); // Acción pendiente después del login
   
   // Obtener parámetros desde la URL
   const [searchParams] = useSearchParams();
@@ -137,18 +143,13 @@ const ActivityDetail: React.FC = () => {
       setSelectedLanguage(null);
     }
     
-    // Seleccionar automáticamente el primer horario disponible del día específico
-    const availableSchedules = option.schedules?.filter((schedule: Schedule) => {
-      if (!selectedDate) return schedule.isActive;
-      const customDayOfWeek = getCustomDayOfWeekFromDate(selectedDate);
-      return schedule.dayOfWeek === customDayOfWeek && schedule.isActive;
-    }) || [];
+    // Seleccionar automáticamente el primer horario disponible usando schedulesTimes
+    const availableTimes = (option.schedulesTimes || []) as string[];
     
-    // Seleccionar automáticamente el primer horario disponible del día específico
-    if (availableSchedules.length > 0) {
-      setSelectedTimeSlot(availableSchedules[0].startTime);
+    if (availableTimes.length > 0) {
+      setSelectedTimeSlot(availableTimes[0]);
     } else {
-      // Si no hay horarios para el día seleccionado, limpiar la selección
+      // Si no hay horarios disponibles, limpiar la selección
       setSelectedTimeSlot(null);
     }
   };
@@ -158,83 +159,37 @@ const ActivityDetail: React.FC = () => {
     setSelectedTimeSlot(timeSlot);
   };
 
-  // Función para calcular precio total con descuentos automáticos y priceTiers
+  // Función para calcular precio total usando priceAfterDiscount o normalPrice directamente de la API
   const calculateTotalPrice = () => {
     const totalPeople = numberOfAdults + numberOfChildren;
     if (!selectedBookingOption || !selectedTimeSlot) {
       // Si no hay opción seleccionada, usar el precio mínimo de la actividad
-      const minPrice = getMinPrice().price || 0;
-      return minPrice * totalPeople;
+      const minOption = getMinPriceFromOptions();
+      if (!minOption) return 0;
+      const unitPrice = minOption.priceAfterDiscount ?? minOption.normalPrice ?? minOption.unitPrice ?? minOption.pricePerPerson ?? 0;
+      return Math.round((unitPrice * totalPeople) * 100) / 100;
     }
     
+    // Usar priceAfterDiscount si está disponible (ya incluye el descuento aplicado)
+    const unitPrice = selectedBookingOption.priceAfterDiscount ?? selectedBookingOption.normalPrice ?? selectedBookingOption.unitPrice ?? selectedBookingOption.pricePerPerson ?? 0;
     
-    let basePrice = 0;
-    
-    // Calcular precio por adultos
-    const adultPrice = (selectedBookingOption.pricePerPerson || 0) * numberOfAdults;
-    
-    // Calcular precio por niños (asumiendo que niños tienen el mismo precio por ahora)
-    // Si hay un precio especial para niños, se puede agregar aquí
-    const childrenPrice = (selectedBookingOption.pricePerPerson || 0) * numberOfChildren;
-    
-    basePrice = adultPrice + childrenPrice;
-    
-    // Si hay priceTiers, buscar el tier que corresponde a la cantidad total de personas
-    if (selectedBookingOption.priceTiers && selectedBookingOption.priceTiers.length > 0) {
-      const matchingTier = selectedBookingOption.priceTiers.find((tier: any) => {
-        const min = tier.minParticipants || 1;
-        const max = tier.maxParticipants || Infinity;
-        return totalPeople >= min && totalPeople <= max;
-      });
-      
-      if (matchingTier) {
-        // Si el tier tiene totalPrice, usarlo; si no, calcular desde pricePerParticipant
-        basePrice = matchingTier.totalPrice || (matchingTier.pricePerParticipant * totalPeople);
-      }
-    }
-    
-    // Obtener porcentaje de descuento si existe
-    const discountPercent = selectedBookingOption.specialOfferPercentage || 0;
-    
-    // Aplicar descuento automáticamente si existe specialOfferPercentage
-    if (discountPercent > 0) {
-      // Calcular monto de descuento y precio final
-      const discountAmount = basePrice * (discountPercent / 100);
-      const finalPrice = Math.round((basePrice - discountAmount) * 100) / 100;
-      
-      return finalPrice;
-    }
-    
-    return Math.round(basePrice * 100) / 100;
+    return Math.round((unitPrice * totalPeople) * 100) / 100;
   };
 
-  // Función para obtener precio original (antes de descuento)
+  // Función para obtener precio original (antes de descuento) usando normalPrice directamente de la API
   const getOriginalPrice = () => {
     if (!selectedBookingOption) {
       // Si no hay opción seleccionada, usar el precio mínimo de la actividad
-      return getMinPrice().price || 0;
+      const minOption = getMinPriceFromOptions();
+      if (!minOption) return 0;
+      const unitPrice = minOption.normalPrice ?? minOption.unitPrice ?? minOption.pricePerPerson ?? 0;
+      return Math.round((unitPrice * numberOfPeople) * 100) / 100;
     }
     
-    let basePrice = 0;
+    // Usar normalPrice directamente, fallback a unitPrice o pricePerPerson
+    const unitPrice = selectedBookingOption.normalPrice ?? selectedBookingOption.unitPrice ?? selectedBookingOption.pricePerPerson ?? 0;
     
-    // Si hay priceTiers, buscar el tier que corresponde a la cantidad de personas
-    if (selectedBookingOption.priceTiers && selectedBookingOption.priceTiers.length > 0) {
-      const matchingTier = selectedBookingOption.priceTiers.find((tier: any) => {
-        const min = tier.minParticipants || 1;
-        const max = tier.maxParticipants || Infinity;
-        return numberOfPeople >= min && numberOfPeople <= max;
-      });
-      
-      if (matchingTier) {
-        basePrice = matchingTier.totalPrice || (matchingTier.pricePerParticipant * numberOfPeople);
-      } else {
-        basePrice = selectedBookingOption.pricePerPerson * numberOfPeople;
-      }
-    } else {
-      basePrice = (selectedBookingOption.pricePerPerson || 0) * numberOfPeople;
-    }
-    
-    return Math.round(basePrice * 100) / 100;
+    return Math.round((unitPrice * numberOfPeople) * 100) / 100;
   };
 
   // Función para verificar si hay descuento activo
@@ -247,9 +202,91 @@ const ActivityDetail: React.FC = () => {
     return selectedBookingOption?.specialOfferPercentage || 0;
   };
 
-  // Función para agregar al carrito
+  // Función auxiliar para normalizar el tiempo a formato HH:mm:ss
+  const normalizeTimeTo24Hour = (timeStr: string | null | undefined): string => {
+    if (!timeStr) return '00:00:00';
+    
+    // Remover espacios y convertir a mayúsculas
+    let cleaned = timeStr.trim().toUpperCase();
+    
+    // Si ya está en formato 24 horas (HH:mm o HH:mm:ss), retornarlo con segundos
+    if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(cleaned)) {
+      return cleaned.length === 5 ? `${cleaned}:00` : cleaned;
+    }
+    
+    // Si tiene AM/PM, convertir a formato 24 horas
+    const amPmMatch = cleaned.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/);
+    if (amPmMatch) {
+      let hours = parseInt(amPmMatch[1], 10);
+      const minutes = amPmMatch[2];
+      const period = amPmMatch[3];
+      
+      if (period === 'AM') {
+        if (hours === 12) hours = 0;
+      } else { // PM
+        if (hours !== 12) hours += 12;
+      }
+      
+      return `${hours.toString().padStart(2, '0')}:${minutes}:00`;
+    }
+    
+    // Si no coincide con ningún formato conocido, intentar parsear como fecha/hora
+    try {
+      const date = new Date(`2000-01-01 ${cleaned}`);
+      if (!isNaN(date.getTime())) {
+        const hours = date.getHours().toString().padStart(2, '0');
+        const minutes = date.getMinutes().toString().padStart(2, '0');
+        return `${hours}:${minutes}:00`;
+      }
+    } catch {
+      // Si falla, retornar 00:00:00
+    }
+    
+    return '00:00:00';
+  };
+
+  // Función para manejar login con Google
+  const handleLoginWithGoogle = async () => {
+    try {
+      setIsLoggingIn(true);
+      const success = await loginWithGoogle();
+      
+      if (success) {
+        console.log('✅ Login con Google exitoso');
+        setShowLoginModal(false);
+        // La acción pendiente se ejecutará automáticamente cuando isAuthenticated cambie
+      } else {
+        console.error('❌ Error en login con Google');
+        alert(language === 'es' 
+          ? 'Error al iniciar sesión con Google. Por favor, intenta nuevamente.'
+          : 'Error signing in with Google. Please try again.');
+        setPendingAction(null);
+      }
+    } catch (error: any) {
+      console.error('❌ Error en handleLoginWithGoogle:', error);
+      
+      // Solo mostrar error si no fue cancelado por el usuario
+      if (error?.code !== 'auth/popup-closed-by-user' && error?.code !== 'auth/cancelled-popup-request') {
+        alert(language === 'es' 
+          ? 'Error al iniciar sesión con Google. Por favor, intenta nuevamente.'
+          : 'Error signing in with Google. Please try again.');
+      }
+      setPendingAction(null);
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  // Función para agregar al carrito (ahora envía directamente a la base de datos)
   const handleAddToCart = async () => {
-    if (!activity || !selectedBookingOption || !selectedTimeSlot) {
+    // Verificar si el usuario está autenticado
+    if (!isAuthenticated) {
+      setPendingAction('addToCart');
+      setShowLoginModal(true);
+      return;
+    }
+
+    if (!activity || !selectedBookingOption || !selectedTimeSlot || !selectedDate) {
       return;
     }
 
@@ -257,31 +294,26 @@ const ActivityDetail: React.FC = () => {
 
     try {
       // Obtener el punto de encuentro seleccionado
-      let meetingPoint = selectedBookingOption?.meetingPointAddress || 
+      let meetingPointName = selectedBookingOption?.meetingPointAddress || 
                           'Punto de encuentro por confirmar';
+      let meetingPointAddress = '';
+      let meetingPickupPlaceId: number | null = null;
+      let meetingPickupPointLatitude: number | null = null;
+      let meetingPickupPointLongitude: number | null = null;
       
       // Si hay un punto de recogida seleccionado, usarlo
-      let pickupPointInfo = undefined;
       if (selectedPickupPoint) {
-        meetingPoint = selectedPickupPoint.name || selectedPickupPoint.address;
-        pickupPointInfo = {
-          id: selectedPickupPoint.id,
-          cityId: selectedPickupPoint.city?.id ?? null,
-          name: selectedPickupPoint.name || '',
-          address: selectedPickupPoint.address || '',
-          latitude: selectedPickupPoint.latitude ?? null,
-          longitude: selectedPickupPoint.longitude ?? null
-        };
+        meetingPointName = selectedPickupPoint.name || selectedPickupPoint.address;
+        meetingPointAddress = selectedPickupPoint.address || '';
+        meetingPickupPlaceId = selectedPickupPoint.city?.id ?? null;
+        meetingPickupPointLatitude = selectedPickupPoint.latitude ?? null;
+        meetingPickupPointLongitude = selectedPickupPoint.longitude ?? null;
       } else if ((selectedBookingOption.meetingType || '').toLowerCase() === 'meeting_point') {
-        meetingPoint = selectedBookingOption.meetingPointAddress || meetingPoint;
-        pickupPointInfo = {
-          id: selectedBookingOption.meetingPointId ?? null,
-          cityId: selectedBookingOption.meetingPointId ?? null,
-          name: selectedBookingOption.meetingPointAddress || selectedBookingOption.meetingPointDescription?.[0] || '',
-          address: selectedBookingOption.meetingPointAddress || '',
-          latitude: selectedBookingOption.meetingPointLatitude ?? null,
-          longitude: selectedBookingOption.meetingPointLongitude ?? null
-        };
+        meetingPointName = selectedBookingOption.meetingPointAddress || selectedBookingOption.meetingPointDescription?.[0] || meetingPointName;
+        meetingPointAddress = selectedBookingOption.meetingPointAddress || '';
+        meetingPickupPlaceId = selectedBookingOption.meetingPointId ?? null;
+        meetingPickupPointLatitude = selectedBookingOption.meetingPointLatitude ?? null;
+        meetingPickupPointLongitude = selectedBookingOption.meetingPointLongitude ?? null;
       }
 
       // Obtener el código del idioma del guía (ej: es, en, fr)
@@ -290,148 +322,189 @@ const ActivityDetail: React.FC = () => {
                             selectedBookingOption.languages[0] : 'es');
       const guideLanguage = languageCode || 'es';
 
-      // Obtener la hora de salida
-      const departureTime = selectedTimeSlot;
-
       // Calcular precio por persona (considerando descuentos)
-      const pricePerPerson = Math.ceil(calculateTotalPrice());
+      const unitPrice = selectedBookingOption.priceAfterDiscount ?? selectedBookingOption.normalPrice ?? selectedBookingOption.unitPrice ?? selectedBookingOption.pricePerPerson ?? 0;
+      const pricePerParticipant = Math.ceil(unitPrice);
 
-      // Crear el item del carrito
-      const cartItem = {
-        id: `${activity.id}-${selectedBookingOption.id}-${selectedTimeSlot}-${selectedDate}`,
-        title: activity.title,
-        price: pricePerPerson,
-        currency: currency,
-        quantity: numberOfAdults + numberOfChildren,
-        imageUrl: activity.images?.[0]?.imageUrl || '',
-        date: selectedDate,
-        travelers: {
-          adults: numberOfAdults,
-          children: numberOfChildren
-        },
-        // Información adicional específica de la actividad
-        activityDetails: {
-          activityId: activity.id,
-          bookingOptionId: selectedBookingOption.id,
-          meetingPoint: meetingPoint,
-          guideLanguage: guideLanguage,
-          departureTime: departureTime,
-          departureDate: selectedDate,
-          hasDiscount: hasActiveDiscount(),
-          discountPercentage: getDiscountPercentage(),
-          originalPrice: getOriginalPrice(),
-          finalPrice: calculateTotalPrice(),
-          pickupPoint: pickupPointInfo,
-          comment: pickupComment || undefined
-        }
+      // Construir startDatetime en formato ISO: YYYY-MM-DDTHH:mm:ss
+      const normalizedTime = normalizeTimeTo24Hour(selectedTimeSlot);
+      const startDatetime = `${selectedDate}T${normalizedTime}`;
+
+      // Validar moneda
+      const orderCurrency = (currency === 'USD' || currency === 'PEN' || currency === 'EUR') 
+        ? (currency as 'USD' | 'PEN') 
+        : 'USD';
+
+      // Preparar el request para enviar a la base de datos
+      const orderItemRequest = {
+        activityId: activity.id,
+        bookingOptionId: selectedBookingOption.id,
+        currency: orderCurrency,
+        adults: numberOfAdults,
+        children: numberOfChildren,
+        pricePerParticipant,
+        startDatetime,
+        specialRequest: pickupComment || null,
+        meetingPickupPlaceId,
+        meetingPickupPointName: meetingPointName || null,
+        meetingPickupPointAddress: meetingPointAddress || null,
+        meetingPickupPointLatitude,
+        meetingPickupPointLongitude,
+        guideLanguage: guideLanguage || null,
+        status: 'PENDING' as const,
       };
 
-      // Simular delay para mostrar loading
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Mostrar el request en consola
+      console.log('🛒 Request para agregar al carrito:', JSON.stringify(orderItemRequest, null, 2));
+      console.log('🛒 Request (objeto):', orderItemRequest);
 
-      // Agregar al carrito
-      const itemAdded = addItem(cartItem);
-      
-      if (!itemAdded) {
-        // Si el item ya existe, mostrar alerta y no navegar
-        alert(getTranslation('detail.booking.activityAlreadyInCart', language));
-        return;
+      // Enviar a la base de datos usando ordersItemApi
+      const response = await ordersItemApi.addOrderItem(orderItemRequest);
+
+      if (response?.success) {
+        // Emitir evento para actualizar el contador del carrito en el Navbar
+        window.dispatchEvent(new CustomEvent('cartUpdated'));
+        
+        // Mostrar mensaje de éxito
+        alert(getTranslation('detail.booking.itemAddedToCart', language) || 
+              (language === 'es' ? 'Actividad agregada al carrito exitosamente' : 'Activity added to cart successfully'));
+        
+        // Navegar a la página del carrito
+        navigate('/cart');
+      } else {
+        // Mostrar mensaje de error
+        alert(response?.message || 
+              (language === 'es' ? 'Error al agregar la actividad al carrito' : 'Error adding activity to cart'));
       }
 
-      // Navegar a la página del carrito
-      navigate('/cart');
-
-    } catch (error) {
-      // Si hay error al agregar al carrito, continuar sin navegar
+    } catch (error: any) {
+      console.error('Error al agregar item a la orden:', error);
+      // Mostrar mensaje de error
+      const errorMessage = error?.message || 
+                          (language === 'es' 
+                            ? 'Error al agregar la actividad al carrito. Por favor, inténtalo nuevamente.' 
+                            : 'Error adding activity to cart. Please try again.');
+      alert(errorMessage);
     } finally {
       setIsAddingToCart(false);
     }
   };
 
-  // Función para ir directamente al checkout
+  // Función para ir directamente al checkout (agrega al carrito y redirige)
   const handleBookNow = async () => {
-    if (!activity || !selectedBookingOption || !selectedTimeSlot) {
+    // Verificar si el usuario está autenticado
+    if (!isAuthenticated) {
+      setPendingAction('bookNow');
+      setShowLoginModal(true);
+      return;
+    }
+
+    if (!activity || !selectedBookingOption || !selectedTimeSlot || !selectedDate) {
       return;
     }
 
     setIsBooking(true);
 
     try {
-      // Simular delay para mostrar loading (similar al carrito)
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      // Obtener el punto de encuentro seleccionado
-      let meetingPoint = selectedBookingOption?.meetingPointAddress || 
+      // Obtener el punto de encuentro seleccionado (igual que handleAddToCart)
+      let meetingPointName = selectedBookingOption?.meetingPointAddress || 
                           'Punto de encuentro por confirmar';
+      let meetingPointAddress = '';
+      let meetingPickupPlaceId: number | null = null;
+      let meetingPickupPointLatitude: number | null = null;
+      let meetingPickupPointLongitude: number | null = null;
       
       // Si hay un punto de recogida seleccionado, usarlo
-      let pickupPointInfo = undefined;
       if (selectedPickupPoint) {
-        meetingPoint = selectedPickupPoint.name || selectedPickupPoint.address;
-        pickupPointInfo = {
-          id: selectedPickupPoint.id,
-          cityId: selectedPickupPoint.city?.id ?? null,
-          name: selectedPickupPoint.name || '',
-          address: selectedPickupPoint.address || '',
-          latitude: selectedPickupPoint.latitude ?? null,
-          longitude: selectedPickupPoint.longitude ?? null
-        };
+        meetingPointName = selectedPickupPoint.name || selectedPickupPoint.address;
+        meetingPointAddress = selectedPickupPoint.address || '';
+        meetingPickupPlaceId = selectedPickupPoint.city?.id ?? null;
+        meetingPickupPointLatitude = selectedPickupPoint.latitude ?? null;
+        meetingPickupPointLongitude = selectedPickupPoint.longitude ?? null;
+      } else if ((selectedBookingOption.meetingType || '').toLowerCase() === 'meeting_point') {
+        meetingPointName = selectedBookingOption.meetingPointAddress || selectedBookingOption.meetingPointDescription?.[0] || meetingPointName;
+        meetingPointAddress = selectedBookingOption.meetingPointAddress || '';
+        meetingPickupPlaceId = selectedBookingOption.meetingPointId ?? null;
+        meetingPickupPointLatitude = selectedBookingOption.meetingPointLatitude ?? null;
+        meetingPickupPointLongitude = selectedBookingOption.meetingPointLongitude ?? null;
       }
 
-      // Obtener el idioma del guía (traducido a nombre completo)
+      // Obtener el código del idioma del guía (ej: es, en, fr)
       const languageCode = selectedLanguage || 
                            (selectedBookingOption.languages && selectedBookingOption.languages.length === 1 ? 
                             selectedBookingOption.languages[0] : 'es');
       const guideLanguage = languageCode || 'es';
 
-      // Obtener la hora de salida
-      const departureTime = selectedTimeSlot;
-
       // Calcular precio por persona (considerando descuentos)
-      const pricePerPerson = Math.ceil(calculateTotalPrice());
+      const unitPrice = selectedBookingOption.priceAfterDiscount ?? selectedBookingOption.normalPrice ?? selectedBookingOption.unitPrice ?? selectedBookingOption.pricePerPerson ?? 0;
+      const pricePerParticipant = Math.ceil(unitPrice);
 
-      // Crear los detalles de reserva para el checkout
-      const bookingDetails = {
+      // Construir startDatetime en formato ISO: YYYY-MM-DDTHH:mm:ss
+      const normalizedTime = normalizeTimeTo24Hour(selectedTimeSlot);
+      const startDatetime = `${selectedDate}T${normalizedTime}`;
+
+      // Validar moneda
+      const orderCurrency = (currency === 'USD' || currency === 'PEN' || currency === 'EUR') 
+        ? (currency as 'USD' | 'PEN') 
+        : 'USD';
+
+      // Preparar el request para enviar a la base de datos (igual que handleAddToCart)
+      const orderItemRequest = {
         activityId: activity.id,
-        title: activity.title,
-        imageUrl: activity.images?.[0]?.imageUrl || '',
-        price: pricePerPerson,
-        currency: currency,
-        quantity: numberOfAdults + numberOfChildren,
-        date: selectedDate,
-        time: departureTime,
-        meetingPoint: meetingPoint,
-        meetingType: selectedBookingOption.meetingType,
-        guideLanguage: guideLanguage,
-        durationDays: selectedBookingOption.durationDays ?? 0,
-        durationHours: selectedBookingOption.durationHours ?? 0,
-        durationMinutes: selectedBookingOption.durationMinutes ?? 0,
-        travelers: {
-          adults: numberOfAdults,
-          children: numberOfChildren
-        },
-        hasDiscount: hasActiveDiscount(),
-        discountPercentage: getDiscountPercentage(),
-        originalPrice: getOriginalPrice(),
-        finalPrice: calculateTotalPrice(),
-        pickupPoint: pickupPointInfo,
-        meetingPointId: pickupPointInfo?.id ?? selectedBookingOption.meetingPointId ?? null,
-        meetingPointAddress: pickupPointInfo?.address || selectedBookingOption.meetingPointAddress || '',
-        meetingPointLatitude: pickupPointInfo?.latitude ?? selectedBookingOption.meetingPointLatitude ?? null,
-        meetingPointLongitude: pickupPointInfo?.longitude ?? selectedBookingOption.meetingPointLongitude ?? null,
-        meetingPointCityId: pickupPointInfo?.cityId ?? null,
-        meetingPointName: pickupPointInfo?.name || selectedBookingOption.meetingPointAddress || selectedBookingOption.meetingPointDescription?.[0] || '',
-        comment: pickupComment || undefined
+        bookingOptionId: selectedBookingOption.id,
+        currency: orderCurrency,
+        adults: numberOfAdults,
+        children: numberOfChildren,
+        pricePerParticipant,
+        startDatetime,
+        specialRequest: pickupComment || null,
+        meetingPickupPlaceId,
+        meetingPickupPointName: meetingPointName || null,
+        meetingPickupPointAddress: meetingPointAddress || null,
+        meetingPickupPointLatitude,
+        meetingPickupPointLongitude,
+        guideLanguage: guideLanguage || null,
+        status: 'PENDING' as const,
       };
 
-      // Guardar detalles en sessionStorage para persistencia durante la sesión
-      sessionStorage.setItem('checkoutBookingDetails', JSON.stringify(bookingDetails));
-      
-      // Navegar al checkout con los detalles de reserva
-      navigate('/checkout', { state: { bookingDetails } });
+      // Obtener token de Firebase
+      let firebaseToken: string | null = null;
+      try {
+        if (auth.currentUser) {
+          firebaseToken = await auth.currentUser.getIdToken();
+        }
+      } catch (error) {
+        console.error('Error al obtener token Firebase:', error);
+      }
 
-    } catch (error) {
-      // Si hay error al procesar reserva, continuar sin navegar
+      // Mostrar token y request en consola
+      console.log('🔐 Firebase Token:', firebaseToken ? `${firebaseToken.substring(0, 20)}...` : 'No disponible');
+      console.log('🛒 Request para reservar ahora:', JSON.stringify(orderItemRequest, null, 2));
+      console.log('🛒 Request (objeto):', orderItemRequest);
+
+      // Enviar a la base de datos usando ordersItemApi (igual que handleAddToCart)
+      const response = await ordersItemApi.addOrderItem(orderItemRequest);
+
+      if (response?.success) {
+        // Emitir evento para actualizar el contador del carrito en el Navbar
+        window.dispatchEvent(new CustomEvent('cartUpdated'));
+        
+        // Redirigir directamente al checkout
+        navigate('/checkout');
+      } else {
+        // Mostrar mensaje de error
+        alert(response?.message || 
+              (language === 'es' ? 'Error al crear la reserva' : 'Error creating reservation'));
+      }
+
+    } catch (error: any) {
+      console.error('Error al crear reserva:', error);
+      // Mostrar mensaje de error
+      const errorMessage = error?.message || 
+                          (language === 'es' 
+                            ? 'Error al crear la reserva. Por favor, inténtalo nuevamente.' 
+                            : 'Error creating reservation. Please try again.');
+      alert(errorMessage);
     } finally {
       setIsBooking(false);
     }
@@ -445,31 +518,10 @@ const ActivityDetail: React.FC = () => {
     return new Date(year, month - 1, day, 12, 0, 0, 0);
   };
 
-  // Función para obtener horarios según el día seleccionado
-  const getSchedulesForSelectedDate = () => {
-    // Si no hay schedules disponibles, retornar lista vacía
-    if (!selectedBookingOption?.schedules) {
-      return [];
-    }
-    
-    // Si no hay fecha seleccionada, mostrar todos los horarios activos
-    if (!selectedDate) {
-      return selectedBookingOption.schedules.filter((schedule: Schedule) => schedule.isActive);
-    }
-
-    // Obtener el día de la semana de la fecha seleccionada
-    // JavaScript usa: 0=Domingo, 1=Lunes, ..., 6=Sábado
-    // Necesitamos convertir a: 0=Lunes, 1=Martes, ..., 6=Domingo
-    const selectedDateObj = parseLocalDate(selectedDate); // Usar parseLocalDate para evitar problemas de timezone
-    const jsDayOfWeek = selectedDateObj.getDay(); // 0-6 (Domingo-Sábado)
-    const customDayOfWeek = convertToCustomDayOfWeek(jsDayOfWeek); // 0-6 (Lunes-Domingo)
-
-    // Filtrar horarios que coincidan con el día de la semana y estén activos
-    const filteredSchedules = selectedBookingOption.schedules.filter((schedule: Schedule) => 
-      schedule.dayOfWeek === customDayOfWeek && schedule.isActive
-    );
-
-    return filteredSchedules;
+  // Función para obtener horarios usando schedulesTimes directamente de la API
+  const getSchedulesForSelectedDate = (): string[] => {
+    // Retornar schedulesTimes directamente, la API ya filtra por fecha y día
+    return (selectedBookingOption?.schedulesTimes || []) as string[];
   };
 
   // Función para convertir día de JavaScript (0=Domingo) a sistema personalizado (0=Lunes)
@@ -496,33 +548,10 @@ const ActivityDetail: React.FC = () => {
     return convertToCustomDayOfWeek(jsDayOfWeek);
   };
 
-  // Función para convertir formato de 24 horas a AM/PM
-  const convertTo12HourFormat = (time24: string): string => {
-    if (!time24 || !time24.includes(':')) return time24;
-    
-    const [hours, minutes] = time24.split(':');
-    const hour = parseInt(hours, 10);
-    const min = minutes || '00';
-    
-    if (hour === 0) {
-      return `12:${min} AM`;
-    } else if (hour === 12) {
-      return `12:${min} PM`;
-    } else if (hour < 12) {
-      return `${hour}:${min} AM`;
-    } else {
-      return `${hour - 12}:${min} PM`;
-    }
-  };
 
   // Función para manejar selección de idioma (único)
   const handleLanguageSelection = (lang: string) => {
     setSelectedLanguage(prev => prev === lang ? null : lang);
-  };
-
-  // Función para manejar selección de horario (único)
-  const handleScheduleSelection = (scheduleId: string) => {
-    setSelectedSchedule(prev => prev === scheduleId ? null : scheduleId);
   };
 
   // Función para calcular la fecha límite de cancelación basada en beforeCancel
@@ -660,8 +689,7 @@ const ActivityDetail: React.FC = () => {
     });
   };
 
-  // Función para obtener precio mínimo y currency con descuento aplicado
-  // Función para obtener precio mínimo según la cantidad de personas cuando hay priceTiers
+  // Función para obtener precio por persona usando priceAfterDiscount o normalPrice directamente de la API
   const getMinPriceForPeople = (peopleCount: number) => {
     if (!activity?.bookingOptions || activity.bookingOptions.length === 0) return { price: null, currency: 'USD', originalPrice: null, hasDiscount: false, discountPercent: 0 };
     
@@ -675,56 +703,25 @@ const ActivityDetail: React.FC = () => {
     let discountPercent = 0;
     
     activeOptions.forEach(option => {
-      let optionMinPrice = Infinity;
+      // Usar priceAfterDiscount si está disponible, si no usar normalPrice, fallback a pricePerPerson
+      const optionMinPrice = option.priceAfterDiscount ?? option.normalPrice ?? option.pricePerPerson ?? 0;
+      const optionOriginalPrice = option.normalPrice ?? option.pricePerPerson ?? 0;
+      const optionHasDiscount = (option.specialOfferPercentage ?? 0) > 0;
+      const optionDiscountPercent = option.specialOfferPercentage ?? 0;
       
-      // Si el pricingMode es PER_PERSON y hay priceTiers, buscar el tier que corresponde a la cantidad de personas
-      if (option.pricingMode === 'PER_PERSON' && option.priceTiers && option.priceTiers.length > 0) {
-        // Buscar el tier que corresponde a la cantidad de personas
-        const matchingTier = option.priceTiers.find((tier: any) => {
-          const min = tier.minParticipants || 1;
-          const max = tier.maxParticipants || Infinity;
-          return peopleCount >= min && peopleCount <= max;
-        });
-        
-        if (matchingTier) {
-          // Si el tier tiene totalPrice, usarlo; si no, calcular desde pricePerParticipant
-          optionMinPrice = matchingTier.totalPrice || (matchingTier.pricePerParticipant * peopleCount);
-        } else {
-          // Si no hay tier que coincida, usar el precio mínimo de todos los tiers
-          optionMinPrice = Math.min(...option.priceTiers.map((tier: any) => tier.totalPrice || (tier.pricePerParticipant || 0) * (tier.minParticipants || 1)));
-        }
-      } else {
-        // Para otros modos de pricing, usar pricePerPerson directamente
-        optionMinPrice = option.pricePerPerson || 0;
-      }
-      
-      // Aplicar descuento si existe specialOfferPercentage
-      let finalPrice = optionMinPrice;
-      if (option.specialOfferPercentage && option.specialOfferPercentage > 0) {
-        const discount = optionMinPrice * (option.specialOfferPercentage / 100);
-        finalPrice = optionMinPrice - discount;
-        
-        if (finalPrice < minPrice) {
-          minPrice = finalPrice;
-          minOriginalPrice = optionMinPrice;
-          minCurrency = option.currency;
-          hasDiscount = true;
-          discountPercent = option.specialOfferPercentage;
-        }
-      } else {
-        if (optionMinPrice < minPrice) {
-          minPrice = optionMinPrice;
-          minOriginalPrice = optionMinPrice;
-          minCurrency = option.currency;
-          hasDiscount = false;
-          discountPercent = 0;
-        }
+      // Comparar con el precio mínimo actual
+      if (optionMinPrice < minPrice) {
+        minPrice = optionMinPrice;
+        minOriginalPrice = optionOriginalPrice;
+        minCurrency = option.currency;
+        hasDiscount = optionHasDiscount;
+        discountPercent = optionDiscountPercent;
       }
     });
     
     return { 
-      price: minPrice === Infinity ? null : Math.round(minPrice * 100) / 100,
-      originalPrice: minOriginalPrice === Infinity ? null : Math.round(minOriginalPrice * 100) / 100,
+      price: minPrice === Infinity ? null : Math.round((minPrice * peopleCount) * 100) / 100,
+      originalPrice: minOriginalPrice === Infinity ? null : Math.round((minOriginalPrice * peopleCount) * 100) / 100,
       currency: minCurrency,
       hasDiscount,
       discountPercent
@@ -742,125 +739,47 @@ const ActivityDetail: React.FC = () => {
     let minParticipants = Infinity;
     
     activeOptions.forEach(option => {
-      // Si hay priceTiers, buscar el tier con el precio total mínimo
-      if (option.pricingMode === 'PER_PERSON' && option.priceTiers && option.priceTiers.length > 0) {
-        option.priceTiers.forEach((tier: any) => {
-          // Usar totalPrice del tier directamente sin dividir
-          const tierTotalPrice = tier.totalPrice || 0;
-          const minParticipantsCount = tier.minParticipants || 1;
-          
-          // Aplicar descuento si existe
-          let finalPrice = tierTotalPrice;
-          if (option.specialOfferPercentage && option.specialOfferPercentage > 0) {
-            finalPrice = tierTotalPrice - (tierTotalPrice * (option.specialOfferPercentage / 100));
-          }
-          
-          if (finalPrice < minPrice) {
-            minPrice = finalPrice;
-            minParticipants = minParticipantsCount;
-          } else if (finalPrice === minPrice && minParticipantsCount < minParticipants) {
-            // Si el precio es igual, tomar el menor número de participantes
-            minParticipants = minParticipantsCount;
-          }
-        });
-      } else {
-        // Si no hay priceTiers, el precio mínimo es para 1 persona
-        const optionPrice = option.pricePerPerson || 0;
-        let finalPrice = optionPrice;
-        if (option.specialOfferPercentage && option.specialOfferPercentage > 0) {
-          finalPrice = optionPrice - (optionPrice * (option.specialOfferPercentage / 100));
-        }
-        
-        if (finalPrice < minPrice) {
-          minPrice = finalPrice;
-          minParticipants = 1;
-        }
+      // Usar priceAfterDiscount si está disponible, si no usar normalPrice, fallback a pricePerPerson
+      const optionPrice = option.priceAfterDiscount ?? option.normalPrice ?? option.pricePerPerson ?? 0;
+      const optionMinParticipants = option.groupMinSize ?? 1;
+      
+      // Comparar con el precio mínimo actual
+      if (optionPrice < minPrice) {
+        minPrice = optionPrice;
+        minParticipants = optionMinParticipants;
+      } else if (optionPrice === minPrice && optionMinParticipants < minParticipants) {
+        // Si el precio es igual, tomar el menor número de participantes
+        minParticipants = optionMinParticipants;
       }
     });
     
     return minParticipants === Infinity ? null : minParticipants;
   };
 
-  const getMinPrice = () => {
-    if (!activity?.bookingOptions || activity.bookingOptions.length === 0) return { price: null, currency: 'USD', originalPrice: null, hasDiscount: false, discountPercent: 0, minParticipants: null, hasMultiplePriceTiers: false };
+  // Función auxiliar para obtener el precio mínimo de todas las opciones activas usando directamente los campos
+  const getMinPriceFromOptions = () => {
+    if (!activity?.bookingOptions || activity.bookingOptions.length === 0) {
+      return null;
+    }
     
     const activeOptions = activity.bookingOptions.filter(option => option.isActive);
-    if (activeOptions.length === 0) return { price: null, currency: 'USD', originalPrice: null, hasDiscount: false, discountPercent: 0, minParticipants: null, hasMultiplePriceTiers: false };
+    if (activeOptions.length === 0) {
+      return null;
+    }
     
-    // Verificar si hay múltiples priceTiers en alguna opción activa
-    const hasMultiplePriceTiers = activeOptions.some(option => 
-      option.pricingMode === 'PER_PERSON' && option.priceTiers && option.priceTiers.length > 1
-    );
-    
-    // Siempre calcular el precio mínimo absoluto entre todos los tiers
-    let minPrice = Infinity;
-    let minCurrency = 'USD';
-    let minOriginalPrice = Infinity;
-    let hasDiscount = false;
-    let discountPercent = 0;
+    // Encontrar la opción con el precio mínimo
+    let minOption = activeOptions[0];
+    let minPrice = minOption.priceAfterDiscount ?? minOption.normalPrice ?? minOption.unitPrice ?? minOption.pricePerPerson ?? Infinity;
     
     activeOptions.forEach(option => {
-      let optionMinPrice = Infinity;
-      
-      let optionHasDiscount = false;
-      let optionDiscountPercent = 0;
-      
-      // Si el pricingMode es PER_PERSON y hay priceTiers, buscar el precio mínimo absoluto
-      if (option.pricingMode === 'PER_PERSON' && option.priceTiers && option.priceTiers.length > 0) {
-        // Calcular el precio mínimo entre todos los tiers usando totalPrice directamente
-        option.priceTiers.forEach((tier: any) => {
-          const tierTotalPrice = tier.totalPrice || 0;
-          
-          // Aplicar descuento si existe
-          let finalPrice = tierTotalPrice;
-          if (option.specialOfferPercentage && option.specialOfferPercentage > 0) {
-            finalPrice = tierTotalPrice - (tierTotalPrice * (option.specialOfferPercentage / 100));
-            optionHasDiscount = true;
-            optionDiscountPercent = option.specialOfferPercentage;
-          }
-          
-          // Comparar precio total para encontrar el mínimo
-          if (finalPrice < optionMinPrice) {
-            optionMinPrice = finalPrice;
-          }
-        });
-      } else {
-        // Para otros modos de pricing, usar pricePerPerson directamente
-        optionMinPrice = option.pricePerPerson || 0;
-        
-        // Verificar descuento para opciones sin priceTiers
-        if (option.specialOfferPercentage && option.specialOfferPercentage > 0) {
-          optionHasDiscount = true;
-          optionDiscountPercent = option.specialOfferPercentage;
-        }
-      }
-      
-      // Aplicar descuento si existe specialOfferPercentage (para casos sin priceTiers)
-      let finalPrice = optionMinPrice;
-      if (optionHasDiscount && (!option.priceTiers || option.priceTiers.length === 0)) {
-        const discount = optionMinPrice * (optionDiscountPercent / 100);
-        finalPrice = optionMinPrice - discount;
-      }
-      
-      // Actualizar el precio mínimo global
-      if (finalPrice < minPrice) {
-        minPrice = finalPrice;
-        minOriginalPrice = optionHasDiscount ? optionMinPrice : finalPrice;
-        minCurrency = option.currency;
-        hasDiscount = optionHasDiscount;
-        discountPercent = optionDiscountPercent;
+      const optionPrice = option.priceAfterDiscount ?? option.normalPrice ?? option.unitPrice ?? option.pricePerPerson ?? Infinity;
+      if (optionPrice < minPrice) {
+        minPrice = optionPrice;
+        minOption = option;
       }
     });
     
-    return { 
-      price: minPrice === Infinity ? null : Math.round(minPrice * 100) / 100,
-      originalPrice: minOriginalPrice === Infinity ? null : Math.round(minOriginalPrice * 100) / 100,
-      currency: minCurrency,
-      hasDiscount,
-      discountPercent,
-      minParticipants: hasMultiplePriceTiers ? getMinParticipantsForMinPrice() : null,
-      hasMultiplePriceTiers
-    };
+    return minOption;
   };
 
   // Inicializar lightGallery cuando las imágenes estén disponibles
@@ -918,19 +837,12 @@ const ActivityDetail: React.FC = () => {
               setSelectedLanguage(firstOption.languages[0]);
             }
             
-            // Seleccionar automáticamente el primer horario disponible del día específico
-            const availableSchedules = firstOption.schedules?.filter((schedule: Schedule) => {
-              if (!selectedDate) return schedule.isActive;
-              const customDayOfWeek = getCustomDayOfWeekFromDate(selectedDate);
-              return schedule.dayOfWeek === customDayOfWeek && schedule.isActive;
-            }) || [];
+            // Seleccionar automáticamente el primer horario disponible usando schedulesTimes
+            const availableTimes = (firstOption.schedulesTimes || []) as string[];
             
-            if (availableSchedules.length > 0) {
-              // Si hay horarios para el día seleccionado, usar el primero
-              setSelectedTimeSlot(availableSchedules[0].startTime);
-            } else if (firstOption.schedules && firstOption.schedules.length > 0) {
-              // Si no hay horarios para el día específico, usar el primer horario disponible como fallback
-              setSelectedTimeSlot(firstOption.schedules[0].startTime);
+            if (availableTimes.length > 0) {
+              // Usar el primer horario disponible
+              setSelectedTimeSlot(availableTimes[0]);
             }
           }
         }, 'activity-detail');
@@ -1008,6 +920,21 @@ const ActivityDetail: React.FC = () => {
     setNumberOfChildren(childrenCount);
     setNumberOfPeople(adultCount + childrenCount); // Actualizar numberOfPeople con la suma
   }, [searchParams]);
+
+  // useEffect para ejecutar acción pendiente cuando el usuario se autentica
+  useEffect(() => {
+    if (isAuthenticated && pendingAction && !showLoginModal) {
+      // Ejecutar la acción pendiente después de un pequeño delay para asegurar que el estado esté actualizado
+      setTimeout(() => {
+        if (pendingAction === 'addToCart') {
+          handleAddToCart();
+        } else if (pendingAction === 'bookNow') {
+          handleBookNow();
+        }
+        setPendingAction(null);
+      }, 100);
+    }
+  }, [isAuthenticated, pendingAction, showLoginModal]);
 
   if (error) {
     return (
@@ -1289,41 +1216,62 @@ const ActivityDetail: React.FC = () => {
                   {/* Sección de Precio */}
                   <div className="d-flex justify-content-between align-items-center mb-3">
                     <div>
-                        {getMinPrice().price !== null ? (
-                          <>
-                            <small className="text-muted">{getTranslation('detail.booking.from', language)}</small>
-                            
-                              {getMinPrice().hasDiscount && (
+                        {(() => {
+                          const displayOption = selectedBookingOption || getMinPriceFromOptions();
+                          if (!displayOption) {
+                            return (
+                              <div className="h3 fw-bold text-dark mb-0">
+                                {getTranslation('detail.booking.contactForPrice', language)}
+                              </div>
+                            );
+                          }
+                          
+                          const price = displayOption.priceAfterDiscount ?? displayOption.normalPrice ?? displayOption.unitPrice ?? displayOption.pricePerPerson;
+                          const originalPrice = displayOption.normalPrice ?? displayOption.unitPrice ?? displayOption.pricePerPerson;
+                          const hasDiscount = (displayOption.specialOfferPercentage ?? 0) > 0;
+                          const discountPercent = displayOption.specialOfferPercentage ?? 0;
+                          const hasMultiplePriceTiers = (displayOption.groupMinSize ?? 1) > 1;
+                          const minParticipants = displayOption.groupMinSize ?? null;
+                          
+                          if (price === null || price === undefined) {
+                            return (
+                              <div className="h3 fw-bold text-dark mb-0">
+                                {getTranslation('detail.booking.contactForPrice', language)}
+                              </div>
+                            );
+                          }
+                          
+                          return (
+                            <>
+                              
+                              {hasDiscount && (
                                <div className="d-flex flex-start align-items-center">
-                                <span className="badge bg-danger">-{getMinPrice().discountPercent}%</span>
+                                <span className="badge bg-danger">-{Math.round(discountPercent)}%</span>
                                 <span className="text-muted text-decoration-line-through m-1" style={{ fontSize: '0.9rem' }}>
-                                  {currency === 'PEN' ? 'S/ ' : '$ '}{Math.ceil(getMinPrice().originalPrice || 0)?.toFixed(2)}
+                                  {getCurrencySymbol(currency)} {Math.ceil(originalPrice || 0)?.toFixed(2)}
                                 </span>
                                </div>
                               )}
-                               <div className={`h4 fw-bold mb-0 ${getMinPrice().hasDiscount ? 'text-danger' : 'text-dark'}`}>
-                                 {currency === 'PEN' ? 'S/ ' : '$ '}{Math.ceil(getMinPrice().price || 0)?.toFixed(2) || '0.00'}
+                               <div className={`h4 fw-bold mb-0 ${hasDiscount ? 'text-danger' : 'text-dark'}`}>
+                                 {getCurrencySymbol(currency)} {Math.ceil(price || 0)?.toFixed(2) || '0.00'}
                                </div>
                              
                               <small className="text-muted" style={{ marginTop: '-4px' }}>{getTranslation('detail.booking.perPerson', language)}</small>
                               
-                              {/* Mostrar "a partir de X personas" solo si hay múltiples priceTiers */}
-                              {getMinPrice().hasMultiplePriceTiers && getMinPrice().minParticipants !== null && getMinPrice().minParticipants !== undefined && (
+                              {/* Mostrar "a partir de X personas" solo si hay mínimo de participantes */}
+                              {hasMultiplePriceTiers && minParticipants !== null && minParticipants !== undefined && (
                                 <small className="text-muted d-block" style={{ fontSize: '0.75rem', marginTop: '2px' }}>
                                   {getTranslationWithParams('detail.booking.fromParticipants', language, {
-                                    count: getMinPrice().minParticipants || 0,
-                                    plural: getMinPrice().minParticipants === 1 
+                                    count: minParticipants || 0,
+                                    plural: minParticipants === 1 
                                       ? getTranslation('detail.booking.participantSingular', language)
                                       : getTranslation('detail.booking.participantPlural', language)
                                   })}
                                 </small>
                               )}
-                          </>
-                        ) : (
-                          <div className="h3 fw-bold text-dark mb-0">
-                            {getTranslation('detail.booking.contactForPrice', language)}
-                          </div>
-                        )}
+                            </>
+                          );
+                        })()}
                      </div>
                       <button 
                         className="btn btn-primary btn-xs px-4"
@@ -1554,8 +1502,8 @@ const ActivityDetail: React.FC = () => {
                     <div className="p-3" style={{ margin: 0, padding: 0 }}>
                       <h5 className="fw-bold text-dark" style={{ fontSize: '1rem', margin: 0, padding: 0 }}>
                         {(() => {
-                          const availableSchedules = getSchedulesForSelectedDate();
-                          if (availableSchedules.length === 1) {
+                          const availableTimes = getSchedulesForSelectedDate();
+                          if (availableTimes.length === 1) {
                             return getTranslation('detail.booking.startTime', language);
                           } else {
                             return getTranslation('detail.booking.selectStartTime', language);
@@ -1585,9 +1533,9 @@ const ActivityDetail: React.FC = () => {
                       )}
                       
                       {(() => {
-                        const availableSchedules = getSchedulesForSelectedDate();
+                        const availableTimes = getSchedulesForSelectedDate();
                         
-                        if (availableSchedules.length === 0) {
+                        if (availableTimes.length === 0) {
                           // No mostrar nada si no hay horarios disponibles
                           return (
                             <div className="text-muted" style={{ fontSize: '0.875rem' }}>
@@ -1597,12 +1545,12 @@ const ActivityDetail: React.FC = () => {
                               }
                             </div>
                           );
-                        } else if (availableSchedules.length === 1) {
+                        } else if (availableTimes.length === 1) {
                           // Mostrar como texto en negrita cuando hay solo un horario
                           return (
                             <div className="d-flex align-items-center">
-                              <span className="fw-bold text-muted" style={{ fontSize: '1rem',margin:0,padding:0 }}>
-                                {convertTo12HourFormat(availableSchedules[0].startTime)}
+                              <span className="fw-bold text-muted" style={{ fontSize: '1rem', margin: 0, padding: 0 }}>
+                                {availableTimes[0]}
                               </span>
                             </div>
                           );
@@ -1610,19 +1558,19 @@ const ActivityDetail: React.FC = () => {
                           // Mostrar botones cuando hay múltiples horarios
                           return (
                             <div className="d-flex gap-2">
-                              {availableSchedules.map((schedule: Schedule, index: number) => (
+                              {availableTimes.map((time: string, index: number) => (
                                 <button 
                                   key={index}
-                                  className={`btn ${selectedTimeSlot === schedule.startTime ? 'btn-primary' : 'btn-outline-primary'}`}
-                                  onClick={() => handleTimeSlotSelect(schedule.startTime)}
+                                  className={`btn ${selectedTimeSlot === time ? 'btn-primary' : 'btn-outline-primary'}`}
+                                  onClick={() => handleTimeSlotSelect(time)}
                                   style={{ 
                                     fontSize: '0.875rem',
                                     padding: '0.5rem 1rem',
                                     borderRadius: '4px',
-                                    border: selectedTimeSlot === schedule.startTime ? 'none' : '1px solid #007bff'
+                                    border: selectedTimeSlot === time ? 'none' : '1px solid #007bff'
                                   }}
                                 >
-                                  {convertTo12HourFormat(schedule.startTime)}
+                                  {time}
                                 </button>
                               ))}
                             </div>
@@ -1665,23 +1613,27 @@ const ActivityDetail: React.FC = () => {
                                 </div>
                                 <div className="d-flex align-items-center gap-2">
                                   <span className="text-muted text-decoration-line-through" style={{ fontSize: '0.9rem' }}>
-                                    {currency === 'PEN' ? 'S/ ' : '$ '}{((Math.ceil(getOriginalPrice())*numberOfPeople)).toFixed(2)}
+                                    {getCurrencySymbol(currency)} {((Math.ceil(getOriginalPrice()))).toFixed(2)}
                                   </span>
                                   <span className="text-success fw-bold" style={{ fontSize: '0.9rem' }}>
-                                    {getTranslation('activity.youSave', language)} {currency === 'PEN' ? 'S/ ' : '$ '}{(Math.ceil(getOriginalPrice())*numberOfPeople - Math.ceil(calculateTotalPrice())*numberOfPeople).toFixed(2)}
+                                    {getTranslation('activity.youSave', language)} {getCurrencySymbol(currency)} {(Math.ceil(getOriginalPrice()) - Math.ceil(calculateTotalPrice())).toFixed(2)}
                                   </span>
                                 </div>
                               </div>
                             )}
                             <span className="h4 fw-bold text-danger me-2" style={{ fontSize: '1.5rem' }}>
-                              {currency === 'PEN' ? 'S/ ' : '$ '}{(Math.ceil(calculateTotalPrice())*numberOfPeople).toFixed(2)}
+                              {getCurrencySymbol(currency)} {(Math.ceil(calculateTotalPrice())).toFixed(2)}
                             </span>
                           </div>
                           <p className="text-muted mb-1" style={{ fontSize: '0.875rem' }}>
                             {numberOfPeople} {language === 'es' 
                               ? (numberOfPeople === 1 ? 'Viajero' : 'Viajeros') 
                               : (numberOfPeople === 1 ? 'Traveler' : 'Travelers')
-                            } x {currency === 'PEN' ? 'S/ ' : '$ '}{(Math.ceil(calculateTotalPrice())).toFixed(2)}
+                            } x {getCurrencySymbol(currency)} {(() => {
+                              if (!selectedBookingOption) return '0.00';
+                              const unitPrice = selectedBookingOption.priceAfterDiscount ?? selectedBookingOption.normalPrice ?? selectedBookingOption.unitPrice ?? selectedBookingOption.pricePerPerson ?? 0;
+                              return (Math.ceil(unitPrice)).toFixed(2);
+                            })()}
                           </p>
                           <p className="text-muted small" style={{ fontSize: '0.75rem' }}>
                             {getTranslation('detail.booking.allTaxesIncluded', language)}
@@ -1779,7 +1731,8 @@ const ActivityDetail: React.FC = () => {
                               {isAddingToCart ? (
                                 <>
                                   <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-                                  {getTranslation('cart.adding', language)}
+                                  {getTranslation('detail.booking.savingToDatabase', language) || 
+                                   (language === 'es' ? 'Guardando en la base de datos...' : 'Saving to database...')}
                                 </>
                               ) : (
                                 getTranslation('detail.booking.addToCart', language)
@@ -1801,46 +1754,57 @@ const ActivityDetail: React.FC = () => {
             <div className="container-fluid p-3">
               <div className="d-flex justify-content-between align-items-center">
                 <div>
-                  {getMinPrice().price !== null ? (
-                    <>
-                      <small className="text-muted d-block" style={{ fontSize: '0.75rem' }}>
-                        {getTranslation('detail.booking.from', language)}
-                      </small>
-                      <div className="d-flex flex-column gap-2 mb-1">
-                        
-                        {getMinPrice().hasDiscount && (
-                          <div className="d-flex flex-start align-items-center">
-                            <span className="badge bg-danger" style={{ fontSize: '0.65rem' }}>-{getMinPrice().discountPercent}%</span>
-                            <span className="text-muted text-decoration-line-through" style={{ fontSize: '0.75rem' }}>
-                              {currency === 'PEN' ? 'S/ ' : '$ '}{Math.ceil(getMinPrice().originalPrice || 0)?.toFixed(2)}
-                            </span>
+                  {(() => {
+                    const displayOption = selectedBookingOption || getMinPriceFromOptions();
+                    if (!displayOption) {
+                      return null;
+                    }
+                    
+                    const price = displayOption.priceAfterDiscount ?? displayOption.normalPrice ?? displayOption.unitPrice ?? displayOption.pricePerPerson;
+                    const originalPrice = displayOption.normalPrice ?? displayOption.unitPrice ?? displayOption.pricePerPerson;
+                    const hasDiscount = (displayOption.specialOfferPercentage ?? 0) > 0;
+                    const discountPercent = displayOption.specialOfferPercentage ?? 0;
+                    const hasMultiplePriceTiers = (displayOption.groupMinSize ?? 1) > 1;
+                    const minParticipants = displayOption.groupMinSize ?? null;
+                    
+                    if (price === null || price === undefined) {
+                      return null;
+                    }
+                    
+                    return (
+                      <>
+                        <div className="d-flex flex-column gap-2 mb-1">
+                          
+                          {hasDiscount && (
+                            <div className="d-flex flex-start align-items-center">
+                              <span className="badge bg-danger" style={{ fontSize: '0.65rem' }}>-{Math.round(discountPercent)}%</span>
+                              <span className="text-muted text-decoration-line-through" style={{ fontSize: '0.75rem' }}>
+                                {getCurrencySymbol(currency)} {Math.ceil(originalPrice || 0)?.toFixed(2)}
+                              </span>
+                            </div>
+                          )}
+                           <div className={`h5 fw-bold mb-0 ${hasDiscount ? 'text-danger' : 'text-dark'}`} style={{ margin: '0px', padding: '0px' }}>
+                             {getCurrencySymbol(currency)} {Math.ceil(price || 0)?.toFixed(2) || '0.00'}
+                           </div>
                           </div>
-                        )}
-                         <div className={`h5 fw-bold mb-0 ${getMinPrice().hasDiscount ? 'text-danger' : 'text-dark'}`} style={{ margin: '0px', padding: '0px' }}>
-                           {currency === 'PEN' ? 'S/ ' : '$ '}{Math.ceil(getMinPrice().price || 0)?.toFixed(2) || '0.00'}
-                         </div>
-                        </div>
-                        <small className="text-muted" style={{ fontSize: '0.7rem', marginTop: '-14px' }}>
-                          {getTranslation('detail.booking.perPerson', language)}
-                        </small>
-                        
-                        {/* Mostrar "a partir de X personas" solo si hay múltiples priceTiers */}
-                        {getMinPrice().hasMultiplePriceTiers && getMinPrice().minParticipants !== null && getMinPrice().minParticipants !== undefined && (
-                          <small className="text-muted d-block" style={{ fontSize: '0.65rem', marginTop: '2px' }}>
-                            {getTranslationWithParams('detail.booking.fromParticipants', language, {
-                              count: getMinPrice().minParticipants || 0,
-                              plural: getMinPrice().minParticipants === 1 
-                                ? getTranslation('detail.booking.participantSingular', language)
-                                : getTranslation('detail.booking.participantPlural', language)
-                            })}
+                          <small className="text-muted" style={{ fontSize: '0.7rem', marginTop: '-14px' }}>
+                            {getTranslation('detail.booking.perPerson', language)}
                           </small>
-                        )}
-                    </>
-                  ) : (
-                    <div className="h6 fw-bold text-dark mb-0">
-                      {getTranslation('detail.booking.contactForPrice', language)}
-                    </div>
-                  )}
+                          
+                          {/* Mostrar "a partir de X personas" solo si hay mínimo de participantes */}
+                          {hasMultiplePriceTiers && minParticipants !== null && minParticipants !== undefined && (
+                            <small className="text-muted d-block" style={{ fontSize: '0.65rem', marginTop: '2px' }}>
+                              {getTranslationWithParams('detail.booking.fromParticipants', language, {
+                                count: minParticipants || 0,
+                                plural: minParticipants === 1 
+                                  ? getTranslation('detail.booking.participantSingular', language)
+                                  : getTranslation('detail.booking.participantPlural', language)
+                              })}
+                            </small>
+                          )}
+                      </>
+                    );
+                  })()}
                 </div>
                 <button 
                   className="btn btn-primary px-4 py-2"
@@ -2010,6 +1974,71 @@ const ActivityDetail: React.FC = () => {
               >
                 {language === 'es' ? 'Confirmar' : 'Confirm'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Login Modal */}
+      {showLoginModal && (
+        <div 
+          className="modal show d-block modal-fade-in" 
+          style={{ backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 1050 }}
+        >
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content modal-fade-in">
+              <div className="modal-header border-0 d-flex align-items-between px-4 py-3">
+                <div className="d-flex align-items-center justify-content-center w-100">
+                  <h4 className="fw-bold mb-0">
+                    {getTranslation('checkout.loginModal.title', language) || 
+                     (language === 'es' ? '¿Quieres iniciar sesión?' : 'Do you want to sign in?')}
+                  </h4>
+                </div>
+                <button
+                  type="button"
+                  className="btn-close"
+                  onClick={() => {
+                    setShowLoginModal(false);
+                    setPendingAction(null);
+                  }}
+                  aria-label="Close"
+                ></button>
+              </div>
+              <div className="modal-body text-center">
+                <p className="text-muted mb-4 fw-medium">
+                  {language === 'es' 
+                    ? 'Para agregar actividades al carrito o realizar una reserva, debes iniciar sesión.'
+                    : 'To add activities to cart or make a reservation, you must sign in.'}
+                </p>
+                
+                <p className="text-muted mb-4">
+                  {getTranslation('checkout.loginModal.benefits', language) || 
+                   (language === 'es' 
+                     ? 'Inicia sesión para guardar tus reservas, acceder a tu historial y disfrutar de una experiencia personalizada.'
+                     : 'Sign in to save your reservations, access your history and enjoy a personalized experience.')}
+                </p>
+
+                {/* Google Login Button */}
+                <button
+                  className="btn btn-outline-primary w-100 mb-3"
+                  onClick={handleLoginWithGoogle}
+                  disabled={isLoggingIn}
+                >
+                  {isLoggingIn ? (
+                    <>
+                      <span className="spinner-border spinner-border-sm me-2" role="status"></span>
+                      {getTranslation('common.signingIn', language) || 
+                       (language === 'es' ? 'Iniciando sesión...' : 'Signing in...')}
+                    </>
+                  ) : (
+                    <>
+                      <i className="fab fa-google me-2"></i>
+                      {getTranslation('common.continueWithGoogle', language) || 
+                       (language === 'es' ? 'Continuar con Google' : 'Continue with Google')}
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>

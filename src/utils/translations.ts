@@ -58,6 +58,7 @@ export const getLanguageName = (langCode: string, currentLang: 'es' | 'en' = 'es
 };
 
 export const translations: Translations = {
+  
   // Navigation
   'nav.home': {
     es: 'Inicio',
@@ -104,6 +105,20 @@ export const translations: Translations = {
     en: 'Dollars (USD)'
   },
 
+  // Bookings
+  'bookings.title': {
+    es: 'Mis Reservas',
+    en: 'My Bookings'
+  },
+  'bookings.description': {
+    es: 'Gestiona y visualiza todas tus reservas de actividades en un solo lugar.',
+    en: 'Manage and view all your activity bookings in one place.'
+  },
+  'bookings.searchActivities': {
+    es: 'Buscar Actividades',
+    en: 'Search Activities'
+  },
+
   // Cart
   'cart.title': {
     es: 'Carrito',
@@ -136,6 +151,30 @@ export const translations: Translations = {
   'checkout.title': {
     es: 'Checkout',
     en: 'Checkout'
+  },
+  'checkout.contactInfo': {
+    es: 'Información de contacto',
+    en: 'Contact information'
+  },
+  'checkout.paymentMethod': {
+    es: 'Método de pago',
+    en: 'Payment method'
+  },
+  'checkout.reserveNowPayLaterDesc': {
+    es: 'Puedes pagar más tarde',
+    en: 'You can pay later'
+  },
+  'checkout.useButtonBelow': {
+    es: 'Usa el botón de abajo para continuar con el pago',
+    en: 'Use the button below to continue with payment'
+  },
+  'checkout.noItemsToPay': {
+    es: 'No hay items para pagar',
+    en: 'No items to pay'
+  },
+  'checkout.emptyCartMessage': {
+    es: 'No hay items para pagar',
+    en: 'No items to pay'
   },
   'checkout.reservationTimer': {
     es: 'Tu plaza está reservada durante',
@@ -1500,6 +1539,10 @@ export const translations: Translations = {
   },
 
   // Common
+  'common.backToCart': {
+    es: 'Volver al carrito',
+    en: 'Back to cart'
+  },
   'common.loading': {
     es: 'Cargando...',
     en: 'Loading...'

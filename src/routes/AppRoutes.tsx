@@ -8,6 +8,7 @@ import Checkout from '../pages/Checkout';
 import CapturePayment from '../pages/CapturePayment';
 import CancelPayment from '../pages/CancelPayment';
 import PaymentCompleted from '../pages/PaymentCompleted';
+import Bookings from '../pages/Bookings';
 
 const AppRoutes: React.FC = () => {
   return (
@@ -20,6 +21,7 @@ const AppRoutes: React.FC = () => {
       <Route path="/capture-payment" element={<CapturePayment />} />
       <Route path="/cancel-payment" element={<CancelPayment />} />
       <Route path="/payment-completed" element={<PaymentCompleted />} />
+      <Route path="/bookings" element={<Bookings />} />
     </Routes>
   );
 };

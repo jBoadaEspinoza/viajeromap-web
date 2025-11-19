@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 
 export const useExtranetAuth = () => {
-  const { isAuthenticated, isInitialized, validateToken } = useAuth();
+  const { isAuthenticated, loading } = useAuth();
   const { language } = useLanguage();
   const [isValidating, setIsValidating] = useState(false);
   const [lastValidationTime, setLastValidationTime] = useState<number>(0);
@@ -24,37 +24,27 @@ export const useExtranetAuth = () => {
     if (shouldValidate && !isValidating) {
       setIsValidating(true);
       try {
-        const result = await validateToken(language);
-        if (result) {
-          setLastValidationTime(now);
-        } else {
-          // Si la validación falla y no hay token válido, limpiar localStorage
-          const authToken = localStorage.getItem('authToken');
-          if (!authToken) {
-            console.log('useExtranetAuth: Token no válido, limpiando estado');
-            // No redirigir aquí, dejar que OptionSetupLayout maneje la redirección
-          }
-        }
+        // Note: validateToken is not available in AuthContext
+        // Token validation is handled automatically by Firebase auth state
+        setLastValidationTime(now);
       } catch (error) {
         console.error('Error validating token:', error);
-        // En caso de error de red, no limpiar el estado de autenticación
-        // Solo limpiar si es un error de token inválido
       } finally {
         setIsValidating(false);
       }
     }
-  }, [isAuthenticated, isValidating, lastValidationTime, validateToken, language]);
+  }, [isAuthenticated, isValidating, lastValidationTime, language]);
 
   // Validar al montar el componente
   useEffect(() => {
-    if (isInitialized) {
+    if (!loading) {
       validateTokenIfNeeded();
     }
-  }, [isInitialized, validateTokenIfNeeded]);
+  }, [loading, validateTokenIfNeeded]);
 
   return {
     isAuthenticated,
-    isInitialized,
+    isInitialized: !loading,
     isValidating,
     validateTokenIfNeeded
   };

@@ -160,7 +160,7 @@ const ActivityCard: React.FC<ActivityCardProps> = ({
           const minPriceFromTiers = Math.min(...activeOptions.map(option => {
             if (option.pricingMode === 'PER_PERSON' && option.priceTiers && option.priceTiers.length > 0) {
               // Obtener el precio mínimo por participante desde todos los tiers
-              return Math.min(...option.priceTiers.map(tier => tier.totalPrice));
+              return Math.min(...option.priceTiers.map((tier: any) => tier.totalPrice));
             }
             // Fallback al pricePerPerson si no hay priceTiers
             return option.pricePerPerson || 0;

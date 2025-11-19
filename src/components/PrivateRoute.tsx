@@ -7,44 +7,17 @@ interface PrivateRouteProps {
 }
 
 const PrivateRoute: React.FC<PrivateRouteProps> = ({ children }) => {
-  const { isAuthenticated, isInitialized } = useAuth();
+  const { isAuthenticated, loading } = useAuth();
   const location = useLocation();
-  const [isChecking, setIsChecking] = React.useState(false);
 
   console.log('🛡️ PrivateRoute:', { 
     isAuthenticated, 
-    isInitialized, 
-    pathname: location.pathname,
-    isChecking 
+    loading, 
+    pathname: location.pathname
   });
 
-  // Verificar token cuando se monta el componente
-  React.useEffect(() => {
-    const checkAuth = async () => {
-      // Solo verificar si ya se inicializó y no está autenticado
-      if (isInitialized && !isAuthenticated) {
-        console.log('🔍 PrivateRoute: Checking authentication...');
-        setIsChecking(true);
-        try {
-          // Simular verificación de token
-          const isValid = false; // Por defecto, asumir que no es válido
-          console.log('🔍 PrivateRoute: Token verification result:', isValid);
-          if (!isValid) {
-            console.log('❌ PrivateRoute: Token invalid, will redirect to login');
-          }
-        } catch (error) {
-          console.error('❌ PrivateRoute: Error checking auth:', error);
-        } finally {
-          setIsChecking(false);
-        }
-      }
-    };
-
-    checkAuth();
-  }, [isInitialized, isAuthenticated]);
-
-  // Si aún no se ha inicializado o está verificando, mostrar loading
-  if (!isInitialized || isChecking) {
+  // Si aún está cargando, mostrar loading
+  if (loading) {
     return (
       <div className="d-flex justify-content-center align-items-center" style={{ height: '100vh' }}>
         <div className="text-center">

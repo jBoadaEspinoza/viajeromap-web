@@ -3,7 +3,7 @@ import { apiPost } from "./apiConfig";
 
 
 export interface SpecialOfferRequest{
-    offerName: string;
+  offerName: string;
   selectedActivityId: string;
   selectedOptionId: string;
   fromDate: string; // formato ISO: yyyy-MM-dd

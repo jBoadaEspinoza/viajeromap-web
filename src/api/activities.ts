@@ -117,10 +117,13 @@ export interface BookingOption {
   isActive: boolean;
   availabilityMode?: string; // 'TIME_SLOTS' | 'OPENING_HOURS' | etc
   pickupPoints: PickupPoint[] | null;
-  schedules: Schedule[];
-  priceTiers: PriceTier[];
-  itineraries: Itinerary[];
+  comissionPerPlatform: number | null;
   specialOfferPercentage: number | null;
+  normalPrice: number | null;
+  unitPrice: number | null;
+  priceAfterDiscount: number | null;
+  schedulesTimes: String[] | null;
+  priceTiers?: PriceTier[]; // Optional price tiers for PER_PERSON pricing mode
 }
 
 export interface pointOfInterestResponse {
@@ -215,6 +218,8 @@ export interface SearchParams {
   includeBookingOptions?: boolean;
   active?: boolean | null;
   departureDate?: string; // Fecha de salida en formato YYYY-MM-DD
+  adults?: number | 1;
+  children?: number | 0;
 }
 
 export interface CreateCategoryRequest {
@@ -382,7 +387,14 @@ export const activitiesApi = {
     }
   },
 
-  getById: async (id: string, lang: string = 'es', currency: string = 'PEN', departureDate?: string): Promise<Activity> => {
+  getById: async (
+    id: string,
+    lang: string = 'es',
+    currency: string = 'PEN',
+    departureDate?: string,
+    adults?: number,
+    children?: number
+  ): Promise<Activity> => {
     try {
       const url = `/activities/search/${id}`;
       const params: any = { lang, currency };
@@ -391,12 +403,22 @@ export const activitiesApi = {
       if (departureDate) {
         params.departureDate = departureDate;
       }
-      
+
+      if (typeof adults === 'number') {
+        params.adults = adults;
+      }
+
+      if (typeof children === 'number') {
+        params.children = children;
+      }
+ 
       console.log('🎯 API getById llamado con:', {
         id,
         lang,
         currency,
-        departureDate: departureDate || 'no enviada'
+        departureDate: departureDate || 'no enviada',
+        adults: adults ?? 'no enviados',
+        children: children ?? 'no enviados'
       });
       
       const response = await apiGet<any>(url, { params });
