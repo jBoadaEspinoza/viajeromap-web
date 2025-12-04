@@ -8,6 +8,7 @@ import { useGoogleTokenValidation } from '../hooks/useGoogleTokenValidation';
 import CheckoutCartSummary, { CheckoutSummaryItem } from '../components/CheckoutCartSummary';
 import { ordersApi, OrderResponse } from '../api/orders';
 import { activitiesApi, Activity } from '../api/activities';
+import { convertUTCToLocalDateTime } from '../utils/dateUtils';
 
 const Cart: React.FC = () => {
   const { language } = useLanguage();
@@ -122,7 +123,7 @@ const Cart: React.FC = () => {
     orders.forEach((order) => {
       order.items.forEach((orderItem) => {
         // Parsear startDatetime para obtener fecha y hora
-        const startDatetime = orderItem.startDatetime;
+        const startDatetime = convertUTCToLocalDateTime(orderItem.startDatetime, orderItem.timeZone || 'America/Lima');
         let date = '';
         let time = '';
         
@@ -196,6 +197,7 @@ const Cart: React.FC = () => {
           meetingPickupPointLatitude: orderItem.meetingPickupPointLatitude ?? null,
           meetingPickupPointLongitude: orderItem.meetingPickupPointLongitude ?? null,
           cancelUntilDate: orderItem.cancelUntilDate ?? null,
+          timeZone: orderItem.timeZone || undefined,
         });
       });
     });
@@ -532,7 +534,7 @@ const Cart: React.FC = () => {
           )}
         </div>
       </div>
-    </div>
+      </div>
     </>
   );
 };

@@ -74,6 +74,7 @@ export interface OrderItemResponse {
     children: number;
   };
   pricePerParticipant: number;
+  timeZone: string;
   startDatetime: string;
   endDatetime: string | null;
   specialRequest?: string | null;
@@ -91,24 +92,30 @@ export interface OrderItemResponse {
   cancelUntilDate?: string | null;
   totalAmount: number;
   exchangeRateUSDtoPEN: number;
+  isReviewed: boolean;
 }
 
 export interface GetOrdersDraftRequest {
   page: number;
   size: number;
-  sortBy: string;
+  sortBy: "startDateTime" | "createdAt";
   sortDirection: "ASC" | "DESC";
   lang: string;
   currency: string;
 }
 
 export interface GetOrdersAvailablesRequest {
+  orderStatus?: string;
+  paymentStatus?: string;
+  orderId?: string;
+  fromDate?: string;
+  toDate?: string;
   lang?: string;
   currency?: string;
   exchangeRateUSDtoPEN?: number;
   page?: number;
   size?: number;
-  sortBy?: string;
+  sortBy?: "startDateTime" | "createdAt";
   sortDirection?: "ASC" | "DESC";
 }
 
@@ -211,7 +218,7 @@ export const ordersApi = {
         firebaseToken ? `${firebaseToken.substring(0, 10)}...` : "No disponible"
       );
 
-      // Enviar parámetros por separado usando params (sin orderStatus)
+      // Enviar parámetros por separado usando params
       const requestConfig = {
         ...(config || {}),
         params: {
@@ -221,7 +228,12 @@ export const ordersApi = {
           page: request.page,
           size: request.size,
           sortBy: request.sortBy,
-          sortDirection: request.sortDirection
+          sortDirection: request.sortDirection,
+          ...(request.orderStatus && { orderStatus: request.orderStatus }),
+          ...(request.paymentStatus && { paymentStatus: request.paymentStatus }),
+          ...(request.orderId && { orderId: request.orderId }),
+          ...(request.fromDate && { fromDate: request.fromDate }),
+          ...(request.toDate && { toDate: request.toDate })
         }
       };
 

@@ -40,6 +40,14 @@ export const capitalizeWords = (str: string): string => {
 };
 
 /**
+ * Capitaliza solo la primera letra de la cadena
+ */
+export const capitalizeFirstLetter = (str: string | undefined | null): string => {
+  if (!str) return '';
+  return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
+};
+
+/**
  * Trunca un texto a una longitud específica
  */
 export const truncateText = (text: string, maxLength: number): string => {

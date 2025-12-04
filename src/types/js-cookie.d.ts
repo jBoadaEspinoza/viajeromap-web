@@ -10,12 +10,13 @@ declare module 'js-cookie' {
   export interface CookiesStatic {
     get(name?: string): string | undefined;
     get(name: string): string | undefined;
-    get(): { [key: string]: string };
+    get(): { [key: string]: string } | undefined;
     set(name: string, value: string | object, options?: CookieAttributes): string | undefined;
     remove(name: string, options?: CookieAttributes): void;
   }
 
   const Cookies: CookiesStatic;
   export default Cookies;
+  export type { CookieAttributes };
 }
 

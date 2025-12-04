@@ -1,6 +1,6 @@
 import { apiGet } from './apiConfig';
 import { apiPost } from './apiConfig';
-
+import { ActivityReview } from './activityReviews';
 
 export interface Supplier {
   ruc: string;
@@ -122,6 +122,7 @@ export interface BookingOption {
   normalPrice: number | null;
   unitPrice: number | null;
   priceAfterDiscount: number | null;
+  timeZone: string;
   schedulesTimes: String[] | null;
   priceTiers?: PriceTier[]; // Optional price tiers for PER_PERSON pricing mode
 }
@@ -167,6 +168,7 @@ export interface Activity {
   bookingOptions: BookingOption[];
   images: ActivityImage[];
   pointsOfInterest: pointOfInterestResponse[];
+  reviews: ActivityReview[];
   supplier: Supplier;
   createAt: string;
   updatedAt: string;

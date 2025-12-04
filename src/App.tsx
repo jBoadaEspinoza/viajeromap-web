@@ -11,6 +11,7 @@ import { CookieConsentProvider } from './context/CookieConsentContext';
 import CookieConsentBanner from './components/CookieConsentBanner';
 import ConditionalLayout from './components/ConditionalLayout';
 import UrlParamsSync from './components/UrlParamsSync';
+import ScrollToTop from './components/ScrollToTop';
 import AppRoutes from './routes/AppRoutes';
 
 function App() {
@@ -24,6 +25,7 @@ function App() {
               <AuthProvider>
                 <CartProvider>
                   <Router>
+                    <ScrollToTop />
                     <UrlParamsSync>
                       <ConditionalLayout>
                         <AppRoutes />

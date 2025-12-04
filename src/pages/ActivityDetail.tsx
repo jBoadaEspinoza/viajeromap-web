@@ -11,8 +11,7 @@ import { activitiesApi } from '../api/activities';
 import { specialOfferApi } from '../api/specialOffer';
 import { ordersItemApi } from '../api/ordersItem';
 import type { Activity, BookingOption } from '../api/activities';
-import Itinerary from '../components/Itinerary';
-import Reviews from '../components/Reviews';
+import type { ActivityReview } from '../api/activityReviews';
 import RatingStars from '../components/RatingStars';
 import { useLanguage } from '../context/LanguageContext';
 import { useCurrency } from '../context/CurrencyContext';
@@ -22,21 +21,8 @@ import { getTranslation, getTranslationWithParams, getLanguageName } from '../ut
 import { useGlobalLoading } from '../hooks/useGlobalLoading';
 import { appConfig } from '../config/appConfig';
 import { auth } from '../config/firebase';
-
-interface Review {
-  id: string;
-  user: {
-    name: string;
-    country: string;
-    initial: string;
-    avatarColor: string;
-  };
-  rating: number;
-  date: string;
-  verified: boolean;
-  text: string;
-  images?: string[];
-}
+import { capitalizeWords, capitalizeFirstLetter } from '../utils/helpers';
+import { convertLocalDateTimeToUTC } from '../utils/dateUtils';
 
 const ActivityDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -44,7 +30,7 @@ const ActivityDetail: React.FC = () => {
   const { language } = useLanguage();
   const { currency, getCurrencySymbol } = useCurrency();
   const { addItem } = useCart();
-  const { isAuthenticated, loginWithGoogle } = useAuth();
+  const { isAuthenticated, loginWithGoogle, user, firebaseUser } = useAuth();
   const { withLoading } = useGlobalLoading();
   const [activity, setActivity] = useState<Activity | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -74,6 +60,10 @@ const ActivityDetail: React.FC = () => {
   const [showLoginModal, setShowLoginModal] = useState(false); // Estado para modal de login
   const [isLoggingIn, setIsLoggingIn] = useState(false); // Estado para loading del login
   const [pendingAction, setPendingAction] = useState<'addToCart' | 'bookNow' | null>(null); // Acción pendiente después del login
+  const [reviewsSortBy, setReviewsSortBy] = useState<'recommended' | 'newest' | 'oldest'>('recommended'); // Orden de reseñas
+  const [visibleReviewsCount, setVisibleReviewsCount] = useState<number>(2); // Cantidad de reseñas visibles inicialmente
+  const [expandedTranslations, setExpandedTranslations] = useState<Record<string, boolean>>({}); // Estado para traducciones de reseñas
+  const [expandedReviews, setExpandedReviews] = useState<Record<string, boolean>>({}); // Estado para ver más/menos en reseñas largas
   
   // Obtener parámetros desde la URL
   const [searchParams] = useSearchParams();
@@ -115,6 +105,103 @@ const ActivityDetail: React.FC = () => {
     const fullText = getFullDescription();
     if (fullText.length <= 200) return fullText;
     return fullText.substring(0, 200) + '...';
+  };
+
+  const clampRatingValue = (value: number) => {
+    if (Number.isNaN(value)) return 0;
+    return Math.max(0, Math.min(5, Number(value.toFixed(1))));
+  };
+
+  const formatReviewDate = (dateString: string) => {
+    if (!dateString) return '';
+    try {
+      return new Date(dateString).toLocaleDateString(language === 'es' ? 'es-PE' : 'en-US', {
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric'
+      });
+    } catch (error) {
+      console.error('Activity Detail: error formatting review date', error);
+      return dateString;
+    }
+  };
+
+  const getAvatarColor = (seed: string) => {
+    const palette = ['#FF6B35', '#4A90E2', '#7ED321', '#9B59B6', '#2C3E50', '#F4A261', '#1ABC9C'];
+    if (!seed) {
+      return palette[0];
+    }
+    const hash = seed.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    return palette[hash % palette.length];
+  };
+
+  const getReviewerInitial = (nickname?: string) => {
+    if (!nickname || nickname.trim().length === 0) return '?';
+    return nickname.trim().charAt(0).toUpperCase();
+  };
+
+  const renderStarIcons = (ratingValue: number, size: number = 16) => {
+    const normalized = clampRatingValue(ratingValue);
+    const fullStars = Math.floor(normalized);
+    const decimal = normalized - fullStars;
+    const hasHalf = decimal >= 0.25 && decimal < 0.75;
+    const shouldRoundUp = decimal >= 0.75 ? 1 : 0;
+    const icons: React.ReactNode[] = [];
+
+    for (let i = 0; i < fullStars; i++) {
+      icons.push(
+        <i
+          key={`full-${i}`}
+          className="fas fa-star text-warning me-1"
+          style={{ fontSize: `${size}px` }}
+        ></i>
+      );
+    }
+
+    if (shouldRoundUp) {
+      icons.push(
+        <i
+          key="rounded"
+          className="fas fa-star text-warning me-1"
+          style={{ fontSize: `${size}px` }}
+        ></i>
+      );
+    } else if (hasHalf) {
+      icons.push(
+        <i
+          key="half"
+          className="fas fa-star-half-alt text-warning me-1"
+          style={{ fontSize: `${size}px` }}
+        ></i>
+      );
+    }
+
+    const remaining = 5 - icons.length;
+    for (let i = 0; i < remaining; i++) {
+      icons.push(
+        <i
+          key={`empty-${i}`}
+          className="far fa-star text-warning me-1"
+          style={{ fontSize: `${size}px` }}
+        ></i>
+      );
+    }
+
+    return <div className="d-flex align-items-center flex-wrap">{icons}</div>;
+  };
+
+  const toggleReviewTranslation = (reviewId: string) => {
+    setExpandedTranslations((prev) => ({
+      ...prev,
+      [reviewId]: !prev[reviewId]
+    }));
+  };
+
+  const toggleReviewLength = (reviewId: string) => {
+    setExpandedReviews((prev) => ({
+      ...prev,
+      [reviewId]: !prev[reviewId]
+    }));
   };
 
   // Función para hacer scroll a la sección de reserva
@@ -326,10 +413,11 @@ const ActivityDetail: React.FC = () => {
       const unitPrice = selectedBookingOption.priceAfterDiscount ?? selectedBookingOption.normalPrice ?? selectedBookingOption.unitPrice ?? selectedBookingOption.pricePerPerson ?? 0;
       const pricePerParticipant = Math.ceil(unitPrice);
 
-      // Construir startDatetime en formato ISO: YYYY-MM-DDTHH:mm:ss
+      // Construir startDatetime en formato UTC: YYYY-MM-DDTHH:mm:ss
       const normalizedTime = normalizeTimeTo24Hour(selectedTimeSlot);
-      const startDatetime = `${selectedDate}T${normalizedTime}`;
-
+      const timeZone = (selectedBookingOption as any)?.timeZone || 'America/Lima';
+      const startDatetimeUTC = convertLocalDateTimeToUTC(`${selectedDate}T${normalizedTime}`, timeZone);
+     
       // Validar moneda
       const orderCurrency = (currency === 'USD' || currency === 'PEN' || currency === 'EUR') 
         ? (currency as 'USD' | 'PEN') 
@@ -343,7 +431,7 @@ const ActivityDetail: React.FC = () => {
         adults: numberOfAdults,
         children: numberOfChildren,
         pricePerParticipant,
-        startDatetime,
+        startDatetime: startDatetimeUTC,
         specialRequest: pickupComment || null,
         meetingPickupPlaceId,
         meetingPickupPointName: meetingPointName || null,
@@ -353,10 +441,6 @@ const ActivityDetail: React.FC = () => {
         guideLanguage: guideLanguage || null,
         status: 'PENDING' as const,
       };
-
-      // Mostrar el request en consola
-      console.log('🛒 Request para agregar al carrito:', JSON.stringify(orderItemRequest, null, 2));
-      console.log('🛒 Request (objeto):', orderItemRequest);
 
       // Enviar a la base de datos usando ordersItemApi
       const response = await ordersItemApi.addOrderItem(orderItemRequest);
@@ -439,10 +523,11 @@ const ActivityDetail: React.FC = () => {
       const unitPrice = selectedBookingOption.priceAfterDiscount ?? selectedBookingOption.normalPrice ?? selectedBookingOption.unitPrice ?? selectedBookingOption.pricePerPerson ?? 0;
       const pricePerParticipant = Math.ceil(unitPrice);
 
-      // Construir startDatetime en formato ISO: YYYY-MM-DDTHH:mm:ss
+      // Construir startDatetime en formato UTC: YYYY-MM-DDTHH:mm:ss
       const normalizedTime = normalizeTimeTo24Hour(selectedTimeSlot);
-      const startDatetime = `${selectedDate}T${normalizedTime}`;
-
+      const timeZone = (selectedBookingOption as any)?.timeZone;
+      const startDatetimeUTC = convertLocalDateTimeToUTC(`${selectedDate}T${normalizedTime}`, timeZone);
+      
       // Validar moneda
       const orderCurrency = (currency === 'USD' || currency === 'PEN' || currency === 'EUR') 
         ? (currency as 'USD' | 'PEN') 
@@ -456,7 +541,7 @@ const ActivityDetail: React.FC = () => {
         adults: numberOfAdults,
         children: numberOfChildren,
         pricePerParticipant,
-        startDatetime,
+        startDatetime: startDatetimeUTC,
         specialRequest: pickupComment || null,
         meetingPickupPlaceId,
         meetingPickupPointName: meetingPointName || null,
@@ -582,6 +667,13 @@ const ActivityDetail: React.FC = () => {
         // Verificar que la fecha es válida
         if (isNaN(cancellationDeadline.getTime())) {
           // Si la fecha de cancelación es inválida, retornar null
+          return null;
+        }
+        
+        // Verificar si la fecha límite de cancelación es menor que hoy
+        const now = new Date();
+        if (cancellationDeadline < now) {
+          // Si la fecha límite ya pasó, no mostrar
           return null;
         }
         
@@ -921,6 +1013,13 @@ const ActivityDetail: React.FC = () => {
     setNumberOfPeople(adultCount + childrenCount); // Actualizar numberOfPeople con la suma
   }, [searchParams]);
 
+  // Reiniciar la cantidad visible de reseñas cuando cambia el orden o la actividad
+  useEffect(() => {
+    setVisibleReviewsCount(2);
+    setExpandedTranslations({});
+    setExpandedReviews({});
+  }, [reviewsSortBy, activity?.id]);
+
   // useEffect para ejecutar acción pendiente cuando el usuario se autentica
   useEffect(() => {
     if (isAuthenticated && pendingAction && !showLoginModal) {
@@ -968,6 +1067,54 @@ const ActivityDetail: React.FC = () => {
     );
   }
 
+  const activityReviews: ActivityReview[] = Array.isArray(activity.reviews) ? activity.reviews : [];
+  const totalReviews = activity.commentsCount ?? activityReviews.length;
+  const fallbackAverageRating = activityReviews.length
+    ? activityReviews.reduce((sum, review) => sum + (review.rating || 0), 0) / activityReviews.length
+    : 0;
+  const averageRatingValue =
+    activity.rating && activity.rating > 0
+      ? Number(activity.rating.toFixed(1))
+      : Number(fallbackAverageRating.toFixed(1));
+  const normalizedAverageRating = clampRatingValue(
+    Number.isNaN(averageRatingValue) ? 0 : averageRatingValue
+  );
+  const ratingDistribution = [5, 4, 3, 2, 1].map((star) => {
+    const count = activityReviews.filter(
+      (review) => Math.round(review.rating || 0) === star
+    ).length;
+    return {
+      star,
+      count,
+      percentage: activityReviews.length ? (count / activityReviews.length) * 100 : 0
+    };
+  });
+  const sortedReviews = (() => {
+    const base = [...activityReviews];
+    switch (reviewsSortBy) {
+      case 'newest':
+        return base.sort(
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+      case 'oldest':
+        return base.sort(
+          (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+        );
+      default:
+        return base.sort((a, b) => {
+          if (b.rating !== a.rating) {
+            return b.rating - a.rating;
+          }
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        });
+    }
+  })();
+  const displayedReviews = sortedReviews.slice(
+    0,
+    Math.min(visibleReviewsCount, sortedReviews.length)
+  );
+  const hasMoreReviews = visibleReviewsCount < sortedReviews.length;
+
   return (
     <div className="min-vh-100 bg-light">
       {/* Estilos personalizados para la barra flotante móvil */}
@@ -999,12 +1146,12 @@ const ActivityDetail: React.FC = () => {
                 {activity.supplier && (
                   <div className="d-flex align-items-center mb-2">
                     <span className="fw-medium text-dark me-2" style={{ fontSize: '0.875rem' }}>
-                      {getTranslation('detail.booking.provider', language)}: {activity.supplier.name}
+                      {getTranslation('detail.booking.provider', language)}: {capitalizeWords(activity.supplier.name)}
                     </span>
                     {activity.supplier.isVerified && (
-                      <span className="badge bg-success" style={{ fontSize: '0.7rem' }}>
+                      <span className="badge fw-semibold" style={{ fontSize: '0.7rem', backgroundColor: '#191970', color: '#fff', lineHeight: 1, padding: '0.25rem 0.4rem', display: 'inline-flex', alignItems: 'center' }}>
                         <i className="fas fa-check-circle me-1"></i>
-                        {getTranslation('detail.booking.verified', language)}
+                        {getTranslation('home.activities.verifiedProvider', language)}
                       </span>
                     )}
                   </div>
@@ -1298,6 +1445,365 @@ const ActivityDetail: React.FC = () => {
             )}
           </div>
 
+          {/* Sección de reseñas */}
+          <div className="row mb-5" id="reviews-section">
+            <div className="col-12">
+              <div className="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center mb-3 mb-md-4">
+                <div className="mb-3 mb-md-0">
+                  <h3 className="fw-bold text-dark mb-1 d-md-none" style={{ fontSize: '1.25rem' }}>
+                    {language === 'es' ? 'Valoraciones de viajeros' : 'Traveler reviews'}
+                  </h3>
+                  <h3 className="fw-bold text-dark mb-1 d-none d-md-block" style={{ fontSize: '1.5rem' }}>
+                    {language === 'es' ? 'Valoraciones de viajeros' : 'Traveler reviews'}
+                  </h3>
+                  <p className="text-muted mb-0 d-md-none" style={{ fontSize: '0.875rem' }}>
+                    {language === 'es'
+                      ? 'Descubre lo que dicen quienes ya vivieron esta experiencia.'
+                      : 'See what other travelers are saying about this activity.'}
+                  </p>
+                  <p className="text-muted mb-0 d-none d-md-block">
+                    {language === 'es'
+                      ? 'Descubre lo que dicen quienes ya vivieron esta experiencia.'
+                      : 'See what other travelers are saying about this activity.'}
+                  </p>
+                </div>
+              </div>
+
+              {totalReviews === 0 ? (
+                <div className="card border-0 shadow-sm">
+                  <div className="card-body text-center py-5">
+                    <i className="far fa-comments text-muted mb-3" style={{ fontSize: '2.5rem' }}></i>
+                    <p className="fw-semibold text-dark mb-2">
+                      {language === 'es'
+                        ? 'Aún no hay comentarios para esta actividad.'
+                        : 'There are no reviews for this activity yet.'}
+                    </p>
+                    <p className="text-muted mb-0">
+                      {language === 'es'
+                        ? 'Reserva y comparte tu experiencia para ayudar a otros viajeros.'
+                        : 'Book now and share your experience to help other travelers.'}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="card border-0 shadow-sm mb-3 mb-md-4">
+                    <div className="card-body p-3 p-md-4">
+                      <div className="row g-3 g-md-4">
+                        <div className="col-12 col-lg-3 d-flex justify-content-center justify-content-lg-start">
+                          <div className="d-flex flex-column justify-content-center align-items-center align-items-lg-start">
+                            <div className="display-6 display-md-4 fw-bold text-primary mb-2">
+                              {normalizedAverageRating.toFixed(1)}
+                            </div>
+                            <div className="mb-2">{renderStarIcons(normalizedAverageRating, 16)}</div>
+                            <div className="text-muted mb-0 text-center text-lg-start" style={{ fontSize: '0.875rem' }}>
+                              {language === 'es'
+                                ? `Basada en ${totalReviews} ${totalReviews === 1 ? 'opinión' : 'opiniones'}`
+                                : `Based on ${totalReviews} ${totalReviews === 1 ? 'review' : 'reviews'}`}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="col-12 col-lg-9">
+                        
+                            <div className="d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-2 gap-md-3 mb-3 mb-md-4">
+                              <div className="d-flex align-items-center gap-2 w-100 w-md-auto">
+                                <label className="fw-semibold mb-0" style={{ fontSize: '0.875rem' }}>
+                                  {language === 'es' ? 'Ordenar por:' : 'Sort by:'}
+                                </label>
+                                <select
+                                  className="form-select form-select-sm flex-grow-1 flex-md-grow-0 w-auto"
+                                  value={reviewsSortBy}
+                                  onChange={(event) =>
+                                    setReviewsSortBy(event.target.value as 'recommended' | 'newest' | 'oldest')
+                                  }
+                                >
+                                  <option value="recommended">
+                                    {language === 'es' ? 'Recomendado' : 'Recommended'}
+                                  </option>
+                                  <option value="newest">
+                                    {language === 'es' ? 'Más recientes' : 'Newest'}
+                                  </option>
+                                  <option value="oldest">
+                                    {language === 'es' ? 'Más antiguos' : 'Oldest'}
+                                  </option>
+                                </select>
+                              </div>
+                            </div>
+
+                            {displayedReviews.length === 0 ? (
+                              <div className="text-center text-muted py-5">
+                                <p className="mb-2">
+                                  {language === 'es'
+                                    ? 'Todavía no podemos mostrar comentarios en tu idioma.'
+                                    : 'We cannot display any reviews in your language yet.'}
+                                </p>
+                                <small>
+                                  {language === 'es'
+                                    ? 'Intenta cambiar el idioma de la página para ver más opiniones.'
+                                    : 'Try switching the site language to see more feedback.'}
+                                </small>
+                              </div>
+                            ) : (
+                              <div className="list-group list-group-flush">
+                                {displayedReviews.map((review, index) => {
+                                  const isCurrentUser = isAuthenticated && firebaseUser?.uid === String(review.issuedBy?.id);
+                                  const reviewerName = isCurrentUser
+                                    ? (language === 'es' ? 'Tu' : 'You')
+                                    : review.issuedBy?.nickname ||
+                                      (language === 'es' ? 'Viajero anónimo' : 'Anonymous traveler');
+                                  const reviewerLanguage = review.lang
+                                    ? getLanguageName(review.lang, language)
+                                    : language === 'es'
+                                      ? 'Idioma no especificado'
+                                      : 'Language not provided';
+                                  const translations = (review as any)?.translations as Record<string, string> | undefined;
+                                  const isTranslated = Boolean(expandedTranslations[review.id]);
+                                  const hasTranslation =
+                                    review.lang &&
+                                    review.lang !== language &&
+                                    translations &&
+                                    translations[language];
+                                  const reviewText =
+                                    (isTranslated && hasTranslation
+                                      ? translations?.[language] || review.comment
+                                      : review.comment ||
+                                        (language === 'es'
+                                          ? 'El viajero no dejó comentarios.'
+                                          : 'The traveler did not leave any comments.')) || '';
+                                  const showTranslationButton = review.lang && review.lang !== language;
+                                  const isLast = index === displayedReviews.length - 1;
+                                  const normalizedReviewText = reviewText || '';
+                                  const isReviewExpanded = Boolean(expandedReviews[review.id]);
+                                  const shouldTruncateReview = normalizedReviewText.length > 350;
+                                  const displayedReviewText = shouldTruncateReview && !isReviewExpanded
+                                    ? `${normalizedReviewText.substring(0, 350)}...`
+                                    : normalizedReviewText;
+
+                                  return (
+                                    <div key={review.id} className={`py-3 py-md-4 ${isLast ? '' : 'border-bottom'}`}>
+                                      <div className="d-flex align-items-start">
+                                        <div className="me-2 me-md-3 flex-shrink-0">
+                                          {review.issuedBy?.profileImageUrl ? (
+                                            <img
+                                              src={review.issuedBy.profileImageUrl}
+                                              alt={reviewerName}
+                                              className="rounded-circle d-md-none"
+                                              style={{ 
+                                                width: '40px', 
+                                                height: '40px', 
+                                                objectFit: 'cover'
+                                              }}
+                                            />
+                                          ) : (
+                                            <div
+                                              className="rounded-circle d-flex align-items-center justify-content-center text-white fw-bold d-md-none"
+                                              style={{
+                                                width: '40px',
+                                                height: '40px',
+                                                fontSize: '0.875rem',
+                                                backgroundColor: getAvatarColor(review.issuedBy?.nickname || review.id)
+                                              }}
+                                            >
+                                              {getReviewerInitial(review.issuedBy?.nickname)}
+                                            </div>
+                                          )}
+                                          {review.issuedBy?.profileImageUrl ? (
+                                            <img
+                                              src={review.issuedBy.profileImageUrl}
+                                              alt={reviewerName}
+                                              className="rounded-circle d-none d-md-block"
+                                              style={{ 
+                                                width: '48px', 
+                                                height: '48px', 
+                                                objectFit: 'cover' 
+                                              }}
+                                            />
+                                          ) : (
+                                            <div
+                                              className="rounded-circle d-flex align-items-center justify-content-center text-white fw-bold d-none d-md-block"
+                                              style={{
+                                                width: '48px',
+                                                height: '48px',
+                                                backgroundColor: getAvatarColor(review.issuedBy?.nickname || review.id)
+                                              }}
+                                            >
+                                              {getReviewerInitial(review.issuedBy?.nickname)}
+                                            </div>
+                                          )}
+                                        </div>
+                                        <div className="flex-grow-1 min-w-0">
+                                          <div className="d-flex justify-content-between align-items-start flex-wrap gap-2">
+                                            <div className="flex-grow-1 min-w-0">
+                                              <div className="d-flex flex-column flex-md-row align-items-md-center flex-wrap gap-1 gap-md-2 mb-2">
+                                                <span className="fw-semibold text-dark d-md-none" style={{ fontSize: '0.875rem' }}>{reviewerName}</span>
+                                                <span className="fw-semibold text-dark d-none d-md-inline">{reviewerName}</span>
+                                                <span className="text-muted d-md-none" style={{ fontSize: '0.75rem' }}> {language === 'es' ? 'de' : 'from'} {capitalizeFirstLetter(review.issuedBy?.country)}</span>
+                                                <span className="text-muted d-none d-md-inline"> {language === 'es' ? 'de' : 'from'} {capitalizeFirstLetter(review.issuedBy?.country)}</span>
+                                              </div>
+                                              <div className="d-flex flex-column flex-md-row align-items-md-center flex-wrap gap-1 gap-md-2">
+                                                <div className="d-flex align-items-center gap-1">
+                                                  {renderStarIcons(review.rating, 12)}
+                                                </div>
+                                                <small className="text-muted d-md-none" style={{ fontSize: '0.75rem' }}>{formatReviewDate(review.createdAt)}</small>
+                                                <small className="text-muted d-none d-md-inline">{formatReviewDate(review.createdAt)}</small>
+                                                <span
+                                                  className="badge fw-semibold d-inline-flex align-items-center d-md-none"
+                                                  style={{
+                                                    backgroundColor: '#191970',
+                                                    color: '#fff',
+                                                    lineHeight: 1.2,
+                                                    padding: '0.2rem 0.35rem',
+                                                    fontSize: '0.65rem',
+                                                    whiteSpace: 'nowrap'
+                                                  }}
+                                                >
+                                                  {language === 'es' ? 'Comentario verificado por ' : 'Verified comment by '} {capitalizeFirstLetter(appConfig.business.name)}
+                                                </span>
+                                                <span
+                                                  className="badge fw-semibold d-none d-md-inline-flex align-items-center"
+                                                  style={{
+                                                    backgroundColor: '#191970',
+                                                    color: '#fff',
+                                                    lineHeight: 1,
+                                                    padding: '0.25rem 0.4rem'
+                                                  }}
+                                                >
+                                                  {language === 'es' ? 'Comentario verificado por' : 'Verified comment by'} {capitalizeFirstLetter(appConfig.business.name)}
+                                                </span>
+                                              </div>
+                                            </div>
+                                            <button type="button" className="btn btn-link text-muted p-0 flex-shrink-0" style={{ fontSize: '0.875rem' }}>
+                                              <i className="fas fa-ellipsis-h"></i>
+                                            </button>
+                                          </div>
+                                          <p className="mt-2 mt-md-3 mb-2 text-dark d-md-none" style={{ whiteSpace: 'pre-line', fontSize: '0.875rem' }}>
+                                            {displayedReviewText}
+                                          </p>
+                                          <p className="mt-2 mt-md-3 mb-2 text-dark d-none d-md-block" style={{ whiteSpace: 'pre-line' }}>
+                                            {displayedReviewText}
+                                          </p>
+                                          {shouldTruncateReview && (
+                                            <button
+                                              type="button"
+                                              className="btn btn-link p-0 fw-semibold"
+                                              style={{ fontSize: '0.8rem' }}
+                                              onClick={() => toggleReviewLength(review.id)}
+                                            >
+                                              {isReviewExpanded
+                                                ? (language === 'es' ? 'Ver menos' : 'Show less')
+                                                : (language === 'es' ? 'Ver más' : 'Show more')}
+                                            </button>
+                                          )}
+
+                                          {showTranslationButton && (
+                                            <div className="d-flex flex-column flex-md-row align-items-md-center gap-1 gap-md-3 mt-2">
+                                              <button
+                                                type="button"
+                                                className="btn btn-link p-0 fw-semibold text-start text-md-center d-md-none"
+                                                onClick={() => toggleReviewTranslation(review.id)}
+                                                style={{ fontSize: '0.75rem' }}
+                                              >
+                                                {isTranslated
+                                                  ? language === 'es'
+                                                    ? 'Ver original'
+                                                    : 'Show original'
+                                                  : language === 'es'
+                                                    ? 'Traducir'
+                                                    : 'Translate'}
+                                              </button>
+                                              <button
+                                                type="button"
+                                                className="btn btn-link p-0 fw-semibold d-none d-md-block"
+                                                onClick={() => toggleReviewTranslation(review.id)}
+                                              >
+                                                {isTranslated
+                                                  ? language === 'es'
+                                                    ? 'Ver original'
+                                                    : 'Show original'
+                                                  : language === 'es'
+                                                    ? 'Traducir'
+                                                    : 'Translate'}
+                                              </button>
+                                              <small className="text-muted d-md-none" style={{ fontSize: '0.7rem' }}>
+                                                {isTranslated
+                                                  ? language === 'es'
+                                                    ? 'Traducción automática'
+                                                    : 'Automatic translation'
+                                                  : language === 'es'
+                                                    ? `Escrito en ${reviewerLanguage}`
+                                                    : `Written in ${reviewerLanguage}`}
+                                              </small>
+                                              <small className="text-muted d-none d-md-inline">
+                                                {isTranslated
+                                                  ? language === 'es'
+                                                    ? 'Traducción automática'
+                                                    : 'Automatic translation'
+                                                  : language === 'es'
+                                                    ? `Escrito en ${reviewerLanguage}`
+                                                    : `Written in ${reviewerLanguage}`}
+                                              </small>
+                                            </div>
+                                          )}
+
+                                          {isTranslated && !hasTranslation && (
+                                            <small className="text-muted d-block mt-2 d-md-none" style={{ fontSize: '0.7rem' }}>
+                                              {language === 'es'
+                                                ? 'Aún no hay traducción disponible. Mostramos el texto original.'
+                                                : 'Translation is not available yet. Showing the original text.'}
+                                            </small>
+                                          )}
+                                          {isTranslated && !hasTranslation && (
+                                            <small className="text-muted d-none d-md-block mt-2">
+                                              {language === 'es'
+                                                ? 'Aún no hay traducción disponible. Mostramos el texto original.'
+                                                : 'Translation is not available yet. Showing the original text.'}
+                                            </small>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+
+                            {hasMoreReviews && (
+                              <div className="text-center mt-3 mt-md-4">
+                                <button
+                                  type="button"
+                                  className="btn btn-primary btn-sm d-md-none"
+                                  onClick={() =>
+                                    setVisibleReviewsCount((prev) =>
+                                      Math.min(prev + 2, sortedReviews.length)
+                                    )
+                                  }
+                                  style={{ fontSize: '0.875rem' }}
+                                >
+                                  {language === 'es' ? 'Mostrar más opiniones' : 'Show more reviews'}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn btn-primary d-none d-md-inline-block"
+                                  onClick={() =>
+                                    setVisibleReviewsCount((prev) =>
+                                      Math.min(prev + 2, sortedReviews.length)
+                                    )
+                                  }
+                                >
+                                  {language === 'es' ? 'Mostrar más opiniones' : 'Show more reviews'}
+                                </button>
+                              </div>
+                            )}
+                          
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
           {/* Sección de Reserva - Al final del contenido */}
           {showBookingSection && activity?.bookingOptions && activity.bookingOptions.length > 0 && (
             <div id="booking-section" className="row mb-5">
@@ -1557,7 +2063,7 @@ const ActivityDetail: React.FC = () => {
                         } else {
                           // Mostrar botones cuando hay múltiples horarios
                           return (
-                            <div className="d-flex gap-2">
+                            <div className="d-flex flex-wrap gap-2">
                               {availableTimes.map((time: string, index: number) => (
                                 <button 
                                   key={index}
@@ -1567,7 +2073,8 @@ const ActivityDetail: React.FC = () => {
                                     fontSize: '0.875rem',
                                     padding: '0.5rem 1rem',
                                     borderRadius: '4px',
-                                    border: selectedTimeSlot === time ? 'none' : '1px solid #007bff'
+                                    border: selectedTimeSlot === time ? 'none' : '1px solid #007bff',
+                                    flexShrink: 0
                                   }}
                                 >
                                   {time}

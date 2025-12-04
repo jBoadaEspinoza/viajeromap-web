@@ -12,9 +12,10 @@ const ConditionalLayout: React.FC<ConditionalLayoutProps> = ({ children }) => {
   const location = useLocation();
   const isExtranetRoute = location.pathname.startsWith('/extranet');
   const isCheckoutRoute = location.pathname === '/checkout';
+  const isPayToConfirmRoute = location.pathname === '/pay-to-confirm';
 
-  if (isExtranetRoute || isCheckoutRoute) {
-    // Para rutas del extranet y checkout, no mostrar navbar ni footer
+  if (isExtranetRoute || isCheckoutRoute || isPayToConfirmRoute) {
+    // Para rutas del extranet, checkout y pay-to-confirm, no mostrar navbar ni footer
     return <>{children}</>;
   }
 

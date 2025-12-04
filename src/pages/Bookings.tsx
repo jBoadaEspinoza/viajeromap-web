@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { getTranslation, getLanguageName } from '../utils/translations';
 import { ordersApi, OrderResponse } from '../api/orders';
 import { useGoogleTokenValidation } from '../hooks/useGoogleTokenValidation';
+import ActivityReviewModal from '../components/ActivityReviewModal';
 
 const Bookings: React.FC = () => {
   const navigate = useNavigate();
@@ -18,6 +19,40 @@ const Bookings: React.FC = () => {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [processingOrderId, setProcessingOrderId] = useState<string | null>(null);
   const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
+  const [reviewModalOpen, setReviewModalOpen] = useState(false);
+  const [selectedReviewActivity, setSelectedReviewActivity] = useState<{
+    activityId: string;
+    orderItemId: number;
+    activityTitle?: string;
+  } | null>(null);
+  // Estados para modal de confirmación
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [orderIdToConfirm, setOrderIdToConfirm] = useState<string | null>(null);
+  // Filtros avanzados
+  const [orderStatusFilter, setOrderStatusFilter] = useState<string[]>([]);
+  const [paymentStatusFilter, setPaymentStatusFilter] = useState<string>('');
+  const [fromDate, setFromDate] = useState<string>('');
+  const [toDate, setToDate] = useState<string>('');
+  const [referenceCode, setReferenceCode] = useState<string>('');
+  const [sortBy, setSortBy] = useState<'startDateTime' | 'createdAt'>('startDateTime'); // Por defecto fecha de salida
+  const [sortDirection, setSortDirection] = useState<'ASC' | 'DESC'>('DESC');
+  const [showStatusDropdown, setShowStatusDropdown] = useState(false);
+  const [showMobileFilters, setShowMobileFilters] = useState(false);
+  // Estados temporales para los filtros (usados tanto en desktop como móvil)
+  const [tempOrderStatusFilter, setTempOrderStatusFilter] = useState<string[]>([]);
+  const [tempPaymentStatusFilter, setTempPaymentStatusFilter] = useState<string>('');
+  const [tempFromDate, setTempFromDate] = useState<string>('');
+  const [tempToDate, setTempToDate] = useState<string>('');
+  const [tempReferenceCode, setTempReferenceCode] = useState<string>('');
+  const [tempSortBy, setTempSortBy] = useState<'startDateTime' | 'createdAt'>('startDateTime');
+  const [tempSortDirection, setTempSortDirection] = useState<'ASC' | 'DESC'>('DESC');
+  const [showTempStatusDropdown, setShowTempStatusDropdown] = useState(false);
+  // Estados para el nuevo filtro de fecha
+  const [initialDate, setInitialDate] = useState<string>('');
+  const [dateType, setDateType] = useState<'start' | 'end' | ''>('');
+  const [tempInitialDate, setTempInitialDate] = useState<string>('');
+  const [tempDateType, setTempDateType] = useState<'start' | 'end' | ''>('');
+  const [showDatePickerModal, setShowDatePickerModal] = useState(false);
 
   useGoogleTokenValidation();
 
@@ -38,8 +73,13 @@ const Bookings: React.FC = () => {
           currency: currency,
           page: 0,
           size: 100,
-          sortBy: 'id',
-          sortDirection: 'DESC'
+          orderStatus: orderStatusFilter.length > 0 ? orderStatusFilter.join(',') : undefined,
+          paymentStatus: paymentStatusFilter || undefined,
+          orderId: referenceCode || undefined,
+          fromDate: fromDate || undefined,
+          toDate: toDate || undefined,
+          sortBy: sortBy,
+          sortDirection: sortDirection
         });
 
         if (response?.data) {
@@ -57,7 +97,50 @@ const Bookings: React.FC = () => {
     };
 
     loadBookings();
-  }, [language, currency, isAuthenticated, authLoading]);
+  }, [language, currency, isAuthenticated, authLoading, orderStatusFilter, paymentStatusFilter, fromDate, toDate, referenceCode, sortBy, sortDirection]);
+  
+  // Inicializar estados temporales con los filtros actuales al montar
+  useEffect(() => {
+    if (isAuthenticated && !authLoading) {
+      setTempOrderStatusFilter([...orderStatusFilter]);
+      setTempPaymentStatusFilter(paymentStatusFilter);
+      setTempFromDate(fromDate);
+      setTempToDate(toDate);
+      setTempReferenceCode(referenceCode);
+      setTempSortBy(sortBy);
+      setTempSortDirection(sortDirection);
+      // Convertir fromDate/toDate a initialDate/dateType si existen
+      if (fromDate) {
+        setTempInitialDate(fromDate);
+        setTempDateType('start');
+      } else if (toDate) {
+        setTempInitialDate(toDate);
+        setTempDateType('end');
+      } else {
+        setTempInitialDate('');
+        setTempDateType('');
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, authLoading]);
+
+  // Cerrar dropdown de fecha al hacer clic fuera
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (showDatePickerModal && !target.closest('.date-picker-dropdown-container')) {
+        setShowDatePickerModal(false);
+      }
+    };
+
+    if (showDatePickerModal) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showDatePickerModal]);
 
   // Función para formatear fecha
   const formatDate = (dateString?: string): string => {
@@ -91,6 +174,48 @@ const Bookings: React.FC = () => {
     }
   };
 
+  // Función para formatear fecha y hora en formato AM/PM desde UTC
+  // dateString debe estar en formato UTC (ISO 8601)
+  const formatDateTimeAMPM = (dateString?: string): string => {
+    if (!dateString) return '-';
+    try {
+      // Asegurar que el string se interprete como UTC
+      // Si no tiene 'Z' o offset, agregar 'Z' para indicar UTC
+      let utcString = dateString.trim();
+      const hasTimezone = utcString.endsWith('Z') || utcString.match(/[+-]\d{2}:\d{2}$/);
+      
+      if (!hasTimezone) {
+        // Remover milisegundos si existen y agregar 'Z' para indicar UTC
+        utcString = utcString.replace(/\.\d{3,}$/, '') + 'Z';
+      }
+      
+      // Crear fecha interpretando el string como UTC
+      const date = new Date(utcString);
+      
+      // Verificar que la fecha es válida
+      if (isNaN(date.getTime())) {
+        return dateString;
+      }
+      
+      // Usar Intl.DateTimeFormat para formatear en UTC
+      const locale = language === 'es' ? 'es-ES' : 'en-US';
+      const formatter = new Intl.DateTimeFormat(locale, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+        timeZone: 'UTC' // Mostrar en UTC
+      });
+      
+      return `${formatter.format(date)} UTC`;
+    } catch (error) {
+      console.error('Error formatting date:', error);
+      return dateString;
+    }
+  };
+
   // Función para formatear precio
   const formatPrice = (price?: number, currencyCode?: string): string => {
     if (!price) return '-';
@@ -99,6 +224,13 @@ const Bookings: React.FC = () => {
       style: 'currency',
       currency: curr
     }).format(price);
+  };
+
+  // Función para calcular el total de la orden excluyendo items cancelados
+  const calculateOrderTotal = (order: OrderResponse): number => {
+    return order.items
+      .filter(item => item.status !== 'CANCELLED')
+      .reduce((sum, item) => sum + (item.totalAmount || 0), 0);
   };
 
   // Función para obtener el nombre del estado
@@ -127,9 +259,10 @@ const Bookings: React.FC = () => {
   const getItemStatusName = (status: string): string => {
     const statusMap: Record<string, { es: string; en: string }> = {
       'PENDING': { es: 'Pendiente', en: 'Pending' },
-      'ATTENDED': { es: 'Asistido', en: 'Attended' },
+      'ATTENDING': { es: 'En curso', en: 'Attending' },
+      'ATTENDED': { es: 'Atendido', en: 'Attended' },
       'CANCELLED': { es: 'Cancelado', en: 'Cancelled' },
-      'COMPLETED': { es: 'Completado', en: 'Completed' }
+      'NO_SHOW': { es: 'No asistió', en: 'No Show' }
     };
     return statusMap[status]?.[language] || status;
   };
@@ -138,9 +271,10 @@ const Bookings: React.FC = () => {
   const getItemStatusBadgeClass = (status: string): string => {
     const statusClasses: Record<string, string> = {
       'PENDING': 'bg-warning text-dark',
+      'ATTENDING': 'bg-info',
       'ATTENDED': 'bg-success',
       'CANCELLED': 'bg-danger',
-      'COMPLETED': 'bg-info'
+      'NO_SHOW': 'bg-secondary'
     };
     return statusClasses[status] || 'bg-secondary';
   };
@@ -193,49 +327,19 @@ const Bookings: React.FC = () => {
     );
   };
 
-  // Función para confirmar reserva
-  const handleConfirmReservation = async (orderId: string) => {
-    if (!window.confirm(language === 'es' 
-      ? '¿Estás seguro de que deseas confirmar esta reserva?'
-      : 'Are you sure you want to confirm this reservation?')) {
-      return;
-    }
+  // Función para abrir modal de confirmación
+  const handleConfirmReservation = (orderId: string) => {
+    setOrderIdToConfirm(orderId);
+    setShowConfirmModal(true);
+  };
 
-    setProcessingOrderId(orderId);
-    try {
-      const response = await ordersApi.updateOrder(orderId, {
-        orderStatus: 'CONFIRMED',
-        paymentStatus: 'PAID',
-        paymentMethod: 'CARD',
-        paymentProvider: 'OTHER'
-      });
-
-      if (response?.success !== false) {
-        alert(language === 'es' 
-          ? 'Reserva confirmada exitosamente'
-          : 'Reservation confirmed successfully');
-        // Recargar las reservas
-        const updatedResponse = await ordersApi.getOrdersAvailables({
-          lang: language,
-          currency: currency,
-          page: 0,
-          size: 100,
-          sortBy: 'id',
-          sortDirection: 'DESC'
-        });
-        if (updatedResponse?.data) {
-          setOrders(updatedResponse.data);
-        }
-      } else {
-        throw new Error(response?.message || (language === 'es' ? 'Error al confirmar la reserva' : 'Error confirming reservation'));
-      }
-    } catch (error: any) {
-      console.error('Error confirming reservation:', error);
-      alert(error?.message || (language === 'es' 
-        ? 'Error al confirmar la reserva. Por favor, intenta nuevamente.'
-        : 'Error confirming reservation. Please try again.'));
-    } finally {
-      setProcessingOrderId(null);
+  // Función para confirmar y navegar
+  const handleConfirmAndNavigate = () => {
+    if (orderIdToConfirm) {
+      setShowConfirmModal(false);
+      // Navegar a la página de pago para confirmar con orderId en la URL
+      navigate(`/pay-to-confirm?orderId=${orderIdToConfirm}`);
+      setOrderIdToConfirm(null);
     }
   };
 
@@ -266,7 +370,7 @@ const Bookings: React.FC = () => {
           currency: currency,
           page: 0,
           size: 100,
-          sortBy: 'id',
+          sortBy: 'startDateTime',
           sortDirection: 'DESC'
         });
         if (updatedResponse?.data) {
@@ -316,6 +420,43 @@ const Bookings: React.FC = () => {
         : 'Could not get supplier information');
     }
   };
+
+  // Función para dejar valoración o comentario
+  const handleLeaveReview = (activityId: string, orderItemId: number, activityTitle?: string) => {
+    setSelectedReviewActivity({
+      activityId,
+      orderItemId,
+      activityTitle
+    });
+    setReviewModalOpen(true);
+  };
+
+  // Función para cerrar el modal de valoración
+  const handleCloseReviewModal = () => {
+    setReviewModalOpen(false);
+    setSelectedReviewActivity(null);
+  };
+
+  // Función para refrescar las reservas después de crear una valoración
+  const handleReviewCreated = async () => {
+    try {
+      const response = await ordersApi.getOrdersAvailables({
+        lang: language,
+        currency: currency,
+        page: 0,
+        size: 100,
+        sortBy: 'createdAt',
+        sortDirection: 'DESC'
+      });
+
+      if (response?.data) {
+        setOrders(response.data);
+      }
+    } catch (err: any) {
+      console.error('Error refreshing bookings after review:', err);
+    }
+  };
+
 
   // Función para iniciar sesión
   const handleLogin = async () => {
@@ -435,13 +576,522 @@ const Bookings: React.FC = () => {
     );
   }
 
+  // Función para calcular fecha + 7 días
+  const addDays = (dateString: string, days: number): string => {
+    const date = new Date(dateString);
+    date.setDate(date.getDate() + days);
+    return date.toISOString().split('T')[0];
+  };
+
+  // Función para formatear fecha de YYYY-MM-DD a dd/mm/yyyy
+  const formatDateDisplay = (dateString: string): string => {
+    if (!dateString) return '';
+    const [year, month, day] = dateString.split('-');
+    return `${day}/${month}/${year}`;
+  };
+
+  // Función para obtener el texto a mostrar en el input de fecha
+  const getDateInputText = (): string => {
+    if (tempFromDate && tempToDate) {
+      return `${formatDateDisplay(tempFromDate)} - ${formatDateDisplay(tempToDate)}`;
+    }
+    return language === 'es' ? 'Desde - Hasta' : 'From - To';
+  };
+
+  // Función para manejar selección de fecha inicial (desktop)
+  const handleInitialDateChange = (date: string) => {
+    setInitialDate(date);
+    if (date && !dateType) {
+      // Si hay fecha pero no tipo, no hacer nada (esperar a que seleccione tipo)
+    }
+  };
+
+  // Función para manejar selección de tipo de fecha (desktop)
+  const handleDateTypeChange = (type: 'start' | 'end') => {
+    setDateType(type);
+    if (type === 'start' && initialDate) {
+      // Si selecciona start, auto-completar end con +7 días
+      setToDate(addDays(initialDate, 7));
+      setFromDate(initialDate);
+    } else if (type === 'end' && initialDate) {
+      // Si selecciona end, validar que sea >= start
+      if (fromDate && initialDate < fromDate) {
+        // Si end es menor que start, ajustar a start
+        setToDate(fromDate);
+      } else {
+        setToDate(initialDate);
+      }
+    }
+  };
+
+  // Función para manejar cambio de fecha end (desktop) con validación
+  const handleEndDateChange = (date: string) => {
+    if (fromDate && date < fromDate) {
+      // No permitir que end sea menor que start
+      return;
+    }
+    setToDate(date);
+  };
+
+  // Función para manejar selección de fecha inicial (temporal)
+  const handleTempInitialDateChange = (date: string) => {
+    setTempInitialDate(date);
+    if (date && !tempDateType) {
+      // Si hay fecha pero no tipo, no hacer nada (esperar a que seleccione tipo)
+    }
+  };
+
+  // Función para manejar selección de tipo de fecha (temporal)
+  const handleTempDateTypeChange = (type: 'start' | 'end') => {
+    setTempDateType(type);
+    if (type === 'start' && tempInitialDate) {
+      // Si selecciona start, auto-completar end con +7 días
+      setTempToDate(addDays(tempInitialDate, 7));
+      setTempFromDate(tempInitialDate);
+    } else if (type === 'end' && tempInitialDate) {
+      // Si selecciona end, establecer toDate
+      // Si ya hay fromDate y end es menor, ajustar
+      if (tempFromDate && tempInitialDate < tempFromDate) {
+        setTempToDate(tempFromDate);
+      } else {
+        setTempToDate(tempInitialDate);
+        // Si no hay fromDate, establecerlo también
+        if (!tempFromDate) {
+          setTempFromDate(tempInitialDate);
+        }
+      }
+    }
+  };
+
+  // Función para manejar cambio de fecha end (temporal) con validación
+  const handleTempEndDateChange = (date: string) => {
+    if (tempFromDate && date < tempFromDate) {
+      // No permitir que end sea menor que start
+      return;
+    }
+    setTempToDate(date);
+  };
+
+  // Función para abrir el bottomSheet y cargar los filtros actuales
+  const handleOpenMobileFilters = () => {
+    setTempOrderStatusFilter([...orderStatusFilter]);
+    setTempPaymentStatusFilter(paymentStatusFilter);
+    setTempFromDate(fromDate);
+    setTempToDate(toDate);
+    setTempReferenceCode(referenceCode);
+    setTempSortBy(sortBy);
+    setTempSortDirection(sortDirection);
+    // Convertir fromDate/toDate a initialDate/dateType si existen
+    if (fromDate) {
+      setTempInitialDate(fromDate);
+      setTempDateType('start');
+    } else if (toDate) {
+      setTempInitialDate(toDate);
+      setTempDateType('end');
+    } else {
+      setTempInitialDate('');
+      setTempDateType('');
+    }
+    setShowMobileFilters(true);
+  };
+
+  // Función para aplicar los filtros (desde bottomSheet o desktop)
+  const handleApplyFilters = () => {
+    setOrderStatusFilter([...tempOrderStatusFilter]);
+    setPaymentStatusFilter(tempPaymentStatusFilter);
+    setReferenceCode(tempReferenceCode);
+    setSortBy(tempSortBy);
+    setSortDirection(tempSortDirection);
+    
+    // Convertir tempInitialDate/tempDateType a fromDate/toDate si existen
+    if (tempInitialDate && tempDateType === 'start') {
+      setFromDate(tempInitialDate);
+      // Si no hay toDate, usar +7 días
+      if (!tempToDate) {
+        setToDate(addDays(tempInitialDate, 7));
+      } else {
+        setToDate(tempToDate);
+      }
+    } else if (tempInitialDate && tempDateType === 'end') {
+      setToDate(tempInitialDate);
+      // Si no hay fromDate, usar la misma fecha
+      if (!tempFromDate) {
+        setFromDate(tempInitialDate);
+      } else {
+        setFromDate(tempFromDate);
+      }
+    } else {
+      // Si no hay initialDate, limpiar fechas
+      setFromDate(tempFromDate);
+      setToDate(tempToDate);
+    }
+    
+    // También actualizar estados activos desde temporales
+    if (tempInitialDate && tempDateType) {
+      setInitialDate(tempInitialDate);
+      setDateType(tempDateType);
+    } else {
+      setInitialDate('');
+      setDateType('');
+    }
+    
+    setShowMobileFilters(false);
+  };
+
+  // Función para limpiar los filtros temporales (usado en el modal)
+  const handleClearFilters = () => {
+    setTempOrderStatusFilter([]);
+    setTempPaymentStatusFilter('');
+    setTempFromDate('');
+    setTempToDate('');
+    setTempReferenceCode('');
+    setTempSortBy('startDateTime');
+    setTempSortDirection('DESC');
+    setTempInitialDate('');
+    setTempDateType('');
+  };
+
+  // Función para limpiar todos los filtros (activos y temporales)
+  const handleClearAllFilters = () => {
+    // Limpiar filtros activos
+    setOrderStatusFilter([]);
+    setPaymentStatusFilter('');
+    setFromDate('');
+    setToDate('');
+    setReferenceCode('');
+    setSortBy('startDateTime');
+    setSortDirection('DESC');
+    setInitialDate('');
+    setDateType('');
+    
+    // Limpiar filtros temporales
+    setTempOrderStatusFilter([]);
+    setTempPaymentStatusFilter('');
+    setTempFromDate('');
+    setTempToDate('');
+    setTempReferenceCode('');
+    setTempSortBy('startDateTime');
+    setTempSortDirection('DESC');
+    setTempInitialDate('');
+    setTempDateType('');
+  };
+
   return (
     <div className="container py-4 py-md-5">
       <div className="row">
         <div className="col-12">
-          <h2 className="mb-4">
-            {getTranslation('bookings.title', language) || (language === 'es' ? 'Mis Reservas' : 'My Bookings')}
-          </h2>
+          <div className="d-flex justify-content-between align-items-center mb-4">
+            <h2 className="mb-0">
+              {getTranslation('bookings.title', language) || (language === 'es' ? 'Mis Reservas' : 'My Bookings')}
+            </h2>
+            {/* Botón de filtros para móvil */}
+            <button
+              className="btn btn-outline-primary btn-sm d-md-none"
+              onClick={handleOpenMobileFilters}
+            >
+              <i className="fas fa-filter me-2"></i>
+              {language === 'es' ? 'Filtros' : 'Filters'}
+            </button>
+          </div>
+
+          {/* Filtros avanzados según diseño */}
+          <div className="d-none d-md-block mb-3">
+            <div className="row g-2 align-items-end">
+              {/* Estado de la orden */}
+              <div className="col-auto">
+                <label className="form-label small fw-semibold text-dark mb-1" style={{ fontSize: '0.75rem', whiteSpace: 'nowrap' }}>
+                  {language === 'es' ? 'Estado' : 'Status'}
+                </label>
+                <div className="position-relative">
+                  <div
+                    className="form-control form-control-sm d-flex justify-content-between align-items-center"
+                    style={{
+                      cursor: 'pointer',
+                      border: showStatusDropdown ? '1px solid #dc3545' : '1px solid #ced4da',
+                      minHeight: '31px',
+                      width: '150px'
+                    }}
+                    onClick={() => setShowStatusDropdown(!showStatusDropdown)}
+                  >
+                    <span className="small text-truncate">
+                      {tempOrderStatusFilter.length === 0
+                        ? (language === 'es' ? 'Todos' : 'All')
+                        : tempOrderStatusFilter.length === 1
+                        ? getStatusName(tempOrderStatusFilter[0])
+                        : `${tempOrderStatusFilter.length} ${language === 'es' ? 'sel.' : 'sel.'}`}
+                    </span>
+                    <i className={`fas fa-chevron-${showStatusDropdown ? 'up' : 'down'} small ms-1`}></i>
+                  </div>
+                  {showStatusDropdown && (
+                    <>
+                      <div
+                        className="position-fixed top-0 start-0 end-0 bottom-0"
+                        style={{ zIndex: 1040 }}
+                        onClick={() => setShowStatusDropdown(false)}
+                      />
+                      <div
+                        className="position-absolute bg-white border rounded shadow-sm"
+                        style={{
+                          top: '100%',
+                          left: 0,
+                          right: 0,
+                          zIndex: 1050,
+                          marginTop: '4px',
+                          border: '1px solid #dc3545',
+                          maxHeight: '200px',
+                          overflowY: 'auto'
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {['CREATED', 'CONFIRMED', 'CANCELLED', 'COMPLETED'].map((status) => (
+                          <div 
+                            key={status} 
+                            className="d-flex align-items-center p-2" 
+                            style={{ 
+                              borderBottom: '1px solid #f0f0f0',
+                              cursor: 'pointer',
+                              backgroundColor: tempOrderStatusFilter.includes(status) ? '#f8f9fa' : 'transparent',
+                              minHeight: '38px'
+                            }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (tempOrderStatusFilter.includes(status)) {
+                                setTempOrderStatusFilter(tempOrderStatusFilter.filter(s => s !== status));
+                              } else {
+                                setTempOrderStatusFilter([...tempOrderStatusFilter, status]);
+                              }
+                            }}
+                          >
+                            <input
+                              className="form-check-input"
+                              type="checkbox"
+                              id={`status-${status}`}
+                              checked={tempOrderStatusFilter.includes(status)}
+                              onChange={(e) => {
+                                e.stopPropagation();
+                                if (e.target.checked) {
+                                  setTempOrderStatusFilter([...tempOrderStatusFilter, status]);
+                                } else {
+                                  setTempOrderStatusFilter(tempOrderStatusFilter.filter(s => s !== status));
+                                }
+                              }}
+                              style={{ 
+                                cursor: 'pointer', 
+                                marginTop: '0',
+                                marginRight: '8px',
+                                width: '18px',
+                                height: '18px',
+                                flexShrink: 0
+                              }}
+                            />
+                            <label 
+                              className="small flex-grow-1 mb-0" 
+                              htmlFor={`status-${status}`} 
+                              style={{ cursor: 'pointer' }}
+                            >
+                              {getStatusName(status)}
+                            </label>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Estado del pago */}
+              <div className="col-auto">
+                <label className="form-label small fw-semibold text-dark mb-1" style={{ fontSize: '0.75rem', whiteSpace: 'nowrap' }}>
+                  {language === 'es' ? 'Estado del pago' : 'Payment status'}
+                </label>
+                <select
+                  className="form-select form-select-sm"
+                  value={tempPaymentStatusFilter}
+                  onChange={(e) => setTempPaymentStatusFilter(e.target.value)}
+                  style={{ width: '130px' }}
+                >
+                  <option value="">{language === 'es' ? 'Todos' : 'All'}</option>
+                  <option value="PENDING">{language === 'es' ? 'Pendiente' : 'Pending'}</option>
+                  <option value="PAID">{language === 'es' ? 'Pagado' : 'Paid'}</option>
+                  <option value="CANCELLED">{language === 'es' ? 'Cancelado' : 'Cancelled'}</option>
+                  <option value="REFUNDED">{language === 'es' ? 'Reembolsado' : 'Refunded'}</option>
+                </select>
+              </div>
+
+              {/* Fecha de la actividad */}
+              <div className="col-auto">
+                <label className="form-label small fw-semibold text-dark mb-1" style={{ fontSize: '0.75rem', whiteSpace: 'nowrap' }}>
+                  {language === 'es' ? 'Fecha de la actividad' : 'Activity date'}
+                </label>
+                <div className="position-relative date-picker-dropdown-container">
+                  <input
+                    type="text"
+                    className="form-control form-control-sm"
+                    value={getDateInputText()}
+                    onClick={() => setShowDatePickerModal(!showDatePickerModal)}
+                    readOnly
+                    style={{ cursor: 'pointer', width: '180px' }}
+                  />
+                  <i className="fas fa-calendar-alt position-absolute end-0 top-50 translate-middle-y me-2 text-muted" style={{ pointerEvents: 'none' }}></i>
+                  
+                  {/* Dropdown de fechas */}
+                  {showDatePickerModal && (
+                    <div 
+                      className="position-absolute top-100 start-0 mt-1 bg-white border rounded shadow-lg p-3"
+                      style={{ 
+                        zIndex: 1000, 
+                        minWidth: '300px',
+                        boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="row g-3 mb-3">
+                        <div className="col-6">
+                          <label className="form-label small text-muted mb-1">
+                            {language === 'es' ? 'Desde' : 'From'}
+                          </label>
+                          <div className="position-relative">
+                            <input
+                              type="date"
+                              className="form-control form-control-sm"
+                              value={tempFromDate}
+                              onChange={(e) => {
+                                const selectedDate = e.target.value;
+                                setTempFromDate(selectedDate);
+                                // Automáticamente establecer "Hasta" con 7 días después
+                                if (selectedDate) {
+                                  setTempToDate(addDays(selectedDate, 7));
+                                } else {
+                                  setTempToDate('');
+                                }
+                              }}
+                              max={tempToDate || undefined}
+                            />
+                            <i className="fas fa-calendar-alt position-absolute end-0 top-50 translate-middle-y me-2 text-muted small" style={{ pointerEvents: 'none' }}></i>
+                          </div>
+                        </div>
+                        <div className="col-6">
+                          <label className="form-label small text-muted mb-1">
+                            {language === 'es' ? 'Hasta' : 'To'}
+                          </label>
+                          <div className="position-relative">
+                            <input
+                              type="date"
+                              className="form-control form-control-sm"
+                              value={tempToDate}
+                              onChange={(e) => handleTempEndDateChange(e.target.value)}
+                              min={tempFromDate || undefined}
+                            />
+                            <i className="fas fa-calendar-alt position-absolute end-0 top-50 translate-middle-y me-2 text-muted small" style={{ pointerEvents: 'none' }}></i>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {/* Botones */}
+                      <div className="d-flex gap-2 justify-content-end">
+                        <button
+                          type="button"
+                          className="btn btn-outline-secondary btn-sm"
+                          onClick={() => {
+                            setTempFromDate('');
+                            setTempToDate('');
+                            setTempInitialDate('');
+                            setTempDateType('');
+                          }}
+                        >
+                          {language === 'es' ? 'Limpiar' : 'Clear'}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-primary btn-sm"
+                          onClick={() => {
+                            setShowDatePickerModal(false);
+                          }}
+                        >
+                          {language === 'es' ? 'Aplicar' : 'Apply'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Código de referencia */}
+              <div className="col-auto">
+                <label className="form-label small fw-semibold text-dark mb-1" style={{ fontSize: '0.75rem', whiteSpace: 'nowrap' }}>
+                  {language === 'es' ? 'Código de referencia' : 'Reference code'}
+                </label>
+                <div className="input-group input-group-sm">
+                  <span className="input-group-text bg-light" style={{ padding: '0.25rem 0.5rem' }}>
+                    <i className="fas fa-file-alt"></i>
+                  </span>
+                  <input
+                    type="text"
+                    className="form-control"
+                    value={tempReferenceCode}
+                    onChange={(e) => setTempReferenceCode(e.target.value)}
+                    placeholder={language === 'es' ? 'Orden #...' : 'Order #...'}
+                    style={{ width: '120px' }}
+                  />
+                </div>
+              </div>
+
+              {/* Ordenar por */}
+              <div className="col-auto">
+                <label className="form-label small fw-semibold text-dark mb-1" style={{ fontSize: '0.75rem', whiteSpace: 'nowrap' }}>
+                  {language === 'es' ? 'Ordenar por' : 'Order by'}
+                </label>
+                <select
+                  className="form-select form-select-sm"
+                  value={`${tempSortBy}-${tempSortDirection}`}
+                  onChange={(e) => {
+                    const [newSortBy, newSortDirection] = e.target.value.split('-');
+                    if (newSortBy === 'startDateTime' || newSortBy === 'createdAt') {
+                      setTempSortBy(newSortBy);
+                    }
+                    setTempSortDirection(newSortDirection as 'ASC' | 'DESC');
+                  }}
+                  style={{ width: '160px' }}
+                >
+                  <option value="startDateTime-DESC">
+                    {language === 'es' ? 'Salida (Desc)' : 'Departure (Desc)'}
+                  </option>
+                  <option value="startDateTime-ASC">
+                    {language === 'es' ? 'Salida (Asc)' : 'Departure (Asc)'}
+                  </option>
+                  <option value="createdAt-DESC">
+                    {language === 'es' ? 'Compra (Desc)' : 'Purchase (Desc)'}
+                  </option>
+                  <option value="createdAt-ASC">
+                    {language === 'es' ? 'Compra (Asc)' : 'Purchase (Asc)'}
+                  </option>
+                </select>
+              </div>
+
+              {/* Botones aplicar y limpiar */}
+              <div className="col-auto">
+                <label className="form-label small fw-semibold text-dark mb-1" style={{ fontSize: '0.75rem', visibility: 'hidden' }}>
+                  &nbsp;
+                </label>
+                <div className="d-flex gap-2">
+                  <button
+                    className="btn btn-primary btn-sm"
+                    onClick={handleApplyFilters}
+                  >
+                    <i className="fas fa-check me-1"></i>
+                    {language === 'es' ? 'Aplicar' : 'Apply'}
+                  </button>
+                  <button
+                    className="btn btn-outline-secondary btn-sm"
+                    onClick={handleClearAllFilters}
+                  >
+                    <i className="fas fa-times me-1"></i>
+                    {language === 'es' ? 'Limpiar' : 'Clear'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
 
           {error && (
             <div className="alert alert-danger" role="alert">
@@ -504,7 +1154,13 @@ const Bookings: React.FC = () => {
                         return (
                           <React.Fragment key={order.id}>
                             {/* Fila principal de la orden */}
-                            <tr className="table-active">
+                            <tr 
+                              className="table-active"
+                              style={order.orderStatus === 'CANCELLED' ? { 
+                                filter: 'grayscale(100%)',
+                                opacity: 0.6
+                              } : {}}
+                            >
                               <td>
                                 <button
                                   className="btn btn-sm btn-link p-0"
@@ -519,17 +1175,18 @@ const Bookings: React.FC = () => {
                                   {language === 'es' ? 'Orden' : 'Order'} #{order.id}
                                 </div>
                                 <small className="text-muted">
-                                  {formatDate(order.createdAt)}
+                                  <i className="fas fa-shopping-cart me-1"></i>
+                                  {formatDateTimeAMPM(order.createdAt)}
                                 </small>
                               </td>
                               <td>
                                 <div>
-                                  {order.items.length} {language === 'es' ? 'actividad(es)' : 'activity(ies)'}
+                                  {order.items.filter(item => item.status !== 'CANCELLED').length} {language === 'es' ? 'actividad(es)' : 'activity(ies)'}
                                 </div>
                               </td>
                               <td>
                                 <div className="fw-bold">
-                                  {formatPrice(order.totalAmount, order.items[0]?.currency)}
+                                  {formatPrice(calculateOrderTotal(order), order.items[0]?.currency)}
                                 </div>
                               </td>
                               <td>
@@ -550,10 +1207,9 @@ const Bookings: React.FC = () => {
                                         <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
                                       ) : (
                                         <>
-                                          <i className="fas fa-dollar-sign me-1"></i>
-                                          <span className="d-none d-md-inline">
-                                            {language === 'es' ? 'Pagar para confirmar' : 'Pay to confirm'}
-                                          </span>
+                                          <button className="btn btn-sm btn-primary" onClick={() => handleConfirmReservation(order.id)} disabled={processingOrderId === order.id}>
+                                            <i className="fas fa-dollar-sign me-1"></i>{language === 'es' ? 'Pagar para confirmar' : 'Pay to confirm'}
+                                          </button>
                                         </>
                                       )}
                                     </button>
@@ -581,7 +1237,14 @@ const Bookings: React.FC = () => {
                             </tr>
                             {/* Filas de items (solo cuando está expandido) */}
                             {isExpanded && order.items.map((item) => (
-                              <tr key={`${order.id}-${item.id}`} className="table-light">
+                              <tr 
+                                key={`${order.id}-${item.id}`} 
+                                className="table-light"
+                                style={item.status === 'CANCELLED' ? { 
+                                  filter: 'grayscale(100%)',
+                                  opacity: 0.6
+                                } : {}}
+                              >
                                 <td></td>
                                 <td colSpan={4}>
                                   <div className="d-flex align-items-start gap-3 py-2">
@@ -590,7 +1253,15 @@ const Bookings: React.FC = () => {
                                         src={item.activity.imageUrl}
                                         alt={item.activity.title}
                                         className="rounded"
-                                        style={{ width: '60px', height: '60px', objectFit: 'cover' }}
+                                        style={{ 
+                                          width: '60px', 
+                                          height: '60px', 
+                                          objectFit: 'cover',
+                                          ...(item.status === 'CANCELLED' ? { 
+                                            filter: 'grayscale(100%)',
+                                            opacity: 0.6
+                                          } : {})
+                                        }}
                                       />
                                     )}
                                     <div className="flex-grow-1">
@@ -601,7 +1272,7 @@ const Bookings: React.FC = () => {
                                           <i className="fas fa-calendar-alt me-1"></i>
                                           <strong>{language === 'es' ? 'Fecha de salida:' : 'Departure date:'}</strong>
                                           <br />
-                                          {formatDateTime(item.startDatetime)}
+                                          {formatDateTime(item.startDatetime) + ' (' + item.timeZone + ')'}
                                         </div>
                                         <div className="col-md-4">
                                           <div className="mb-2">
@@ -634,7 +1305,7 @@ const Bookings: React.FC = () => {
                                               {getItemStatusName(item.status)}
                                             </span>
                                           </div>
-                                          {item.cancelUntilDate && (
+                                          {item.cancelUntilDate && new Date(item.cancelUntilDate) > new Date() && (
                                             <div className="mb-0">
                                               <i className="fas fa-calendar-times me-1"></i>
                                               <strong>{language === 'es' ? 'Cancelación gratis hasta:' : 'Free cancellation until:'}</strong>{' '}
@@ -647,16 +1318,33 @@ const Bookings: React.FC = () => {
                                   </div>
                                 </td>
                                 <td className="text-end">
-                                  <button
-                                    className="btn btn-sm btn-success"
-                                    onClick={() => handleChatWithSupplier(order)}
-                                    title={language === 'es' ? 'Chatear con proveedor' : 'Chat with supplier'}
-                                  >
-                                    <i className="fas fa-comments me-1"></i>
-                                    <span className="d-none d-md-inline">
-                                      {language === 'es' ? 'Chatear con proveedor' : 'Chat with supplier'}
-                                    </span>
-                                  </button>
+                                  {order.orderStatus !== 'CANCELLED' && item.status !== 'CANCELLED' && (
+                                    <>
+                                      {item.status === 'ATTENDED' && !item.isReviewed ? (
+                                        <button
+                                          className="btn btn-sm btn-warning"
+                                          onClick={() => item.activity?.id && handleLeaveReview(item.activity.id, item.id, item.activity.title)}
+                                          title={language === 'es' ? 'Dejar valoración o comentario' : 'Leave rating or comment'}
+                                        >
+                                          <i className="fas fa-star me-1"></i>
+                                          <span className="d-none d-md-inline">
+                                            {language === 'es' ? 'Dejar valoración' : 'Leave rating'}
+                                          </span>
+                                        </button>
+                                      ) : (
+                                        <button
+                                          className="btn btn-sm btn-success"
+                                          onClick={() => handleChatWithSupplier(order)}
+                                          title={language === 'es' ? 'Chatear con proveedor' : 'Chat with supplier'}
+                                        >
+                                          <i className="fas fa-comments me-1"></i>
+                                          <span className="d-none d-md-inline">
+                                            {language === 'es' ? 'Chatear con proveedor' : 'Chat with supplier'}
+                                          </span>
+                                        </button>
+                                      )}
+                                    </>
+                                  )}
                                 </td>
                               </tr>
                             ))}
@@ -672,9 +1360,15 @@ const Bookings: React.FC = () => {
               <div className="d-md-none">
                 {orders.map((order) => {
                   const isExpanded = expandedOrders.has(order.id);
-
                   return (
-                    <div key={order.id} className="card shadow-sm border-0 mb-3">
+                    <div 
+                      key={order.id} 
+                      className="card border shadow-sm mb-3"
+                      style={order.orderStatus === 'CANCELLED' ? { 
+                        filter: 'grayscale(100%)',
+                        opacity: 0.6
+                      } : {}}
+                    >
                       <div className="card-body">
                         <div className="d-flex justify-content-between align-items-start">
                           <div>
@@ -682,7 +1376,8 @@ const Bookings: React.FC = () => {
                               {language === 'es' ? 'Orden' : 'Order'} #{order.id}
                             </div>
                             <small className="text-muted d-block">
-                              {formatDate(order.createdAt)}
+                              <i className="fas fa-shopping-cart me-1"></i>
+                              {formatDateTimeAMPM(order.createdAt)}
                             </small>
                           </div>
                           <span className={`badge ${getStatusBadgeClass(order.orderStatus)}`}>
@@ -696,7 +1391,7 @@ const Bookings: React.FC = () => {
                               {language === 'es' ? 'Total' : 'Total'}
                             </small>
                             <div className="fw-bold">
-                              {formatPrice(order.totalAmount, order.items[0]?.currency)}
+                              {formatPrice(calculateOrderTotal(order), order.items[0]?.currency)}
                             </div>
                           </div>
                           <button
@@ -738,14 +1433,29 @@ const Bookings: React.FC = () => {
                         {isExpanded && (
                           <div className="mt-3">
                             {order.items.map((item) => (
-                              <div key={item.id} className="border rounded p-3 mb-3">
+                              <div 
+                                key={item.id} 
+                                className="border rounded p-3 mb-3"
+                                style={item.status === 'CANCELLED' ? { 
+                                  filter: 'grayscale(100%)',
+                                  opacity: 0.6
+                                } : {}}
+                              >
                                 <div className="d-flex align-items-start gap-3 mb-2">
                                   {item.activity?.imageUrl && (
                                     <img
                                       src={item.activity.imageUrl}
                                       alt={item.activity.title}
                                       className="rounded"
-                                      style={{ width: '60px', height: '60px', objectFit: 'cover' }}
+                                      style={{ 
+                                        width: '60px', 
+                                        height: '60px', 
+                                        objectFit: 'cover',
+                                        ...(item.status === 'CANCELLED' ? { 
+                                          filter: 'grayscale(100%)',
+                                          opacity: 0.6
+                                        } : {})
+                                      }}
                                     />
                                   )}
                                   <div>
@@ -809,15 +1519,27 @@ const Bookings: React.FC = () => {
                                   </div>
                                 </div>
 
-                                <div className="d-grid mt-3">
-                                  <button
-                                    className="btn btn-success btn-sm"
-                                    onClick={() => handleChatWithSupplier(order)}
-                                  >
-                                    <i className="fas fa-comments me-1"></i>
-                                    {language === 'es' ? 'Chatear con proveedor' : 'Chat with supplier'}
-                                  </button>
-                                </div>
+                                {order.orderStatus !== 'CANCELLED' && item.status !== 'CANCELLED' && (
+                                  <div className="d-grid mt-3">
+                                    {item.status === 'ATTENDED' && !item.isReviewed ? (
+                                      <button
+                                        className="btn btn-warning btn-sm"
+                                        onClick={() => item.activity?.id && handleLeaveReview(item.activity.id, item.id, item.activity.title)}
+                                      >
+                                        <i className="fas fa-star me-1"></i>
+                                        {language === 'es' ? 'Dejar valoración' : 'Leave rating'}
+                                      </button>
+                                    ) : (
+                                      <button
+                                        className="btn btn-success btn-sm"
+                                        onClick={() => handleChatWithSupplier(order)}
+                                      >
+                                        <i className="fas fa-comments me-1"></i>
+                                        {language === 'es' ? 'Chatear con proveedor' : 'Chat with supplier'}
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
                               </div>
                             ))}
                           </div>
@@ -831,6 +1553,364 @@ const Bookings: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* Modal de valoración */}
+      {selectedReviewActivity && (
+        <ActivityReviewModal
+          isOpen={reviewModalOpen}
+          onClose={handleCloseReviewModal}
+          activityId={selectedReviewActivity.activityId}
+          orderItemId={selectedReviewActivity.orderItemId}
+          activityTitle={selectedReviewActivity.activityTitle}
+          onReviewCreated={handleReviewCreated}
+        />
+      )}
+
+      {/* Overlay - debe estar antes del bottomSheet */}
+      {showMobileFilters && (
+        <div
+          className="position-fixed top-0 start-0 end-0 bottom-0 bg-dark d-md-none"
+          style={{
+            opacity: 0.5,
+            zIndex: 1049,
+            transition: 'opacity 0.3s ease-in-out'
+          }}
+          onClick={() => setShowMobileFilters(false)}
+        />
+      )}
+
+      {/* Bottom Sheet Dialog para filtros móvil */}
+      <div
+        className={`d-md-none position-fixed bottom-0 start-0 end-0 bg-white border-top shadow-lg`}
+        style={{
+          transform: showMobileFilters ? 'translateY(0)' : 'translateY(100%)',
+          transition: 'transform 0.3s ease-in-out',
+          zIndex: 1050,
+          maxHeight: '90vh',
+          borderTopLeftRadius: '1rem',
+          borderTopRightRadius: '1rem',
+          backgroundColor: '#ffffff'
+        }}
+      >
+        
+        {/* Contenido del bottom sheet */}
+        <div className="p-4 bg-white" style={{ maxHeight: '90vh', overflowY: 'auto', backgroundColor: '#ffffff' }}>
+          <div className="d-flex justify-content-between align-items-center mb-4">
+            <h5 className="mb-0 fw-bold">
+              {language === 'es' ? 'Filtros' : 'Filters'}
+            </h5>
+            <button
+              className="btn btn-link p-0"
+              onClick={() => setShowMobileFilters(false)}
+              style={{ fontSize: '1.5rem', lineHeight: '1' }}
+            >
+              <i className="fas fa-times"></i>
+            </button>
+          </div>
+
+          {/* Estado de la orden */}
+          <div className="mb-4">
+            <label className="form-label fw-semibold text-dark mb-3" style={{ fontSize: '0.95rem' }}>
+              {language === 'es' ? 'Estado' : 'Status'}
+            </label>
+            <div className="d-flex flex-column gap-2">
+              {['CREATED', 'CONFIRMED', 'CANCELLED', 'COMPLETED'].map((status) => (
+                <div 
+                  key={status} 
+                  className="d-flex align-items-center" 
+                  style={{ 
+                    cursor: 'pointer',
+                    padding: '8px 0'
+                  }}
+                  onClick={() => {
+                    if (tempOrderStatusFilter.includes(status)) {
+                      setTempOrderStatusFilter(tempOrderStatusFilter.filter(s => s !== status));
+                    } else {
+                      setTempOrderStatusFilter([...tempOrderStatusFilter, status]);
+                    }
+                  }}
+                >
+                  <input
+                    className="form-check-input"
+                    type="checkbox"
+                    id={`temp-status-${status}`}
+                    checked={tempOrderStatusFilter.includes(status)}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setTempOrderStatusFilter([...tempOrderStatusFilter, status]);
+                      } else {
+                        setTempOrderStatusFilter(tempOrderStatusFilter.filter(s => s !== status));
+                      }
+                    }}
+                    style={{ 
+                      cursor: 'pointer', 
+                      marginTop: '0',
+                      marginRight: '12px',
+                      width: '20px',
+                      height: '20px',
+                      flexShrink: 0
+                    }}
+                  />
+                  <label 
+                    className="mb-0 flex-grow-1" 
+                    htmlFor={`temp-status-${status}`} 
+                    style={{ cursor: 'pointer', fontSize: '0.95rem' }}
+                  >
+                    {getStatusName(status)}
+                  </label>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Estado del pago */}
+          <div className="mb-4">
+            <label className="form-label fw-semibold text-dark mb-3" style={{ fontSize: '0.95rem' }}>
+              {language === 'es' ? 'Estado del pago' : 'Payment status'}
+            </label>
+            <select
+              className="form-select"
+              value={tempPaymentStatusFilter}
+              onChange={(e) => setTempPaymentStatusFilter(e.target.value)}
+            >
+              <option value="">{language === 'es' ? 'Todos' : 'All'}</option>
+              <option value="PENDING">{language === 'es' ? 'Pendiente' : 'Pending'}</option>
+              <option value="PAID">{language === 'es' ? 'Pagado' : 'Paid'}</option>
+              <option value="CANCELLED">{language === 'es' ? 'Cancelado' : 'Cancelled'}</option>
+              <option value="REFUNDED">{language === 'es' ? 'Reembolsado' : 'Refunded'}</option>
+            </select>
+          </div>
+
+          {/* Fecha de la actividad */}
+          <div className="mb-4">
+            <label className="form-label fw-semibold text-dark mb-3" style={{ fontSize: '0.95rem' }}>
+              {language === 'es' ? 'Fecha de la actividad' : 'Activity date'}
+            </label>
+            <div className="position-relative date-picker-dropdown-container">
+              <input
+                type="text"
+                className="form-control"
+                value={getDateInputText()}
+                onClick={() => setShowDatePickerModal(!showDatePickerModal)}
+                readOnly
+                style={{ cursor: 'pointer' }}
+              />
+              <i className="fas fa-calendar-alt position-absolute end-0 top-50 translate-middle-y me-2 text-muted" style={{ pointerEvents: 'none' }}></i>
+              
+              {/* Dropdown de fechas */}
+              {showDatePickerModal && (
+                <div 
+                  className="position-absolute top-100 start-0 mt-1 bg-white border rounded shadow-lg p-3 w-100"
+                  style={{ 
+                    zIndex: 1000, 
+                    boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="row g-3 mb-3">
+                    <div className="col-6">
+                      <label className="form-label small text-muted mb-1">
+                        {language === 'es' ? 'Desde' : 'From'}
+                      </label>
+                      <div className="position-relative">
+                        <input
+                          type="date"
+                          className="form-control form-control-sm"
+                          value={tempFromDate}
+                          onChange={(e) => {
+                            const selectedDate = e.target.value;
+                            setTempFromDate(selectedDate);
+                            // Automáticamente establecer "Hasta" con 7 días después
+                            if (selectedDate) {
+                              setTempToDate(addDays(selectedDate, 7));
+                            } else {
+                              setTempToDate('');
+                            }
+                          }}
+                          max={tempToDate || undefined}
+                        />
+                        <i className="fas fa-calendar-alt position-absolute end-0 top-50 translate-middle-y me-2 text-muted small" style={{ pointerEvents: 'none' }}></i>
+                      </div>
+                    </div>
+                    <div className="col-6">
+                      <label className="form-label small text-muted mb-1">
+                        {language === 'es' ? 'Hasta' : 'To'}
+                      </label>
+                      <div className="position-relative">
+                        <input
+                          type="date"
+                          className="form-control form-control-sm"
+                          value={tempToDate}
+                          onChange={(e) => handleTempEndDateChange(e.target.value)}
+                          min={tempFromDate || undefined}
+                        />
+                        <i className="fas fa-calendar-alt position-absolute end-0 top-50 translate-middle-y me-2 text-muted small" style={{ pointerEvents: 'none' }}></i>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* Botones */}
+                  <div className="d-flex gap-2 justify-content-end">
+                    <button
+                      type="button"
+                      className="btn btn-outline-secondary btn-sm"
+                      onClick={() => {
+                        setTempFromDate('');
+                        setTempToDate('');
+                        setTempInitialDate('');
+                        setTempDateType('');
+                      }}
+                    >
+                      {language === 'es' ? 'Limpiar' : 'Clear'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      onClick={() => {
+                        setShowDatePickerModal(false);
+                      }}
+                    >
+                      {language === 'es' ? 'Aplicar' : 'Apply'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Código de referencia */}
+          <div className="mb-4">
+            <label className="form-label fw-semibold text-dark mb-3" style={{ fontSize: '0.95rem' }}>
+              {language === 'es' ? 'Código de referencia' : 'Reference code'}
+            </label>
+            <div className="input-group">
+              <span className="input-group-text bg-white">
+                <i className="fas fa-file-alt text-muted"></i>
+              </span>
+              <input
+                type="text"
+                className="form-control"
+                value={tempReferenceCode}
+                onChange={(e) => setTempReferenceCode(e.target.value)}
+                placeholder={language === 'es' ? 'Código...' : 'Code...'}
+              />
+            </div>
+          </div>
+
+          {/* Ordenar por */}
+          <div className="mb-4">
+            <label className="form-label fw-semibold text-dark mb-3" style={{ fontSize: '0.95rem' }}>
+              {language === 'es' ? 'Ordenar por' : 'Order by'}
+            </label>
+            <select
+              className="form-select"
+              value={`${tempSortBy}-${tempSortDirection}`}
+              onChange={(e) => {
+                const [newSortBy, newSortDirection] = e.target.value.split('-');
+                if (newSortBy === 'startDateTime' || newSortBy === 'createdAt') {
+                  setTempSortBy(newSortBy);
+                }
+                setTempSortDirection(newSortDirection as 'ASC' | 'DESC');
+              }}
+            >
+              <option value="startDateTime-DESC">
+                {language === 'es' ? 'Fecha de salida (Desc)' : 'Departure date (Desc)'}
+              </option>
+              <option value="startDateTime-ASC">
+                {language === 'es' ? 'Fecha de salida (Asc)' : 'Departure date (Asc)'}
+              </option>
+              <option value="createdAt-DESC">
+                {language === 'es' ? 'Fecha de compra (Desc)' : 'Purchase date (Desc)'}
+              </option>
+              <option value="createdAt-ASC">
+                {language === 'es' ? 'Fecha de compra (Asc)' : 'Purchase date (Asc)'}
+              </option>
+            </select>
+          </div>
+
+          {/* Botones de acción */}
+          <div className="d-grid gap-2 mt-4">
+            <button
+              className="btn btn-primary"
+              onClick={handleApplyFilters}
+            >
+              {language === 'es' ? 'Aplicar filtros' : 'Apply filters'}
+            </button>
+            <button
+              className="btn btn-outline-secondary"
+              onClick={() => {
+                handleClearAllFilters();
+                setShowMobileFilters(false);
+              }}
+            >
+              {language === 'es' ? 'Limpiar filtros' : 'Clear filters'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Modal de confirmación */}
+      {showConfirmModal && (
+        <div 
+          className="modal show d-block" 
+          style={{ backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 1050 }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowConfirmModal(false);
+              setOrderIdToConfirm(null);
+            }
+          }}
+        >
+          <div 
+            className="modal-dialog modal-dialog-centered"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">
+                  {language === 'es' ? 'Confirmar Reserva' : 'Confirm Reservation'}
+                </h5>
+                <button
+                  type="button"
+                  className="btn-close"
+                  onClick={() => {
+                    setShowConfirmModal(false);
+                    setOrderIdToConfirm(null);
+                  }}
+                  aria-label="Close"
+                ></button>
+              </div>
+              <div className="modal-body">
+                <p>
+                  {language === 'es' 
+                    ? '¿Estás seguro que deseas confirmar esta reserva?'
+                    : 'Are you sure you want to confirm this reservation?'}
+                </p>
+              </div>
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    setShowConfirmModal(false);
+                    setOrderIdToConfirm(null);
+                  }}
+                >
+                  {language === 'es' ? 'Cancelar' : 'Cancel'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={handleConfirmAndNavigate}
+                >
+                  {language === 'es' ? 'Sí, Confirmar' : 'Yes, Confirm'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };

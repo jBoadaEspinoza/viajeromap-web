@@ -5,6 +5,7 @@ import { useCurrency } from '../context/CurrencyContext';
 import { getTranslation, getLanguageName } from '../utils/translations';
 import { OrderResponse, OrderItemResponse } from '../api/orders';
 import { activitiesApi, Activity } from '../api/activities';
+import { getTimeZoneFromSystem } from '../utils/dateUtils';
 
 interface PaymentCompletedState {
   paymentMethod?: string;
@@ -94,7 +95,21 @@ const PaymentCompleted: React.FC = () => {
       setLoading(false);
     }
   }, [paymentData, language]);
-
+  const formatDateTime = (dateString?: string): string => {
+    if (!dateString) return '-';
+    try {
+      const date = new Date(dateString);
+      return date.toLocaleString(language === 'es' ? 'es-ES' : 'en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch {
+      return dateString;
+    }
+  };
   // Función auxiliar para formatear fecha según el idioma
   const formatDate = (dateString?: string): string => {
     if (!dateString) return '-';
@@ -260,13 +275,13 @@ const PaymentCompleted: React.FC = () => {
                         </p>
                         <p className="text-muted small mb-0">
                           {language === 'es' ? 'Estado:' : 'Status:'} 
-                          <span className="badge bg-info ms-2">{order.orderStatus}</span>
+                          <span className={`badge bg-${!isPendingPayment ? 'success' : 'warning'} ms-2`}>{!isPendingPayment ? (language === 'es' ? 'Confirmado' : 'Confirmed') : (language === 'es' ? 'Por confirmar' : 'Pending for confirmation')}</span>
                         </p>
                       </div>
                       <div className="text-end">
                         <p className="h6 mb-0">{formatPrice(order.totalAmount, order.items[0]?.currency || currency)}</p>
                         <p className="text-muted small mb-0">
-                          {new Date(order.updatedAt).toLocaleString(language === 'es' ? 'es-ES' : 'en-US')}
+                          {new Date(order.createdAt).toLocaleString(language === 'es' ? 'es-ES' : 'en-US')} {getTimeZoneFromSystem()}
                         </p>
                       </div>
                     </div>
@@ -310,13 +325,13 @@ const PaymentCompleted: React.FC = () => {
                   </div>
                 )}
                                   <div className={activityImageUrl ? 'col-md-9' : 'col-12'}>
-                                    <h6 className="mb-2">{activityTitle || (language === 'es' ? 'Actividad' : 'Activity')}</h6>
+                                    <h6 className="mb-2" style={{ fontWeight: 'bold', fontSize: '1.2rem' , color: '#2C3E50'}}>{activityTitle || (language === 'es' ? 'Actividad' : 'Activity')}</h6>
                                     <div className="row small">
                                       <div className="col-md-6 mb-2">
-                                        <strong>{language === 'es' ? 'Fecha:' : 'Date:'}</strong> {formatDate(item.startDatetime)}
+                                        <strong>{language === 'es' ? 'Fecha de salida:' : 'Date of departure:'}</strong> {formatDate(item.startDatetime)} {language === 'es' ? 'a las' : 'at'} {formatTime(item.startDatetime)}
                   </div>
                                       <div className="col-md-6 mb-2">
-                                        <strong>{language === 'es' ? 'Hora:' : 'Time:'}</strong> {formatTime(item.startDatetime)}
+                                        <strong>{language === 'es' ? 'Zona horaria:' : 'Timezone:'}</strong> {item.timeZone}
                     </div>
                                       <div className="col-md-6 mb-2">
                                         <strong>{language === 'es' ? 'Participantes:' : 'Participants:'}</strong>{' '}

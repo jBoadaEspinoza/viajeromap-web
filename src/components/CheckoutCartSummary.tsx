@@ -16,6 +16,7 @@ interface CheckoutCartSummaryProps {
   onEditComment?: (item: CheckoutSummaryItem, comment: string) => void;
   onEditDate?: (item: CheckoutSummaryItem, payload: { date: string; time?: string }) => void;
   onEditTravelers?: (item: CheckoutSummaryItem, travelers: { adults: number; children: number }) => void;
+  readOnly?: boolean; // Si es true, deshabilita todas las ediciones y oculta el mensaje de cancelación
 }
 
 interface PricingOverride {
@@ -45,7 +46,7 @@ const getFallbackTotal = (item: CheckoutSummaryItem) => {
   return unitPrice * travelerCount;
 };
 
-const CheckoutCartSummary: React.FC<CheckoutCartSummaryProps> = ({ title, items, language, onRemoveItem, onEditLanguage, onEditMeetingPoint, onEditComment, onEditDate, onEditTravelers }) => {
+const CheckoutCartSummary: React.FC<CheckoutCartSummaryProps> = ({ title, items, language, onRemoveItem, onEditLanguage, onEditMeetingPoint, onEditComment, onEditDate, onEditTravelers, readOnly = false }) => {
   const [pricingOverrides, setPricingOverrides] = useState<Record<string, PricingOverride>>({});
   const resolvedTitle = title === undefined || title === null ?  "" : title;
   const formatCurrency = (value: number, currency: string) => {
@@ -153,6 +154,7 @@ const CheckoutCartSummary: React.FC<CheckoutCartSummaryProps> = ({ title, items,
             onEditDate={onEditDate}
             onEditTravelers={onEditTravelers}
             onTotalsChange={handleTotalsChange}
+            readOnly={readOnly}
           />
         ))}
 

@@ -2,12 +2,12 @@ import { apiClient } from './apiClient';
 import {auth} from '../config/firebase';
 import { getAuthToken } from '../utils/cookieHelper';
 
+
 export interface ApiResponse {
     success: boolean;
     message: string;
     idCreated?: string | number | null;
 }
-
 
 export interface Supplier {
   name: string;
@@ -32,7 +32,7 @@ export interface AddOrderItemRequest {
     adults: number;
     children: number;
     pricePerParticipant: number;
-    startDatetime: string; // formato ISO: YYYY-MM-DDTHH:mm:ss
+    startDatetime: string; // formato UTC: YYYY-MM-DDTHH:mm:ss
     specialRequest?: string | null;
     meetingPickupPlaceId?: number | null;
     meetingPickupPointName?: string | null;

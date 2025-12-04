@@ -1,4 +1,5 @@
 import Cookies from 'js-cookie';
+import type { CookieAttributes } from 'js-cookie';
 
 const COOKIE_CONSENT_KEY = 'viajeromap_cookie_consent';
 
@@ -20,7 +21,7 @@ export const hasUserConsent = (): boolean => {
 export const setCookie = (
   name: string, 
   value: string, 
-  options?: Cookies.CookieAttributes
+  options?: CookieAttributes
 ): boolean => {
   if (!hasUserConsent()) {
     console.warn(`⚠️ No se puede establecer cookie "${name}" sin consentimiento del usuario`);
@@ -28,8 +29,8 @@ export const setCookie = (
   }
   
   // Establecer cookie con opciones seguras por defecto
-  const defaultOptions: Cookies.CookieAttributes = {
-    sameSite: 'Lax',
+  const defaultOptions: CookieAttributes = {
+    sameSite: 'lax',
     secure: window.location.protocol === 'https:',
     expires: 7, // 7 días por defecto
     ...options
@@ -54,7 +55,7 @@ export const getCookie = (name: string): string | undefined => {
  * @param name Nombre de la cookie
  * @param options Opciones adicionales
  */
-export const removeCookie = (name: string, options?: Cookies.CookieAttributes): void => {
+export const removeCookie = (name: string, options?: CookieAttributes): void => {
   Cookies.remove(name, options);
   console.log(`🗑️ Cookie "${name}" eliminada`);
 };
@@ -64,11 +65,13 @@ export const removeCookie = (name: string, options?: Cookies.CookieAttributes): 
  */
 export const removeAllCookies = (): void => {
   const allCookies = Cookies.get();
-  Object.keys(allCookies).forEach(cookieName => {
-    if (cookieName !== COOKIE_CONSENT_KEY) {
-      Cookies.remove(cookieName);
-    }
-  });
+  if (allCookies && typeof allCookies === 'object') {
+    Object.keys(allCookies).forEach(cookieName => {
+      if (cookieName !== COOKIE_CONSENT_KEY) {
+        Cookies.remove(cookieName);
+      }
+    });
+  }
   console.log('🗑️ Todas las cookies eliminadas (excepto consentimiento)');
 };
 
@@ -85,7 +88,7 @@ export const saveAuthToken = (token: string): void => {
   if (hasUserConsent()) {
     setCookie('authToken', token, {
       expires: 7, // 7 días
-      sameSite: 'Lax',
+      sameSite: 'lax',
       secure: window.location.protocol === 'https:'
       // Nota: httpOnly no se puede establecer desde JavaScript
       // Solo se puede establecer desde el servidor

@@ -56,7 +56,7 @@ export const CookieConsentProvider: React.FC<CookieConsentProviderProps> = ({ ch
     // Guardar en cookie también para validar desde backend si es necesario
     Cookies.set(COOKIE_CONSENT_KEY, 'accepted', { 
       expires: COOKIE_CONSENT_EXPIRES,
-      sameSite: 'Lax',
+      sameSite: 'lax',
       secure: window.location.protocol === 'https:'
     });
     
@@ -70,12 +70,14 @@ export const CookieConsentProvider: React.FC<CookieConsentProviderProps> = ({ ch
     
     // Limpiar todas las cookies existentes excepto las esenciales
     const allCookies = Cookies.get();
-    Object.keys(allCookies).forEach(cookieName => {
-      // No eliminar cookies esenciales del sistema
-      if (!cookieName.includes('essential') && cookieName !== COOKIE_CONSENT_KEY) {
-        Cookies.remove(cookieName);
-      }
-    });
+    if (allCookies && typeof allCookies === 'object') {
+      Object.keys(allCookies).forEach(cookieName => {
+        // No eliminar cookies esenciales del sistema
+        if (!cookieName.includes('essential') && cookieName !== COOKIE_CONSENT_KEY) {
+          Cookies.remove(cookieName);
+        }
+      });
+    }
     
     console.log('❌ Usuario rechazó el uso de cookies');
   };

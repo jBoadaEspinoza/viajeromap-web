@@ -42,6 +42,7 @@ export interface BookingOption {
     meetingPointId: number;
     meetingPointCity: string;
     meetingPointCountry: string;
+    timeZone: string;
     schedules: Schedule[];
     scheduleExceptions: ScheduleException[];
     priceTiers: PriceTier[];

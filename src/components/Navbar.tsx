@@ -362,6 +362,34 @@ const Navbar: React.FC = () => {
         .modal-fade-in {
           animation: fadeIn 0.3s ease-in-out;
         }
+
+        @media (min-width: 992px) {
+          .navbar .container {
+            max-width: 1200px !important;
+            margin: 0 auto;
+          }
+        }
+
+        /* Mobile drawer width fix */
+        @media (max-width: 991.98px) {
+          .mobile-drawer-container {
+            max-width: 100vw !important;
+            width: 100% !important;
+            box-sizing: border-box;
+            overflow-x: hidden;
+          }
+          
+          .mobile-drawer-content {
+            max-width: 100%;
+            box-sizing: border-box;
+            overflow-x: hidden;
+          }
+          
+          .mobile-drawer-content * {
+            max-width: 100%;
+            box-sizing: border-box;
+          }
+        }
       `}</style>
       
       <nav className="navbar navbar-expand-lg navbar-light bg-white shadow-sm sticky-top">
@@ -681,17 +709,22 @@ const Navbar: React.FC = () => {
           style={{ 
             zIndex: 9999,
             backgroundColor: 'rgba(0, 0, 0, 0.5)',
-            animation: 'fadeIn 0.3s ease-in-out'
+            animation: 'fadeIn 0.3s ease-in-out',
+            maxWidth: '100vw',
+            overflow: 'hidden'
           }}
           onClick={toggleMobileMenu}
         >
           <div 
-            className="position-fixed top-0 start-0 h-100 bg-white"
+            className="position-fixed top-0 start-0 h-100 bg-white mobile-drawer-container"
             style={{ 
               width: '100%',
+              maxWidth: '100vw',
               zIndex: 10000,
               animation: 'slideInLeft 0.3s ease-in-out',
-              overflowY: 'auto'
+              overflowY: 'auto',
+              overflowX: 'hidden',
+              boxSizing: 'border-box'
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -708,7 +741,7 @@ const Navbar: React.FC = () => {
             </div>
 
             {/* Content */}
-            <div className="p-0">
+            <div className="p-0 mobile-drawer-content">
               {/* Profile Section */}
               <div>
                 <div className="p-3">
@@ -828,17 +861,22 @@ const Navbar: React.FC = () => {
           style={{ 
             zIndex: 10002,
             backgroundColor: 'rgba(0, 0, 0, 0.5)',
-            animation: 'fadeIn 0.3s ease-in-out'
+            animation: 'fadeIn 0.3s ease-in-out',
+            maxWidth: '100vw',
+            overflow: 'hidden'
           }}
           onClick={closeLanguagePageView}
         >
           <div 
-            className="position-fixed top-0 start-0 h-100 bg-white"
+            className="position-fixed top-0 start-0 h-100 bg-white mobile-drawer-container"
             style={{ 
               width: '100%',
+              maxWidth: '100vw',
               zIndex: 10003,
               animation: 'slideInLeft 0.3s ease-in-out',
-              overflowY: 'auto'
+              overflowY: 'auto',
+              overflowX: 'hidden',
+              boxSizing: 'border-box'
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -857,7 +895,7 @@ const Navbar: React.FC = () => {
             </div>
 
             {/* Content */}
-            <div className="p-3">
+            <div className="p-3 mobile-drawer-content">
               <h6 className="text-muted fw-bold mb-3 text-uppercase" style={{ fontSize: '0.75rem' }}>
                 {getTranslation('pageview.language.selectLanguage', language)}
               </h6>
@@ -919,17 +957,22 @@ const Navbar: React.FC = () => {
           style={{ 
             zIndex: 10002,
             backgroundColor: 'rgba(0, 0, 0, 0.5)',
-            animation: 'fadeIn 0.3s ease-in-out'
+            animation: 'fadeIn 0.3s ease-in-out',
+            maxWidth: '100vw',
+            overflow: 'hidden'
           }}
           onClick={closeCurrencyPageView}
         >
           <div 
-            className="position-fixed top-0 start-0 h-100 bg-white"
+            className="position-fixed top-0 start-0 h-100 bg-white mobile-drawer-container"
             style={{ 
               width: '100%',
+              maxWidth: '100vw',
               zIndex: 10003,
               animation: 'slideInLeft 0.3s ease-in-out',
-              overflowY: 'auto'
+              overflowY: 'auto',
+              overflowX: 'hidden',
+              boxSizing: 'border-box'
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -948,7 +991,7 @@ const Navbar: React.FC = () => {
             </div>
 
             {/* Content */}
-            <div className="p-3">
+            <div className="p-3 mobile-drawer-content">
               <h6 className="text-muted fw-bold mb-3 text-uppercase" style={{ fontSize: '0.75rem' }}>
                 {getTranslation('pageview.currency.selectCurrency', language)}
               </h6>
@@ -1010,17 +1053,22 @@ const Navbar: React.FC = () => {
           style={{ 
             zIndex: 10002,
             backgroundColor: 'rgba(0, 0, 0, 0.5)',
-            animation: 'fadeIn 0.3s ease-in-out'
+            animation: 'fadeIn 0.3s ease-in-out',
+            maxWidth: '100vw',
+            overflow: 'hidden'
           }}
           onClick={closeLoginPageView}
         >
           <div 
-            className="position-fixed top-0 start-0 h-100 bg-white"
+            className="position-fixed top-0 start-0 h-100 bg-white mobile-drawer-container"
             style={{ 
               width: '100%',
+              maxWidth: '100vw',
               zIndex: 10003,
               animation: 'slideInLeft 0.3s ease-in-out',
-              overflowY: 'auto'
+              overflowY: 'auto',
+              overflowX: 'hidden',
+              boxSizing: 'border-box'
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -1039,7 +1087,7 @@ const Navbar: React.FC = () => {
             </div>
 
             {/* Content */}
-            <div className="p-3">
+            <div className="p-3 mobile-drawer-content">
               <p className="text-muted mb-4">
                 {getTranslation('checkout.loginModal.benefits', language)}
               </p>

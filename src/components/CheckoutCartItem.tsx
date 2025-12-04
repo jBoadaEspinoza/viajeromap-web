@@ -4,6 +4,7 @@ import { ordersItemApi } from '../api/ordersItem';
 import { useLanguage } from '../context/LanguageContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { getLanguageName } from '../utils/translations';
+import { convertLocalDateTimeToUTC } from '../utils/dateUtils';
 import RatingStars from './RatingStars';
 
 export interface CheckoutSummaryItem {
@@ -35,6 +36,7 @@ export interface CheckoutSummaryItem {
   meetingPickupPointLatitude?: number | null;
   meetingPickupPointLongitude?: number | null;
   cancelUntilDate?: string | null; // Fecha límite para cancelar
+  timeZone?: string; // Zona horaria de la actividad
 }
 
 const capitalizeWords = (value?: string): string => {
@@ -68,6 +70,7 @@ interface CheckoutCartItemProps {
     travelerCount: number;
     specialOfferPercentage: number | null;
   }) => void;
+  readOnly?: boolean; // Si es true, deshabilita todas las ediciones y oculta el mensaje de cancelación
 }
 
 const CheckoutCartItem: React.FC<CheckoutCartItemProps> = ({
@@ -83,6 +86,7 @@ const CheckoutCartItem: React.FC<CheckoutCartItemProps> = ({
   onEditDate,
   onEditTravelers,
   onTotalsChange,
+  readOnly = false,
 }) => {
   const hasChildren = (item.travelers?.children ?? 0) > 0;
   const { language: appLanguage } = useLanguage();
@@ -127,6 +131,7 @@ const CheckoutCartItem: React.FC<CheckoutCartItemProps> = ({
   const [dateError, setDateError] = useState<string | null>(null);
   const [displayDate, setDisplayDate] = useState(item.date || '');
   const [displayTime, setDisplayTime] = useState(item.time || '');
+  const [activityTimeZone, setActivityTimeZone] = useState<string>(item.timeZone || '');
   const [pricingData, setPricingData] = useState<{ baseUnitPrice: number; discountedUnitPrice: number; specialOfferPercentage: number | null }>(() => ({
     baseUnitPrice: item.unitPrice ?? 0,
     discountedUnitPrice: item.unitPrice ?? 0,
@@ -145,6 +150,71 @@ const CheckoutCartItem: React.FC<CheckoutCartItemProps> = ({
     const tzOffset = now.getTimezoneOffset() * 60000;
     return new Date(now.getTime() - tzOffset).toISOString().split('T')[0];
   }, []);
+
+  // Función para convertir hora de formato 24h a AM/PM
+  const formatTimeToAMPM = (time24: string): string => {
+    if (!time24) return '';
+    
+    try {
+      // Extraer horas y minutos del formato HH:mm o HH:mm:ss
+      const timeParts = time24.split(':');
+      if (timeParts.length < 2) return time24;
+      
+      const hours = parseInt(timeParts[0], 10);
+      const minutes = timeParts[1];
+      
+      if (isNaN(hours) || hours < 0 || hours > 23) return time24;
+      
+      // Convertir a formato AM/PM
+      const period = hours >= 12 ? 'PM' : 'AM';
+      const hours12 = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+      
+      return `${hours12}:${minutes} ${period}`;
+    } catch {
+      return time24;
+    }
+  };
+
+  // Función para formatear la zona horaria
+  const formatTimeZone = (timeZone: string): string => {
+    if (!timeZone) return '';
+    
+    try {
+      // Si tiene formato "Continent/City", mostrar de forma legible
+      if (timeZone.includes('/')) {
+        const parts = timeZone.split('/');
+        if (parts.length >= 2) {
+          // Mostrar "City, Continent" o solo "City" dependiendo del idioma
+          const city = parts[parts.length - 1].replace(/_/g, ' ');
+          const continent = parts[0].replace(/_/g, ' ');
+          
+          // Traducir nombres comunes de continentes
+          const continentMap: Record<string, { es: string; en: string }> = {
+            'America': { es: 'América', en: 'America' },
+            'Europe': { es: 'Europa', en: 'Europe' },
+            'Asia': { es: 'Asia', en: 'Asia' },
+            'Africa': { es: 'África', en: 'Africa' },
+            'Australia': { es: 'Australia', en: 'Australia' },
+            'Pacific': { es: 'Pacífico', en: 'Pacific' },
+            'Atlantic': { es: 'Atlántico', en: 'Atlantic' },
+            'Indian': { es: 'Índico', en: 'Indian' },
+            'Antarctica': { es: 'Antártida', en: 'Antarctica' },
+          };
+          
+          const translatedContinent = (continentMap[continent as keyof typeof continentMap]?.[language as 'es' | 'en']) || continent;
+          
+          // Formatear como "City, Continent" (ej: "Lima, América")
+          return `${city}, ${translatedContinent}`;
+        }
+      }
+      
+      // Si no tiene formato estándar, devolver tal cual
+      return timeZone.replace(/_/g, ' ');
+    } catch {
+      // Si falla, devolver el timeZone original reemplazando guiones bajos por espacios
+      return timeZone.replace(/_/g, ' ');
+    }
+  };
 
   // Función para verificar si aún se puede cancelar y formatear el mensaje
   const getCancellationInfo = useMemo(() => {
@@ -329,6 +399,12 @@ const CheckoutCartItem: React.FC<CheckoutCartItemProps> = ({
         const bookingOption = activity.bookingOptions?.find((option) => option.id === item.bookingOptionId)
           || activity.bookingOptions?.[0];
 
+        // Obtener la zona horaria desde bookingOption.timeZone o orderItem.timeZone
+        const timeZone = (bookingOption as any)?.timeZone || item.timeZone;
+        if (timeZone) {
+          setActivityTimeZone(timeZone);
+        }
+
         setMeetingTypeLocal(bookingOption?.meetingType);
 
         const coverImage = activity.images?.find((img) => img.isCover) || activity.images?.[0];
@@ -485,6 +561,7 @@ const CheckoutCartItem: React.FC<CheckoutCartItemProps> = ({
     setPendingTime(item.time || '');
     setDisplayDate(item.date || '');
     setDisplayTime(item.time || '');
+    setActivityTimeZone(item.timeZone || '');
     setAvailableTimes([]);
     setDateError(null);
 
@@ -574,16 +651,16 @@ const CheckoutCartItem: React.FC<CheckoutCartItemProps> = ({
       const normalizedTime = normalizeTimeTo24Hour(timeToUse);
       
       // Construir startDatetime: si hay fecha, usar fecha + tiempo normalizado (o 00:00:00 si no hay tiempo)
-      let startDatetime = '';
+      let startDatetimeUTC = '';
       if (dateToUse) {
         const timeForDatetime = normalizedTime || '00:00:00';
-        startDatetime = `${dateToUse}T${timeForDatetime}`;
+        startDatetimeUTC = `${dateToUse}T${timeForDatetime}`;
       } else if (item.date) {
         // Fallback a la fecha del item si no se proporciona nueva fecha
         const fallbackTime = normalizeTimeTo24Hour(item.time) || '00:00:00';
-        startDatetime = `${item.date}T${fallbackTime}`;
+        startDatetimeUTC = `${item.date}T${fallbackTime}`;
       }
-
+      
       // Obtener adultos y niños actualizados
       const adultsToUse = updates.adults ?? item.travelers.adults;
       const childrenToUse = updates.children ?? item.travelers.children;
@@ -621,7 +698,7 @@ const CheckoutCartItem: React.FC<CheckoutCartItemProps> = ({
         adults: adultsToUse,
         children: childrenToUse,
         pricePerParticipant: pricePerParticipantToUse,
-        startDatetime: startDatetime,
+        startDatetime: startDatetimeUTC,
         specialRequest: updates.specialRequest !== undefined ? (updates.specialRequest || null) : (item.comment || null),
         meetingPickupPlaceId: updates.meetingPickupPlaceId !== undefined ? updates.meetingPickupPlaceId : (item.meetingPickupPlaceId ?? null),
         meetingPickupPointName: updates.meetingPickupPointName !== undefined ? updates.meetingPickupPointName : (item.meetingPoint || null),
@@ -633,7 +710,7 @@ const CheckoutCartItem: React.FC<CheckoutCartItemProps> = ({
       };
 
       console.log('🔄 Actualizando order item:', orderItemRequest);
-      console.log('📅 startDatetime construido:', startDatetime);
+      console.log('📅 startDatetime construido:', startDatetimeUTC);
       console.log('💰 Precio unitario por participante enviado:', pricePerParticipantToUse);
 
       const response = await ordersItemApi.addOrderItem(orderItemRequest);
@@ -789,27 +866,54 @@ const CheckoutCartItem: React.FC<CheckoutCartItemProps> = ({
       return;
     }
 
-    if (availableTimes.length > 0 && !pendingTime) {
+    // Si no hay horarios disponibles, no permitir guardar
+    if (availableTimes.length === 0) {
+      setDateError(language === 'es' ? 'No hay horarios disponibles para esta fecha. Por favor, selecciona otra fecha.' : 'No available times for this date. Please select another date.');
+      return;
+    }
+
+    // Validar que se haya seleccionado un horario
+    if (!pendingTime) {
       setDateError(language === 'es' ? 'Selecciona un horario disponible.' : 'Please choose an available time.');
       return;
     }
 
-    const normalizedTime = pendingTime || '';
     setIsSavingDateLocal(true);
 
     try {
-      console.log('📅 Guardando fecha:', { date: pendingDate, time: normalizedTime });
+      // Obtener el timeZone del bookingOption
+      const bookingOption = fullActivity?.bookingOptions?.find((option: any) => option.id === item.bookingOptionId)
+        || fullActivity?.bookingOptions?.[0];
+      const timeZone = (bookingOption as any)?.timeZone || activityTimeZone || 'America/Lima';
       
-      // Actualizar usando la API
-      await updateOrderItem({ date: pendingDate, time: normalizedTime });
+      // Construir la fecha/hora local
+      const normalizedTime = normalizeTimeTo24Hour(pendingTime);
+      const localDateTime = `${pendingDate}T${normalizedTime}`;
       
-      // Actualizar estado local inmediatamente
+      // Convertir de local a UTC usando el timeZone
+      const utcDateTime = convertLocalDateTimeToUTC(localDateTime, timeZone);
+      
+      // Extraer fecha y hora del resultado UTC (sin el +00:00)
+      const [utcDate, utcTime] = utcDateTime.replace('+00:00', '').split('T');
+      
+      console.log('📅 Guardando fecha:', { 
+        localDate: pendingDate, 
+        localTime: normalizedTime,
+        timeZone: timeZone,
+        utcDate: utcDate,
+        utcTime: utcTime
+      });
+      
+      // Actualizar usando la API con la fecha/hora en UTC
+      await updateOrderItem({ date: utcDate, time: utcTime });
+      
+      // Actualizar estado local con la fecha/hora local (para mostrar)
       setDisplayDate(pendingDate);
       setDisplayTime(normalizedTime);
       setIsEditingDateLocal(false);
       setDateError(null);
 
-      // Notificar al componente padre si existe el callback
+      // Notificar al componente padre si existe el callback (con fecha/hora local para mostrar)
       if (onEditDate) {
         onEditDate(item, { date: pendingDate, time: normalizedTime });
       }
@@ -988,7 +1092,7 @@ const CheckoutCartItem: React.FC<CheckoutCartItemProps> = ({
                   </span>
                 )}
               </div>
-              {!isEditingLanguageLocal && availableLanguages.length > 0 && (
+              {!isEditingLanguageLocal && availableLanguages.length > 0 && !readOnly && onEditLanguage && (
                 <button
                   type="button"
                   className="btn btn-link btn-sm text-decoration-none px-0 ms-2"
@@ -1047,7 +1151,7 @@ const CheckoutCartItem: React.FC<CheckoutCartItemProps> = ({
                     : 'Not specified'}
                 </span>
               </div>
-              {meetingTypeLocal === 'REFERENCE_CITY_WITH_LIST' && pickupOptions.length > 0 && !isEditingMeetingPointLocal && (
+              {meetingTypeLocal === 'REFERENCE_CITY_WITH_LIST' && pickupOptions.length > 0 && !isEditingMeetingPointLocal && !readOnly && onEditMeetingPoint && (
                 <button
                   type="button"
                   className="btn btn-link btn-sm text-decoration-none px-0 ms-2"
@@ -1118,7 +1222,7 @@ const CheckoutCartItem: React.FC<CheckoutCartItemProps> = ({
                   </span>
                 )}
               </div>
-              {!isEditingCommentLocal && onEditComment && (
+              {!isEditingCommentLocal && !readOnly && onEditComment && (
                 <button
                   type="button"
                   className="btn btn-link btn-sm text-decoration-none px-0 ms-2"
@@ -1184,13 +1288,21 @@ const CheckoutCartItem: React.FC<CheckoutCartItemProps> = ({
                     {displayTime && (
                       <>
                         {' '}
-                        {language === 'es' ? 'a las' : 'at'} {displayTime}
+                        {language === 'es' ? 'a las' : 'at'} {formatTimeToAMPM(displayTime)}
+                        {activityTimeZone && (
+                          <>
+                            {' '}
+                            <span className="text-muted small">
+                              ({activityTimeZone})
+                            </span>
+                          </>
+                        )}
                       </>
                     )}
                   </span>
                 )}
               </div>
-              {!isEditingDateLocal && (
+              {!isEditingDateLocal && !readOnly && onEditDate && (
                 <button
                   type="button"
                   className="btn btn-link btn-sm text-decoration-none px-0 ms-2"
@@ -1239,17 +1351,12 @@ const CheckoutCartItem: React.FC<CheckoutCartItemProps> = ({
                         ))}
                       </select>
                     ) : (
-                      <div className="d-flex flex-column gap-1">
-                        <input
-                          type="time"
-                          className="form-control form-control-sm"
-                          value={pendingTime}
-                          onChange={(event) => handleTimeSelect(event.target.value)}
-                        />
-                        <small className="text-muted">
-                          {language === 'es'
-                            ? 'No hay horarios programados, selecciona uno manualmente.'
-                            : 'No scheduled times available; choose one manually.'}
+                      <div className="alert alert-info mb-0 py-2" role="alert">
+                        <small>
+                          <i className="fas fa-info-circle me-1"></i>
+                          {language === 'es' 
+                            ? 'No hay horarios disponibles para esta fecha.'
+                            : 'No available times for this date.'}
                         </small>
                       </div>
                     )}
@@ -1261,7 +1368,7 @@ const CheckoutCartItem: React.FC<CheckoutCartItemProps> = ({
                     type="button"
                     className="btn btn-sm btn-primary"
                     onClick={handleSaveDate}
-                    disabled={isLoadingSchedules || isSavingDateLocal}
+                    disabled={isLoadingSchedules || isSavingDateLocal || availableTimes.length === 0}
                   >
                     <i className="fas fa-check me-1"></i>
                     {language === 'es' ? 'Guardar' : 'Save'}
@@ -1289,7 +1396,7 @@ const CheckoutCartItem: React.FC<CheckoutCartItemProps> = ({
                   <span className="text-muted ms-1">{formatTravelers(item)}</span>
                 )}
               </div>
-              {!isEditingTravelersLocal && onEditTravelers && (
+              {!isEditingTravelersLocal && !readOnly && onEditTravelers && (
                 <button
                   type="button"
                   className="btn btn-link btn-sm text-decoration-none px-0 ms-2"
@@ -1434,37 +1541,26 @@ const CheckoutCartItem: React.FC<CheckoutCartItemProps> = ({
         )}
 
         {/* Alerta de cancelación */}
-        {getCancellationInfo && (
-          <div className={`alert ${getCancellationInfo.canCancel ? 'alert-info' : 'alert-warning'} mt-3 mb-0`} role="alert" style={{ wordBreak: 'break-word' }}>
+        {!readOnly && getCancellationInfo && getCancellationInfo.canCancel && (
+          <div className="alert alert-info mt-3 mb-0" role="alert" style={{ wordBreak: 'break-word' }}>
             <div className="d-flex align-items-start">
-              <i className={`fas ${getCancellationInfo.canCancel ? 'fa-info-circle' : 'fa-exclamation-triangle'} me-2 mt-1`}></i>
+              <i className="fas fa-info-circle me-2 mt-1"></i>
               <div className="flex-grow-1">
-                {getCancellationInfo.canCancel ? (
-                  <div>
-                    <strong>{language === 'es' ? 'Política de cancelación' : 'Cancellation policy'}</strong>
-                    <div className="small mt-1">
-                      {language === 'es' 
-                        ? `Si realizas una reserva, puedes cancelarla hasta el ${getCancellationInfo.deadline}.`
-                        : `If you make a reservation, you can cancel it until ${getCancellationInfo.deadline}.`}
-                      {getCancellationInfo.daysUntilDeadline >= 0 && getCancellationInfo.daysUntilDeadline <= 7 && (
-                        <span className="d-block mt-1 fw-semibold">
-                          {language === 'es'
-                            ? `Quedan ${getCancellationInfo.daysUntilDeadline} ${getCancellationInfo.daysUntilDeadline === 1 ? 'día' : 'días'} para cancelar.`
-                            : `${getCancellationInfo.daysUntilDeadline} ${getCancellationInfo.daysUntilDeadline === 1 ? 'day' : 'days'} remaining to cancel.`}
-                        </span>
-                      )}
-                    </div>
+                <div>
+                  <strong>{language === 'es' ? 'Política de cancelación' : 'Cancellation policy'}</strong>
+                  <div className="small mt-1">
+                    {language === 'es' 
+                      ? `Si realizas una reserva, puedes cancelarla hasta el ${getCancellationInfo.deadline}.`
+                      : `If you make a reservation, you can cancel it until ${getCancellationInfo.deadline}.`}
+                    {getCancellationInfo.daysUntilDeadline > 0 && getCancellationInfo.daysUntilDeadline <= 7 && (
+                      <span className="d-block mt-1 fw-semibold">
+                        {language === 'es'
+                          ? `Quedan ${getCancellationInfo.daysUntilDeadline} ${getCancellationInfo.daysUntilDeadline === 1 ? 'día' : 'días'} para cancelar.`
+                          : `${getCancellationInfo.daysUntilDeadline} ${getCancellationInfo.daysUntilDeadline === 1 ? 'day' : 'days'} remaining to cancel.`}
+                      </span>
+                    )}
                   </div>
-                ) : (
-                  <div>
-                    <strong>{language === 'es' ? 'Período de cancelación expirado' : 'Cancellation period expired'}</strong>
-                    <div className="small mt-1">
-                      {language === 'es'
-                        ? `El período de cancelación expiró el ${getCancellationInfo.deadline}. Ya no es posible cancelar esta reserva.`
-                        : `The cancellation period expired on ${getCancellationInfo.deadline}. It is no longer possible to cancel this reservation.`}
-                    </div>
-                  </div>
-                )}
+                </div>
               </div>
             </div>
           </div>

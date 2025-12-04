@@ -110,6 +110,10 @@ export const translations: Translations = {
     es: 'Mis Reservas',
     en: 'My Bookings'
   },
+  'bookings.emptyMessage': {
+    es: 'No hay reservas',
+    en: 'No bookings'
+  },
   'bookings.description': {
     es: 'Gestiona y visualiza todas tus reservas de actividades en un solo lugar.',
     en: 'Manage and view all your activity bookings in one place.'
@@ -159,6 +163,14 @@ export const translations: Translations = {
   'checkout.paymentMethod': {
     es: 'Método de pago',
     en: 'Payment method'
+  },
+  'checkout.contactInfoSaved': {
+    es: 'Información de contacto guardada',
+    en: 'Contact information saved'
+  },
+  'checkout.phoneNumberRequired': {
+    es: 'Número de móvil*',
+    en: 'Mobile number*'
   },
   'checkout.reserveNowPayLaterDesc': {
     es: 'Puedes pagar más tarde',
@@ -1139,6 +1151,10 @@ export const translations: Translations = {
   'detail.booking.reserve': {
     es: 'Reservar',
     en: 'Reserve'
+  },
+  'detail.booking.itemAddedToCart': {
+    es: 'Actividad agregada al carrito exitosamente',
+    en: 'Activity added to cart successfully'
   },
   'detail.meetingPoint': {
     es: 'Punto de encuentro',
