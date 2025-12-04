@@ -7,6 +7,7 @@ import { getTranslation, getLanguageName } from '../utils/translations';
 import { ordersApi, OrderResponse } from '../api/orders';
 import { useGoogleTokenValidation } from '../hooks/useGoogleTokenValidation';
 import ActivityReviewModal from '../components/ActivityReviewModal';
+import { capitalizeWords } from '../utils/helpers';
 
 const Bookings: React.FC = () => {
   const navigate = useNavigate();
@@ -28,6 +29,12 @@ const Bookings: React.FC = () => {
   // Estados para modal de confirmación
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [orderIdToConfirm, setOrderIdToConfirm] = useState<string | null>(null);
+  // Estados para chat con proveedor
+  const [showChat, setShowChat] = useState(false);
+  const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
+  const [providerName, setProviderName] = useState<string | null>(null);
+  const [chatOrderId, setChatOrderId] = useState<string | null>(null);
+  const [chatActivityTitle, setChatActivityTitle] = useState<string | null>(null);
   // Filtros avanzados
   const [orderStatusFilter, setOrderStatusFilter] = useState<string[]>([]);
   const [paymentStatusFilter, setPaymentStatusFilter] = useState<string>('');
@@ -404,21 +411,18 @@ const Bookings: React.FC = () => {
 
   // Función para chatear con proveedor
   const handleChatWithSupplier = (order: OrderResponse) => {
-    // Obtener el primer item para acceder al proveedor
+    // Guardar el ID de la orden
+    setChatOrderId(order.id);
+    // Obtener el nombre del proveedor y título de la actividad del primer item
     const firstItem = order.items?.[0];
     if (firstItem?.activity?.supplier) {
-      const supplier = firstItem.activity.supplier;
-      // Aquí puedes implementar la lógica de chat
-      // Por ahora, solo mostramos un mensaje
-      alert(language === 'es' 
-        ? `Iniciando chat con ${supplier.name}...`
-        : `Starting chat with ${supplier.name}...`);
-      // TODO: Implementar integración con sistema de chat
+      setProviderName(firstItem.activity.supplier.name || null);
     } else {
-      alert(language === 'es' 
-        ? 'No se pudo obtener la información del proveedor'
-        : 'Could not get supplier information');
+      setProviderName(null);
     }
+    // Guardar el título de la actividad del primer item
+    setChatActivityTitle(firstItem?.activity?.title || null);
+    setShowChat(true);
   };
 
   // Función para dejar valoración o comentario
@@ -777,7 +781,8 @@ const Bookings: React.FC = () => {
   };
 
   return (
-    <div className="container py-4 py-md-5">
+    <>
+    <div className="container py-4 py-md-5" style={{ marginRight: showChat ? '350px' : 'auto', marginLeft: 'auto', maxWidth: '1200px' }}>
       <div className="row">
         <div className="col-12">
           <div className="d-flex justify-content-between align-items-center mb-4">
@@ -1332,16 +1337,18 @@ const Bookings: React.FC = () => {
                                           </span>
                                         </button>
                                       ) : (
-                                        <button
-                                          className="btn btn-sm btn-success"
-                                          onClick={() => handleChatWithSupplier(order)}
-                                          title={language === 'es' ? 'Chatear con proveedor' : 'Chat with supplier'}
-                                        >
-                                          <i className="fas fa-comments me-1"></i>
-                                          <span className="d-none d-md-inline">
-                                            {language === 'es' ? 'Chatear con proveedor' : 'Chat with supplier'}
-                                          </span>
-                                        </button>
+                                        !(showChat && chatOrderId === order.id) && (
+                                          <button
+                                            className="btn btn-sm btn-success"
+                                            onClick={() => handleChatWithSupplier(order)}
+                                            title={language === 'es' ? 'Chatear con proveedor' : 'Chat with supplier'}
+                                          >
+                                            <i className="fas fa-comments me-1"></i>
+                                            <span className="d-none d-md-inline">
+                                              {language === 'es' ? 'Chatear con proveedor' : 'Chat with supplier'}
+                                            </span>
+                                          </button>
+                                        )
                                       )}
                                     </>
                                   )}
@@ -1530,13 +1537,15 @@ const Bookings: React.FC = () => {
                                         {language === 'es' ? 'Dejar valoración' : 'Leave rating'}
                                       </button>
                                     ) : (
-                                      <button
-                                        className="btn btn-success btn-sm"
-                                        onClick={() => handleChatWithSupplier(order)}
-                                      >
-                                        <i className="fas fa-comments me-1"></i>
-                                        {language === 'es' ? 'Chatear con proveedor' : 'Chat with supplier'}
-                                      </button>
+                                      !(showChat && chatOrderId === order.id) && (
+                                        <button
+                                          className="btn btn-success btn-sm"
+                                          onClick={() => handleChatWithSupplier(order)}
+                                        >
+                                          <i className="fas fa-comments me-1"></i>
+                                          {language === 'es' ? 'Chatear con proveedor' : 'Chat with supplier'}
+                                        </button>
+                                      )
                                     )}
                                   </div>
                                 )}
@@ -1805,7 +1814,7 @@ const Bookings: React.FC = () => {
             <select
               className="form-select"
               value={`${tempSortBy}-${tempSortDirection}`}
-              onChange={(e) => {
+              onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
                 const [newSortBy, newSortDirection] = e.target.value.split('-');
                 if (newSortBy === 'startDateTime' || newSortBy === 'createdAt') {
                   setTempSortBy(newSortBy);
@@ -1912,6 +1921,209 @@ const Bookings: React.FC = () => {
       )}
 
     </div>
+
+     {/* Barra lateral de chat estilo Facebook (solo desktop) */}
+     {showChat && (
+       <>
+         {/* Versión desktop: barra lateral fija */}
+         <div 
+           className="d-none d-lg-block position-fixed"
+           style={{
+             right: 0,
+             top: '70px',
+             width: '350px',
+             height: 'calc(100vh - 70px)',
+             backgroundColor: '#fff',
+             boxShadow: '-2px 0 8px rgba(0,0,0,0.1)',
+             zIndex: 999,
+             display: 'flex',
+             flexDirection: 'column'
+           }}
+         >
+          <div className="card h-100 border-0 rounded-0 shadow-none" style={{ borderRadius: '0 !important' }}>
+            <div className="card-header bg-primary text-white d-flex justify-content-between align-items-center border-0 rounded-0">
+              <div className="d-flex flex-column flex-grow-1" style={{ minWidth: 0 }}>
+                <h6 className="mb-0 fw-bold d-flex align-items-center" style={{ overflow: 'hidden' }}>
+                  <i className="fas fa-comments me-2 flex-shrink-0"></i>
+                  <span className="text-truncate" style={{ maxWidth: '220px' }}>
+                    {chatActivityTitle || (language === 'es' 
+                      ? `Chat con ${providerName || 'Proveedor'}` 
+                      : `Chat with ${providerName || 'Provider'}`)}
+                  </span>
+                </h6>
+                {chatOrderId && (
+                  <small className="text-white-50" style={{ fontSize: '0.75rem' }}>
+                    {language === 'es' ? 'Orden' : 'Order'} #{chatOrderId}
+                  </small>
+                )}
+              </div>
+              <button
+                type="button"
+                className="btn btn-link text-white p-0 flex-shrink-0"
+                onClick={() => {
+                  setShowChat(false);
+                  setChatOrderId(null);
+                  setChatActivityTitle(null);
+                }}
+                style={{ fontSize: '1.2rem', lineHeight: '1' }}
+                aria-label={language === 'es' ? 'Cerrar chat' : 'Close chat'}
+              >
+                <i className="fas fa-times"></i>
+              </button>
+            </div>
+            <div className="card-body d-flex flex-column p-0" style={{ height: 'calc(100vh - 70px)', overflow: 'hidden' }}>
+              {/* Área de mensajes */}
+              <div 
+                className="flex-grow-1 overflow-auto p-3"
+                style={{ 
+                  backgroundColor: '#f8f9fa',
+                  minHeight: 0
+                }}
+              >
+                {/* Mensajes del chat */}
+                <div className="d-flex flex-column gap-2">
+                  {/* Mensaje de bienvenida */}
+                  <div className="text-center text-muted py-4">
+                    <i className="fas fa-comments fa-2x mb-2"></i>
+                    <p className="mb-0 small">
+                      {language === 'es' 
+                        ? `Inicia una conversación con ${providerName ? capitalizeWords(providerName) : 'el proveedor'}`
+                        : `Start a conversation with ${providerName ? capitalizeWords(providerName) : 'the provider'}`}
+                    </p>
+                  </div>
+                  
+                  {/* Aquí se mostrarán los mensajes cuando se implemente */}
+                </div>
+              </div>
+
+              {/* Área de entrada de mensaje */}
+              <div className="border-top p-3 bg-white">
+                <div className="input-group">
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder={language === 'es' ? 'Escribe un mensaje...' : 'Type a message...'}
+                    disabled
+                    style={{ backgroundColor: '#f8f9fa', cursor: 'not-allowed' }}
+                  />
+                  <button
+                    className="btn btn-primary"
+                    type="button"
+                    disabled
+                    style={{ cursor: 'not-allowed' }}
+                  >
+                    <i className="fas fa-paper-plane"></i>
+                  </button>
+                </div>
+                <small className="text-muted d-block mt-2 text-center">
+                  {language === 'es' 
+                    ? 'La funcionalidad de envío se implementará próximamente'
+                    : 'Send functionality will be implemented soon'}
+                </small>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Versión móvil: Page View (pantalla completa) */}
+        <div 
+          className="d-lg-none position-fixed"
+          style={{
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: '#fff',
+            zIndex: 1050,
+            display: 'flex',
+            flexDirection: 'column'
+          }}
+        >
+          <div className="bg-primary text-white p-3 d-flex justify-content-between align-items-center">
+            <div className="d-flex flex-column flex-grow-1" style={{ minWidth: 0 }}>
+              <h6 className="mb-0 fw-bold d-flex align-items-center" style={{ overflow: 'hidden' }}>
+                <i className="fas fa-comments me-2 flex-shrink-0"></i>
+                <span className="text-truncate" style={{ maxWidth: 'calc(100vw - 120px)' }}>
+                  {chatActivityTitle || (language === 'es' 
+                    ? `Chat con ${providerName || 'Proveedor'}` 
+                    : `Chat with ${providerName || 'Provider'}`)}
+                </span>
+              </h6>
+              {chatOrderId && (
+                <small className="text-white-50" style={{ fontSize: '0.75rem' }}>
+                  {language === 'es' ? 'Orden' : 'Order'} #{chatOrderId}
+                </small>
+              )}
+            </div>
+            <button
+              type="button"
+              className="btn btn-link text-white p-0 flex-shrink-0"
+              onClick={() => {
+                setShowChat(false);
+                setChatOrderId(null);
+                setChatActivityTitle(null);
+              }}
+              style={{ fontSize: '1.5rem', lineHeight: '1' }}
+              aria-label={language === 'es' ? 'Cerrar chat' : 'Close chat'}
+            >
+              <i className="fas fa-times"></i>
+            </button>
+          </div>
+          <div className="flex-grow-1 d-flex flex-column" style={{ overflow: 'hidden' }}>
+          {/* Área de mensajes */}
+          <div 
+            className="flex-grow-1 overflow-auto p-3"
+            style={{ 
+              backgroundColor: '#f8f9fa',
+              minHeight: 0
+            }}
+          >
+            {/* Mensajes del chat */}
+            <div className="d-flex flex-column gap-2">
+              {/* Mensaje de bienvenida */}
+              <div className="text-center text-muted py-4">
+                <i className="fas fa-comments fa-2x mb-2"></i>
+                <p className="mb-0 small">
+                  {language === 'es' 
+                    ? `Inicia una conversación con ${providerName ? capitalizeWords(providerName) : 'el proveedor'}`
+                    : `Start a conversation with ${providerName ? capitalizeWords(providerName) : 'the provider'}`}
+                </p>
+              </div>
+              
+              {/* Aquí se mostrarán los mensajes cuando se implemente */}
+            </div>
+          </div>
+
+          {/* Área de entrada de mensaje */}
+          <div className="border-top p-3 bg-white">
+            <div className="input-group">
+              <input
+                type="text"
+                className="form-control"
+                placeholder={language === 'es' ? 'Escribe un mensaje...' : 'Type a message...'}
+                disabled
+                style={{ backgroundColor: '#f8f9fa', cursor: 'not-allowed' }}
+              />
+              <button
+                className="btn btn-primary"
+                type="button"
+                disabled
+                style={{ cursor: 'not-allowed' }}
+              >
+                <i className="fas fa-paper-plane"></i>
+              </button>
+            </div>
+            <small className="text-muted d-block mt-2 text-center">
+              {language === 'es' 
+                ? 'La funcionalidad de envío se implementará próximamente'
+                : 'Send functionality will be implemented soon'}
+            </small>
+          </div>
+        </div>
+      </div>
+       </>
+     )}
+    </>
   );
 };
 
