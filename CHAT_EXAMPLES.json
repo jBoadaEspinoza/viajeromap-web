@@ -1,0 +1,90 @@
+{
+  "chat_example": {
+    "id": "chat_abc123def456",
+    "orderId": "order_xyz789",
+    "activityId": "activity_123",
+    "customerId": "customer_firebase_uid_12345",
+    "providerId": "Provider Name",
+    "createdAt": {
+      "_seconds": 1704067200,
+      "_nanoseconds": 0
+    },
+    "updatedAt": {
+      "_seconds": 1704067800,
+      "_nanoseconds": 0
+    },
+    "lastMessage": "Hola, tengo una pregunta sobre la actividad",
+    "unreadForProvider": 2
+  },
+  "message_text_example": {
+    "id": "msg_456789",
+    "senderId": "customer_firebase_uid_12345",
+    "senderType": "customer",
+    "message": "Hola, tengo una pregunta sobre la actividad",
+    "imageUrl": null,
+    "sentAt": {
+      "_seconds": 1704067800,
+      "_nanoseconds": 0
+    }
+  },
+  "message_image_example": {
+    "id": "msg_789012",
+    "senderId": "customer_firebase_uid_12345",
+    "senderType": "customer",
+    "message": null,
+    "imageUrl": "https://firebasestorage.googleapis.com/v0/b/gestionafacil-92adb.appspot.com/o/chat_uploads%2Fchat_abc123def456%2Fmsg_789012?alt=media&token=abc123",
+    "sentAt": {
+      "_seconds": 1704067900,
+      "_nanoseconds": 0
+    }
+  },
+  "message_text_and_image_example": {
+    "id": "msg_345678",
+    "senderId": "customer_firebase_uid_12345",
+    "senderType": "customer",
+    "message": "Aquí está la foto que mencioné",
+    "imageUrl": "https://firebasestorage.googleapis.com/v0/b/gestionafacil-92adb.appspot.com/o/chat_uploads%2Fchat_abc123def456%2Fmsg_345678?alt=media&token=def456",
+    "sentAt": {
+      "_seconds": 1704068000,
+      "_nanoseconds": 0
+    }
+  },
+  "storage_path_example": {
+    "description": "Estructura de rutas en Firebase Storage",
+    "base_path": "chat_uploads",
+    "chat_path": "chat_uploads/{chatId}",
+    "message_path": "chat_uploads/{chatId}/{messageId}",
+    "example": "chat_uploads/chat_abc123def456/msg_789012"
+  },
+  "firestore_structure": {
+    "description": "Estructura completa de Firestore",
+    "collections": {
+      "chats": {
+        "path": "chats/{chatId}",
+        "fields": [
+          "orderId",
+          "activityId",
+          "customerId",
+          "providerId",
+          "createdAt",
+          "updatedAt",
+          "lastMessage",
+          "unreadForProvider"
+        ],
+        "subcollections": {
+          "messages": {
+            "path": "chats/{chatId}/messages/{messageId}",
+            "fields": [
+              "senderId",
+              "senderType",
+              "message",
+              "imageUrl",
+              "sentAt"
+            ]
+          }
+        }
+      }
+    }
+  }
+}
+

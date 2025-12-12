@@ -8,6 +8,9 @@ import { ordersApi, OrderResponse } from '../api/orders';
 import { useGoogleTokenValidation } from '../hooks/useGoogleTokenValidation';
 import ActivityReviewModal from '../components/ActivityReviewModal';
 import { capitalizeWords } from '../utils/helpers';
+import ChatButton from '../components/chat/ChatButton';
+import ChatWindowClient from '../components/chat/ChatWindowClient';
+import { OrderItemResponse } from '../api/orders';
 
 const Bookings: React.FC = () => {
   const navigate = useNavigate();
@@ -29,12 +32,10 @@ const Bookings: React.FC = () => {
   // Estados para modal de confirmación
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [orderIdToConfirm, setOrderIdToConfirm] = useState<string | null>(null);
-  // Estados para chat con proveedor
-  const [showChat, setShowChat] = useState(false);
-  const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
-  const [providerName, setProviderName] = useState<string | null>(null);
-  const [chatOrderId, setChatOrderId] = useState<string | null>(null);
-  const [chatActivityTitle, setChatActivityTitle] = useState<string | null>(null);
+  // Estado para rastrear si el chat está abierto
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  // Estado para el chat del cliente (nuevo sistema basado en orderItemId)
+  const [openChatOrderItem, setOpenChatOrderItem] = useState<OrderItemResponse | null>(null);
   // Filtros avanzados
   const [orderStatusFilter, setOrderStatusFilter] = useState<string[]>([]);
   const [paymentStatusFilter, setPaymentStatusFilter] = useState<string>('');
@@ -60,6 +61,9 @@ const Bookings: React.FC = () => {
   const [tempInitialDate, setTempInitialDate] = useState<string>('');
   const [tempDateType, setTempDateType] = useState<'start' | 'end' | ''>('');
   const [showDatePickerModal, setShowDatePickerModal] = useState(false);
+  // Estado para controlar qué bottom sheet de acciones está abierto
+  const [showActionsBottomSheet, setShowActionsBottomSheet] = useState(false);
+  const [orderIdForActions, setOrderIdForActions] = useState<string | null>(null);
 
   useGoogleTokenValidation();
 
@@ -149,6 +153,7 @@ const Bookings: React.FC = () => {
     };
   }, [showDatePickerModal]);
 
+
   // Función para formatear fecha
   const formatDate = (dateString?: string): string => {
     if (!dateString) return '-';
@@ -169,13 +174,19 @@ const Bookings: React.FC = () => {
     if (!dateString) return '-';
     try {
       const date = new Date(dateString);
-      return date.toLocaleString(language === 'es' ? 'es-ES' : 'en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      });
+      const day = date.getDate();
+      const monthNames = language === 'es' 
+        ? ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+        : ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const month = monthNames[date.getMonth()];
+      const year = date.getFullYear();
+      const hours = date.getHours();
+      const minutes = date.getMinutes();
+      const ampm = hours >= 12 ? (language === 'es' ? 'p. m.' : 'P. M.') : (language === 'es' ? 'a. m.' : 'A. M.');
+      const displayHours = hours % 12 || 12;
+      const displayMinutes = minutes.toString().padStart(2, '0');
+      
+      return `${day} ${month} ${year}, ${displayHours}:${displayMinutes} ${ampm}`;
     } catch {
       return dateString;
     }
@@ -204,19 +215,19 @@ const Bookings: React.FC = () => {
         return dateString;
       }
       
-      // Usar Intl.DateTimeFormat para formatear en UTC
-      const locale = language === 'es' ? 'es-ES' : 'en-US';
-      const formatter = new Intl.DateTimeFormat(locale, {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true,
-        timeZone: 'UTC' // Mostrar en UTC
-      });
+      const day = date.getUTCDate();
+      const monthNames = language === 'es' 
+        ? ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+        : ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const month = monthNames[date.getUTCMonth()];
+      const year = date.getUTCFullYear();
+      const hours = date.getUTCHours();
+      const minutes = date.getUTCMinutes();
+      const ampm = hours >= 12 ? (language === 'es' ? 'p. m.' : 'P. M.') : (language === 'es' ? 'a. m.' : 'A. M.');
+      const displayHours = hours % 12 || 12;
+      const displayMinutes = minutes.toString().padStart(2, '0');
       
-      return `${formatter.format(date)} UTC`;
+      return `${day} ${month} ${year}, ${displayHours}:${displayMinutes} ${ampm}`;
     } catch (error) {
       console.error('Error formatting date:', error);
       return dateString;
@@ -409,21 +420,6 @@ const Bookings: React.FC = () => {
     });
   };
 
-  // Función para chatear con proveedor
-  const handleChatWithSupplier = (order: OrderResponse) => {
-    // Guardar el ID de la orden
-    setChatOrderId(order.id);
-    // Obtener el nombre del proveedor y título de la actividad del primer item
-    const firstItem = order.items?.[0];
-    if (firstItem?.activity?.supplier) {
-      setProviderName(firstItem.activity.supplier.name || null);
-    } else {
-      setProviderName(null);
-    }
-    // Guardar el título de la actividad del primer item
-    setChatActivityTitle(firstItem?.activity?.title || null);
-    setShowChat(true);
-  };
 
   // Función para dejar valoración o comentario
   const handleLeaveReview = (activityId: string, orderItemId: number, activityTitle?: string) => {
@@ -755,6 +751,77 @@ const Bookings: React.FC = () => {
     setTempDateType('');
   };
 
+  // Función para obtener la ubicación del usuario
+  const getUserLocation = (): Promise<{ lat: number; lng: number }> => {
+    return new Promise((resolve, reject) => {
+      if (!navigator.geolocation) {
+        reject(new Error(language === 'es' ? 'Geolocalización no está disponible en este navegador' : 'Geolocation is not available in this browser'));
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          resolve({
+            lat: position.coords.latitude,
+            lng: position.coords.longitude
+          });
+        },
+        (error) => {
+          reject(error);
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      );
+    });
+  };
+
+  // Función para abrir Google Maps con la ruta
+  const handleOpenDirections = async (item: OrderItemResponse) => {
+    if (!item.meetingPickupPointAddress) return;
+
+    let userLocation: { lat: number; lng: number } | null = null;
+
+    // Intentar obtener la ubicación del usuario
+    try {
+      userLocation = await getUserLocation();
+    } catch (error) {
+      console.error('Error obteniendo ubicación:', error);
+      // Continuar sin la ubicación del usuario
+    }
+
+    // Construir la URL de Google Maps
+    const destination = item.meetingPickupPointLatitude && item.meetingPickupPointLongitude
+      ? `${item.meetingPickupPointLatitude},${item.meetingPickupPointLongitude}`
+      : encodeURIComponent(item.meetingPickupPointAddress);
+
+    let mapsUrl: string;
+    if (userLocation) {
+      const origin = `${userLocation.lat},${userLocation.lng}`;
+      mapsUrl = `https://www.google.com/maps/dir/${origin}/${destination}`;
+    } else {
+      mapsUrl = `https://www.google.com/maps/search/?api=1&query=${destination}`;
+    }
+
+    // Abrir Google Maps en una nueva pestaña
+    window.open(mapsUrl, '_blank');
+  };
+
+  // Función para contar filtros activos
+  const getActiveFiltersCount = (): number => {
+    // Si el bottom sheet está abierto, usar filtros temporales para mostrar el contador en tiempo real
+    const statusFilter = showMobileFilters ? tempOrderStatusFilter : orderStatusFilter;
+    const paymentFilter = showMobileFilters ? tempPaymentStatusFilter : paymentStatusFilter;
+    const fromDateFilter = showMobileFilters ? tempFromDate : fromDate;
+    const toDateFilter = showMobileFilters ? tempToDate : toDate;
+    const referenceFilter = showMobileFilters ? tempReferenceCode : referenceCode;
+    
+    let count = 0;
+    if (statusFilter.length > 0) count++;
+    if (paymentFilter) count++;
+    if (fromDateFilter || toDateFilter) count++;
+    if (referenceFilter) count++;
+    return count;
+  };
+
   // Función para limpiar todos los filtros (activos y temporales)
   const handleClearAllFilters = () => {
     // Limpiar filtros activos
@@ -782,7 +849,7 @@ const Bookings: React.FC = () => {
 
   return (
     <>
-    <div className="container py-4 py-md-5" style={{ marginRight: showChat ? '350px' : 'auto', marginLeft: 'auto', maxWidth: '1200px' }}>
+    <div className="container py-4 py-md-5" style={{ marginRight: isChatOpen ? '350px' : 'auto', marginLeft: 'auto', maxWidth: '1200px' }}>
       <div className="row">
         <div className="col-12">
           <div className="d-flex justify-content-between align-items-center mb-4">
@@ -791,11 +858,19 @@ const Bookings: React.FC = () => {
             </h2>
             {/* Botón de filtros para móvil */}
             <button
-              className="btn btn-outline-primary btn-sm d-md-none"
+              className="btn btn-link p-0 d-md-none"
               onClick={handleOpenMobileFilters}
+              style={{ 
+                textDecoration: 'none',
+                color: '#1a365d',
+                display: 'flex',
+                alignItems: 'center'
+              }}
             >
-              <i className="fas fa-filter me-2"></i>
-              {language === 'es' ? 'Filtros' : 'Filters'}
+              <i className="fas fa-filter" style={{ color: '#1a365d', fontSize: '1.1rem' }}></i>
+              <span style={{ color: '#1a365d', marginLeft: '8px', fontWeight: '500' }}>
+                {language === 'es' ? 'Filtros' : 'Filters'} ({getActiveFiltersCount()})
+              </span>
             </button>
           </div>
 
@@ -1270,51 +1345,102 @@ const Bookings: React.FC = () => {
                                       />
                                     )}
                                     <div className="flex-grow-1">
-                                      <div className="fw-semibold mb-1">{item.activity?.title || '-'}</div>
-                                      {renderActivityRating(item.activity)}
-                                      <div className="row g-2 small text-muted">
-                                        <div className="col-md-4">
-                                          <i className="fas fa-calendar-alt me-1"></i>
-                                          <strong>{language === 'es' ? 'Fecha de salida:' : 'Departure date:'}</strong>
-                                          <br />
-                                          {formatDateTime(item.startDatetime) + ' (' + item.timeZone + ')'}
+                                      <div className="fw-bold mb-1" style={{ fontSize: '0.95rem' }}>{item.activity?.title || '-'}</div>
+                                      {item.bookingOptionId && (
+                                        <div className="text-muted small mb-1" style={{ fontSize: '0.8rem' }}>
+                                          {language === 'es' ? 'Opción:' : 'Option:'} {item.bookingOptionId} | {item.activity?.title || '-'}
                                         </div>
+                                      )}
+                                      {renderActivityRating(item.activity)}
+                                      <div className="row g-2" style={{ fontSize: '0.875rem' }}>
                                         <div className="col-md-4">
-                                          <div className="mb-2">
-                                            <i className="fas fa-users me-1"></i>
-                                            <strong>{language === 'es' ? 'Participantes:' : 'Participants:'}</strong>
-                                            <div>
-                                              {item.participantsDetails?.adults || item.participants || 0} {language === 'es' ? 'adulto(s)' : 'adult(s)'}
-                                              {item.participantsDetails?.children > 0 && (
-                                                <> · {item.participantsDetails.children} {language === 'es' ? 'niño(s)' : 'child(ren)'} </>
-                                              )}
-                                            </div>
+                                          <div className="mb-1">
+                                            <i className="fas fa-calendar-alt me-1 text-muted"></i>
+                                            <span className="text-muted">{language === 'es' ? 'Inicio:' : 'Start:'}</span>{' '}
+                                            <span>{formatDateTime(item.startDatetime)} ({item.timeZone})</span>
                                           </div>
-                                          {item.guideLanguage && (
-                                            <div className="mb-0">
-                                              <i className="fas fa-language me-1"></i>
-                                              <strong>{language === 'es' ? 'Idioma:' : 'Language:'}</strong>{' '}
-                                              {getLanguageName(item.guideLanguage, language)}
+                                          {item.endDatetime && (
+                                            <div className="mb-1">
+                                              <i className="fas fa-clock me-1 text-muted"></i>
+                                              <span className="text-muted">{language === 'es' ? 'Fin:' : 'End:'}</span>{' '}
+                                              <span>{formatDateTime(item.endDatetime)} ({item.timeZone})</span>
                                             </div>
                                           )}
+                                          
                                         </div>
                                         <div className="col-md-4">
-                                          <div className="mb-2">
-                                            <i className="fas fa-dollar-sign me-1"></i>
-                                            <strong>{language === 'es' ? 'Total:' : 'Total:'}</strong> {formatPrice(item.totalAmount, item.currency)}
+                                          <div className="mb-1">
+                                            <i className="fas fa-file-alt me-1 text-muted"></i>
+                                            <span className="text-muted">{language === 'es' ? 'Código de reserva:' : 'Booking code:'}</span>{' '}
+                                            <span className="fw-semibold">{order.id}</span>
                                           </div>
-                                          <div className="mb-2">
-                                            <i className="fas fa-info-circle me-1"></i>
-                                            <strong>{language === 'es' ? 'Estado:' : 'Status:'}</strong>{' '}
-                                            <span className={`badge ${getItemStatusBadgeClass(item.status)} ms-1`}>
+                                          <div className="mb-1">
+                                            <i className="fas fa-users me-1 text-muted"></i>
+                                            <span className="text-muted">{language === 'es' ? 'Participantes:' : 'Participants:'}</span>{' '}
+                                            <span>
+                                              {item.participantsDetails?.adults || item.participants || 0} {language === 'es' ? 'adultos' : 'adults'}
+                                              {item.participantsDetails?.children > 0 && (
+                                                <> · {item.participantsDetails.children} {language === 'es' ? 'niño' : 'child'} </>
+                                              )}
+                                              {' - '}
+                                              {formatPrice(item.totalAmount, item.currency)}
+                                            </span>
+                                          </div>
+                                          {item.guideLanguage && (
+                                            <div className="mb-1">
+                                              <i className="fas fa-language me-1 text-muted"></i>
+                                              <span className="text-muted">{language === 'es' ? 'Idioma:' : 'Language:'}</span>{' '}
+                                              <span>{getLanguageName(item.guideLanguage, language)}</span>
+                                            </div>
+                                          )}
+                                          
+                                        </div>
+                                        <div className="col-md-4">
+                                          {/* Punto de encuentro */}
+                                          {item.meetingPickupPointAddress && (
+                                            <div className="mb-1">
+                                              <i className="fas fa-map-marker-alt me-1 text-muted"></i>
+                                              <span className="text-muted">{language === 'es' ? 'Punto de encuentro:' : 'Meeting point:'}</span>{' '}
+                                              <span>{item.meetingPickupPointAddress}</span>
+                                              <div className="mt-1">
+                                                <button
+                                                  className="btn btn-sm btn-outline-primary"
+                                                  onClick={() => handleOpenDirections(item)}
+                                                  style={{ fontSize: '0.8rem', padding: '0.2rem 0.5rem' }}
+                                                >
+                                                  <i className="fas fa-directions me-1"></i>
+                                                  {language === 'es' ? 'Cómo llegar' : 'Get directions'}
+                                                </button>
+                                              </div>
+                                            </div>
+                                          )}
+                                          {/* Proveedor */}
+                                          {item.activity?.supplier && (
+                                            <div className="mb-1">
+                                              <i className="fas fa-store me-1 text-muted"></i>
+                                              <span className="text-muted">{language === 'es' ? 'Proveedor:' : 'Supplier:'}</span>{' '}
+                                              <span>
+                                                {item.activity.supplier.name}
+                                                {item.activity.supplier.isVerified && (
+                                                  <i className="fas fa-check-circle text-success ms-1" title={language === 'es' ? 'Verificado' : 'Verified'}></i>
+                                                )}
+                                              </span>
+                                            </div>
+                                          )}
+                                          {/* Estado */}
+                                          <div className="mb-1">
+                                            <i className="fas fa-info-circle me-1 text-muted"></i>
+                                            <span className="text-muted">{language === 'es' ? 'Estado:' : 'Status:'}</span>{' '}
+                                            <span className={`badge ${getItemStatusBadgeClass(item.status)}`}>
                                               {getItemStatusName(item.status)}
                                             </span>
                                           </div>
+                                          {/* Cancelación gratis hasta */}
                                           {item.cancelUntilDate && new Date(item.cancelUntilDate) > new Date() && (
-                                            <div className="mb-0">
-                                              <i className="fas fa-calendar-times me-1"></i>
-                                              <strong>{language === 'es' ? 'Cancelación gratis hasta:' : 'Free cancellation until:'}</strong>{' '}
-                                              {formatDateTime(item.cancelUntilDate)}
+                                            <div className="mb-1">
+                                              <i className="fas fa-calendar-times me-1 text-muted"></i>
+                                              <span className="text-muted">{language === 'es' ? 'Cancelación gratis hasta:' : 'Free cancellation until:'}</span>{' '}
+                                              <span>{formatDateTime(item.cancelUntilDate)}</span>
                                             </div>
                                           )}
                                         </div>
@@ -1337,15 +1463,15 @@ const Bookings: React.FC = () => {
                                           </span>
                                         </button>
                                       ) : (
-                                        !(showChat && chatOrderId === order.id) && (
+                                        item.activity?.id && item.activity?.supplier && (
                                           <button
-                                            className="btn btn-sm btn-success"
-                                            onClick={() => handleChatWithSupplier(order)}
-                                            title={language === 'es' ? 'Chatear con proveedor' : 'Chat with supplier'}
+                                            className="btn btn-sm btn-outline-link" style={{ color: '#0d6efd', textDecoration: 'none', fontSize: '0.9rem' }}
+                                            onClick={() => setOpenChatOrderItem(item)}
+                                            title={language === 'es' ? 'Chatear con proveedor' : 'Chat with provider'}
                                           >
                                             <i className="fas fa-comments me-1"></i>
-                                            <span className="d-none d-md-inline">
-                                              {language === 'es' ? 'Chatear con proveedor' : 'Chat with supplier'}
+                                            <span>
+                                              {language === 'es' ? 'Chatear con proveedor' : 'Chat with provider'}
                                             </span>
                                           </button>
                                         )
@@ -1377,78 +1503,78 @@ const Bookings: React.FC = () => {
                       } : {}}
                     >
                       <div className="card-body">
-                        <div className="d-flex justify-content-between align-items-start">
-                          <div>
-                            <div className="fw-bold">
-                              {language === 'es' ? 'Orden' : 'Order'} #{order.id}
+                        <div className="d-flex flex-column">
+                          <div className="d-flex justify-content-between align-items-center">
+                            <span className="fw-bold">{language === 'es' ? 'Orden' : 'Order'} #{order.id}</span>
+                              {/* More actions */}
+                              <div className="position-relative">
+                                <button 
+                                  className="btn btn-link p-0 border-0" 
+                                  style={{ color: '#718096' }}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setOrderIdForActions(order.id);
+                                    setShowActionsBottomSheet(true);
+                                  }}
+                                >
+                                  <i className="fas fa-ellipsis-h"></i>
+                                </button>
+                              </div>
                             </div>
-                            <small className="text-muted d-block">
-                              <i className="fas fa-shopping-cart me-1"></i>
-                              {formatDateTimeAMPM(order.createdAt)}
+                            <small className="d-flex flex-start">
+                              <div style={{ color: '#1a365d', fontWeight: '500', fontSize: '0.85rem', marginBottom: '4px', marginRight: '4px' }}>
+                                <i className="fas fa-shopping-cart me-1"></i>
+                                {language === 'es' ? 'Emitido:' : 'Created at:'}
+                              </div>
+                              <span style={{ color: '#2d3748', fontSize: '0.9rem' }}>{formatDateTimeAMPM(order.createdAt) + ' (UTC)'}</span>
                             </small>
-                          </div>
-                          <span className={`badge ${getStatusBadgeClass(order.orderStatus)}`}>
-                            {getStatusName(order.orderStatus)}
-                          </span>
-                        </div>
-
-                        <div className="d-flex justify-content-between align-items-center mt-3">
-                          <div>
-                            <small className="text-muted d-block">
-                              {language === 'es' ? 'Total' : 'Total'}
+                            <small className="d-flex flex-start">
+                              <div style={{ color: '#1a365d', fontWeight: '500', fontSize: '0.85rem', marginBottom: '4px', marginRight: '4px' }}>
+                                <i className="fas fa-money-bill me-1"></i>
+                                {language === 'es' ? 'Total:' : 'Total:'}
+                              </div>
+                              <span style={{ color: '#2d3748', fontSize: '0.9rem' }}>{formatPrice(calculateOrderTotal(order), order.items[0]?.currency)}</span>
                             </small>
-                            <div className="fw-bold">
-                              {formatPrice(calculateOrderTotal(order), order.items[0]?.currency)}
-                            </div>
+                            {/*Status*/}
+                            <small className="d-flex flex-start">
+                              <div style={{ color: '#1a365d', fontWeight: '500', fontSize: '0.85rem', marginBottom: '4px', marginRight: '4px' }}>
+                                <i className="fas fa-info-circle me-1"></i>
+                                {language === 'es' ? 'Estado:' : 'Status:'}
+                              </div>
+                              <span className={`badge ${getStatusBadgeClass(order.orderStatus)}`}>
+                                {getStatusName(order.orderStatus)}
+                              </span>
+                            </small>
+                        </div>
+                        {/* Ver actividades */}
+                        <div className="mb-3">
+                          <div onClick={() => toggleOrder(order.id)} style={{ cursor: 'pointer' }} className="d-flex justify-content-between align-items-center mt-2 pt-2  border-top">
+                            <small className="fw-bold text-muted" style={{ fontSize: '1rem'}}>{language === 'es' ? 'Ver actividades' : 'View activities'} ({order.items.length})</small>
+                            <button className="btn btn-link p-0 border-0" style={{ color: '#718096' }}>
+                              <i className={`fas fa-chevron-${isExpanded ? 'up' : 'down'}`} style={{ fontSize: '0.85rem' }}></i>
+                            </button>
                           </div>
-                          <button
-                            className="btn btn-link text-decoration-none p-0"
-                            onClick={() => toggleOrder(order.id)}
-                          >
-                            <i className={`fas fa-chevron-${isExpanded ? 'up' : 'down'} me-1`}></i>
-                            {isExpanded
-                              ? (language === 'es' ? 'Ocultar actividades' : 'Hide activities')
-                              : (language === 'es' ? 'Ver actividades' : 'View activities')}
-                          </button>
+                          
                         </div>
-
-                        <div className="d-grid gap-2 mt-3">
-                          {order.orderStatus === 'CREATED' && (
-                            <button
-                              className="btn btn-primary"
-                              onClick={() => handleConfirmReservation(order.id)}
-                              disabled={processingOrderId === order.id}
-                            >
-                              {processingOrderId === order.id
-                                ? (language === 'es' ? 'Procesando...' : 'Processing...')
-                                : (language === 'es' ? 'Pagar para confirmar' : 'Pay to confirm')}
-                            </button>
-                          )}
-                          {order.orderStatus !== 'CANCELLED' && order.orderStatus !== 'COMPLETED' && (
-                            <button
-                              className="btn btn-outline-link text-primary"
-                              onClick={() => handleRequestCancellation(order.id)}
-                              disabled={processingOrderId === order.id}
-                            >
-                              {processingOrderId === order.id
-                                ? (language === 'es' ? 'Procesando...' : 'Processing...')
-                                : (language === 'es' ? 'Solicitar cancelación' : 'Request cancellation')}
-                            </button>
-                          )}
-                        </div>
-
                         {isExpanded && (
-                          <div className="mt-3">
-                            {order.items.map((item) => (
+                          <div className="mt-2 pt-2 border-top">
+                            {order.items.map((item, index) => (
                               <div 
                                 key={item.id} 
-                                className="border rounded p-3 mb-3"
-                                style={item.status === 'CANCELLED' ? { 
-                                  filter: 'grayscale(100%)',
-                                  opacity: 0.6
-                                } : {}}
+                                className="mt-3"
+                                style={{
+                                  ...(item.status === 'CANCELLED' ? { 
+                                    filter: 'grayscale(100%)',
+                                    opacity: 0.6
+                                  } : {}),
+                                  ...(order.items.length > 2 && index > 0 ? {
+                                    borderTop: '1px solid #dee2e6',
+                                    paddingTop: '1rem'
+                                  } : {})
+                                }}
                               >
-                                <div className="d-flex align-items-start gap-3 mb-2">
+                                
+                                <div className={`d-flex align-items-start gap-3 mb-2 ${index > 0 ? 'border-top pt-3' : ''}`}>
                                   {item.activity?.imageUrl && (
                                     <img
                                       src={item.activity.imageUrl}
@@ -1465,65 +1591,106 @@ const Bookings: React.FC = () => {
                                       }}
                                     />
                                   )}
-                                  <div>
-                                    <div className="fw-semibold">{item.activity?.title || '-'}</div>
+                                  <div className="flex-grow-1">
+                                    <div className="fw-bold mb-1" style={{ fontSize: '0.95rem', color: '#2d3748' }}>{item.activity?.title || '-'}</div>
+                                    {item.bookingOptionId && (
+                                      <div className="mb-1" style={{ fontSize: '0.8rem' }}>
+                                       {renderActivityRating(item.activity)}
+                                      </div>
+                                    )}
                                   </div>
                                 </div>
-                                <div className="mb-2">
-                                  {renderActivityRating(item.activity)}
-                                </div>
-                                <div className="small text-muted">
-                                  <div className="mb-2 d-flex align-items-center gap-2">
-                                    <i className="fas fa-star me-1"></i>
-                                    <strong>{language === 'es' ? 'Valoración:' : 'Rating:'}</strong>
-                                    <span>{item.activity?.rating || '-'}</span>
+                                <div style={{ fontSize: '0.875rem' }}>
+                                  <div className="mb-3">
+                                    <div style={{ color: '#1a365d', fontWeight: '500', fontSize: '0.85rem', marginBottom: '8px' }}>
+                                      <i className="fas fa-calendar-alt me-1 text-muted"></i>
+                                      {language === 'es' ? 'Inicio:' : 'Start:'}
+                                    </div>
+                                    <span style={{ color: '#2d3748', fontSize: '0.9rem' }}>{formatDateTime(item.startDatetime)} ({item.timeZone})</span>
                                   </div>
-                                  <div className="mb-2">
-                                    <i className="fas fa-calendar-alt me-1"></i>
-                                    <strong>{language === 'es' ? 'Fecha de salida:' : 'Departure date:'}</strong>{' '}
-                                    {formatDateTime(item.startDatetime)}
+                                  {item.endDatetime && (
+                                    <div className="mb-3">
+                                      <div style={{ color: '#1a365d', fontWeight: '500', fontSize: '0.85rem', marginBottom: '8px' }}>
+                                        <i className="fas fa-clock me-1 text-muted"></i>
+                                        {language === 'es' ? 'Fin:' : 'End:'}
+                                      </div>
+                                      <span style={{ color: '#2d3748', fontSize: '0.9rem' }}>{formatDateTime(item.endDatetime)} ({item.timeZone})</span>
+                                    </div>
+                                  )}
+                                  
+                                  <div className="mb-3">
+                                    <div style={{ color: '#1a365d', fontWeight: '500', fontSize: '0.85rem', marginBottom: '8px' }}>
+                                      <i className="fas fa-users me-1 text-muted"></i>
+                                      {language === 'es' ? 'Participantes:' : 'Participants:'}
+                                    </div>
+                                    <span style={{ color: '#2d3748', fontSize: '0.9rem' }}>
+                                      {item.participantsDetails?.adults || item.participants || 0} {language === 'es' ? 'adultos' : 'adults'}
+                                      {item.participantsDetails?.children > 0 && (
+                                        <> · {item.participantsDetails.children} {language === 'es' ? 'niño' : 'child'} </>
+                                      )}
+                                      
+                                      
+                                    </span>
                                   </div>
-                                  {item.cancelUntilDate && (
-                                    <div className="mb-2">
-                                      <i className="fas fa-calendar-times me-1"></i>
-                                      <strong>{language === 'es' ? 'Cancelación hasta:' : 'Cancellation until:'}</strong>{' '}
-                                      {formatDateTime(item.cancelUntilDate)}
-                                      <div className="small text-muted mt-1">
-                                        {language === 'es'
-                                          ? 'Cancelación gratis hasta esta fecha; luego se aplicarán penalidades.'
-                                          : 'Free cancellation until this date; penalties may apply afterwards.'}
+                                  {/* Total */}
+                                  <div className="mb-3">
+                                    <div style={{ color: '#1a365d', fontWeight: '500', fontSize: '0.85rem', marginBottom: '8px' }}>
+                                      <i className="fas fa-money-bill me-1 text-muted"></i>
+                                      {language === 'es' ? 'Total:' : 'Total:'}
+                                    </div>
+                                    <span style={{ color: '#2d3748', fontSize: '0.9rem' }}>{formatPrice(item.totalAmount, item.currency)}</span>
+                                  </div>
+                                  {item.meetingPickupPointAddress && (
+                                    <div className="mb-3">
+                                      <div style={{ color: '#1a365d', fontWeight: '500', fontSize: '0.85rem', marginBottom: '8px' }}>
+                                        <i className="fas fa-map-marker-alt me-1 text-muted"></i>
+                                        {language === 'es' ? 'Punto de encuentro:' : 'Meeting point:'}
+                                      </div>
+                                      <span style={{ color: '#2d3748', fontSize: '0.9rem' }}>{item.meetingPickupPointAddress}</span>
+                                      <div className="mt-1">
+                                        <button
+                                          className="btn btn-sm btn-outline-primary"
+                                          onClick={() => handleOpenDirections(item)}
+                                          style={{ fontSize: '0.8rem', padding: '0.2rem 0.5rem' }}
+                                        >
+                                          <i className="fas fa-directions me-1"></i>
+                                          {language === 'es' ? 'Cómo llegar' : 'Get directions'}
+                                        </button>
                                       </div>
                                     </div>
                                   )}
-                                  <div className="mb-2">
-                                    <i className="fas fa-users me-1"></i>
-                                    <strong>{language === 'es' ? 'Participantes:' : 'Participants:'}</strong>
-                                    <div>
-                                      {item.participantsDetails?.adults || item.participants || 0} {language === 'es' ? 'adulto(s)' : 'adult(s)'}
-                                      {item.participantsDetails?.children > 0 && (
-                                        <> · {item.participantsDetails.children} {language === 'es' ? 'niño(s)' : 'child(ren)'} </>
-                                      )}
-                                    </div>
-                                  </div>
                                   {item.guideLanguage && (
-                                    <div className="mb-2">
-                                      <i className="fas fa-language me-1"></i>
-                                      <strong>{language === 'es' ? 'Idioma:' : 'Language:'}</strong>{' '}
-                                      {getLanguageName(item.guideLanguage, language)}
+                                    <div className="mb-3">
+                                      <div style={{ color: '#1a365d', fontWeight: '500', fontSize: '0.85rem', marginBottom: '8px' }}>
+                                        <i className="fas fa-language me-1 text-muted"></i>
+                                        {language === 'es' ? 'Idioma:' : 'Language:'}
+                                      </div>
+                                      <span style={{ color: '#2d3748', fontSize: '0.9rem' }}>{getLanguageName(item.guideLanguage, language)}</span>
                                     </div>
                                   )}
-                                  <div className="mb-2">
-                                    <i className="fas fa-dollar-sign me-1"></i>
-                                    <strong>{language === 'es' ? 'Total:' : 'Total:'}</strong>{' '}
-                                    {formatPrice(item.totalAmount, item.currency)}
-                                  </div>
-                                  <div>
-                                    <i className="fas fa-info-circle me-1"></i>
-                                    <strong>{language === 'es' ? 'Estado:' : 'Status:'}</strong>{' '}
-                                    <span className={`badge ${getItemStatusBadgeClass(item.status)} ms-1`}>
-                                      {getItemStatusName(item.status)}
-                                    </span>
-                                  </div>
+                                  {item.activity?.supplier && (
+                                    <div className="mb-3">
+                                      <div style={{ color: '#1a365d', fontWeight: '500', fontSize: '0.85rem', marginBottom: '8px' }}>
+                                        <i className="fas fa-store me-1 text-muted"></i>
+                                        {language === 'es' ? 'Proveedor:' : 'Supplier:'}
+                                      </div>
+                                      <span style={{ color: '#2d3748', fontSize: '0.9rem' }}>
+                                        {item.activity.supplier.name}
+                                        {item.activity.supplier.isVerified && (
+                                          <i className="fas fa-check-circle text-success ms-1" title={language === 'es' ? 'Verificado' : 'Verified'}></i>
+                                        )}
+                                      </span>
+                                    </div>
+                                  )}
+                                  {item.cancelUntilDate && new Date(item.cancelUntilDate) > new Date() && (
+                                    <div className="mb-3">
+                                      <div style={{ color: '#1a365d', fontWeight: '500', fontSize: '0.85rem', marginBottom: '8px' }}>
+                                        <i className="fas fa-calendar-times me-1 text-muted"></i>
+                                        {language === 'es' ? 'Cancelación gratis hasta:' : 'Free cancellation until:'}
+                                      </div>
+                                      <span style={{ color: '#2d3748', fontSize: '0.9rem' }}>{formatDateTime(item.cancelUntilDate)}</span>
+                                    </div>
+                                  )}
                                 </div>
 
                                 {order.orderStatus !== 'CANCELLED' && item.status !== 'CANCELLED' && (
@@ -1537,13 +1704,16 @@ const Bookings: React.FC = () => {
                                         {language === 'es' ? 'Dejar valoración' : 'Leave rating'}
                                       </button>
                                     ) : (
-                                      !(showChat && chatOrderId === order.id) && (
+                                      item.activity?.id && item.activity?.supplier && (
                                         <button
-                                          className="btn btn-success btn-sm"
-                                          onClick={() => handleChatWithSupplier(order)}
+                                        className="btn btn-sm btn-outline-link" style={{ color: '#0d6efd', textDecoration: 'none', fontSize: '0.9rem' }}
+                                          onClick={() => setOpenChatOrderItem(item)}
+                                          title={language === 'es' ? 'Chatear con proveedor' : 'Chat with provider'}
                                         >
                                           <i className="fas fa-comments me-1"></i>
-                                          {language === 'es' ? 'Chatear con proveedor' : 'Chat with supplier'}
+                                          <span>
+                                            {language === 'es' ? 'Chatear con proveedor' : 'Chat with provider'}
+                                          </span>
                                         </button>
                                       )
                                     )}
@@ -1920,211 +2090,128 @@ const Bookings: React.FC = () => {
         </div>
       )}
 
-    </div>
+      {/* Chat Window Client - Nuevo sistema basado en orderItemId */}
+      {openChatOrderItem && (
+        <ChatWindowClient
+          chatId={openChatOrderItem.id.toString()}
+          orderItem={openChatOrderItem}
+          onClose={() => setOpenChatOrderItem(null)}
+          isMobile={window.innerWidth < 992}
+        />
+      )}
 
-     {/* Barra lateral de chat estilo Facebook (solo desktop) */}
-     {showChat && (
-       <>
-         {/* Versión desktop: barra lateral fija */}
-         <div 
-           className="d-none d-lg-block position-fixed"
-           style={{
-             right: 0,
-             top: '70px',
-             width: '350px',
-             height: 'calc(100vh - 70px)',
-             backgroundColor: '#fff',
-             boxShadow: '-2px 0 8px rgba(0,0,0,0.1)',
-             zIndex: 999,
-             display: 'flex',
-             flexDirection: 'column'
-           }}
-         >
-          <div className="card h-100 border-0 rounded-0 shadow-none" style={{ borderRadius: '0 !important' }}>
-            <div className="card-header bg-primary text-white d-flex justify-content-between align-items-center border-0 rounded-0">
-              <div className="d-flex flex-column flex-grow-1" style={{ minWidth: 0 }}>
-                <h6 className="mb-0 fw-bold d-flex align-items-center" style={{ overflow: 'hidden' }}>
-                  <i className="fas fa-comments me-2 flex-shrink-0"></i>
-                  <span className="text-truncate" style={{ maxWidth: '220px' }}>
-                    {chatActivityTitle || (language === 'es' 
-                      ? `Chat con ${providerName || 'Proveedor'}` 
-                      : `Chat with ${providerName || 'Provider'}`)}
-                  </span>
-                </h6>
-                {chatOrderId && (
-                  <small className="text-white-50" style={{ fontSize: '0.75rem' }}>
-                    {language === 'es' ? 'Orden' : 'Order'} #{chatOrderId}
-                  </small>
-                )}
-              </div>
-              <button
-                type="button"
-                className="btn btn-link text-white p-0 flex-shrink-0"
-                onClick={() => {
-                  setShowChat(false);
-                  setChatOrderId(null);
-                  setChatActivityTitle(null);
-                }}
-                style={{ fontSize: '1.2rem', lineHeight: '1' }}
-                aria-label={language === 'es' ? 'Cerrar chat' : 'Close chat'}
-              >
-                <i className="fas fa-times"></i>
-              </button>
-            </div>
-            <div className="card-body d-flex flex-column p-0" style={{ height: 'calc(100vh - 70px)', overflow: 'hidden' }}>
-              {/* Área de mensajes */}
-              <div 
-                className="flex-grow-1 overflow-auto p-3"
-                style={{ 
-                  backgroundColor: '#f8f9fa',
-                  minHeight: 0
-                }}
-              >
-                {/* Mensajes del chat */}
-                <div className="d-flex flex-column gap-2">
-                  {/* Mensaje de bienvenida */}
-                  <div className="text-center text-muted py-4">
-                    <i className="fas fa-comments fa-2x mb-2"></i>
-                    <p className="mb-0 small">
-                      {language === 'es' 
-                        ? `Inicia una conversación con ${providerName ? capitalizeWords(providerName) : 'el proveedor'}`
-                        : `Start a conversation with ${providerName ? capitalizeWords(providerName) : 'the provider'}`}
-                    </p>
-                  </div>
-                  
-                  {/* Aquí se mostrarán los mensajes cuando se implemente */}
-                </div>
-              </div>
-
-              {/* Área de entrada de mensaje */}
-              <div className="border-top p-3 bg-white">
-                <div className="input-group">
-                  <input
-                    type="text"
-                    className="form-control"
-                    placeholder={language === 'es' ? 'Escribe un mensaje...' : 'Type a message...'}
-                    disabled
-                    style={{ backgroundColor: '#f8f9fa', cursor: 'not-allowed' }}
-                  />
-                  <button
-                    className="btn btn-primary"
-                    type="button"
-                    disabled
-                    style={{ cursor: 'not-allowed' }}
-                  >
-                    <i className="fas fa-paper-plane"></i>
-                  </button>
-                </div>
-                <small className="text-muted d-block mt-2 text-center">
-                  {language === 'es' 
-                    ? 'La funcionalidad de envío se implementará próximamente'
-                    : 'Send functionality will be implemented soon'}
-                </small>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Versión móvil: Page View (pantalla completa) */}
-        <div 
-          className="d-lg-none position-fixed"
+      {/* Overlay para bottom sheet de acciones */}
+      {showActionsBottomSheet && (
+        <div
+          className="position-fixed top-0 start-0 end-0 bottom-0 bg-dark d-md-none"
           style={{
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: '#fff',
-            zIndex: 1050,
-            display: 'flex',
-            flexDirection: 'column'
+            opacity: 0.5,
+            zIndex: 1049,
+            transition: 'opacity 0.3s ease-in-out'
           }}
-        >
-          <div className="bg-primary text-white p-3 d-flex justify-content-between align-items-center">
-            <div className="d-flex flex-column flex-grow-1" style={{ minWidth: 0 }}>
-              <h6 className="mb-0 fw-bold d-flex align-items-center" style={{ overflow: 'hidden' }}>
-                <i className="fas fa-comments me-2 flex-shrink-0"></i>
-                <span className="text-truncate" style={{ maxWidth: 'calc(100vw - 120px)' }}>
-                  {chatActivityTitle || (language === 'es' 
-                    ? `Chat con ${providerName || 'Proveedor'}` 
-                    : `Chat with ${providerName || 'Provider'}`)}
-                </span>
-              </h6>
-              {chatOrderId && (
-                <small className="text-white-50" style={{ fontSize: '0.75rem' }}>
-                  {language === 'es' ? 'Orden' : 'Order'} #{chatOrderId}
-                </small>
-              )}
-            </div>
-            <button
-              type="button"
-              className="btn btn-link text-white p-0 flex-shrink-0"
-              onClick={() => {
-                setShowChat(false);
-                setChatOrderId(null);
-                setChatActivityTitle(null);
-              }}
-              style={{ fontSize: '1.5rem', lineHeight: '1' }}
-              aria-label={language === 'es' ? 'Cerrar chat' : 'Close chat'}
-            >
-              <i className="fas fa-times"></i>
-            </button>
-          </div>
-          <div className="flex-grow-1 d-flex flex-column" style={{ overflow: 'hidden' }}>
-          {/* Área de mensajes */}
-          <div 
-            className="flex-grow-1 overflow-auto p-3"
-            style={{ 
-              backgroundColor: '#f8f9fa',
-              minHeight: 0
+          onClick={() => {
+            setShowActionsBottomSheet(false);
+            setOrderIdForActions(null);
+          }}
+        />
+      )}
+
+      {/* Bottom Sheet Dialog para acciones móvil */}
+      {showActionsBottomSheet && orderIdForActions && (() => {
+        const currentOrder = orders.find(o => o.id === orderIdForActions);
+        if (!currentOrder) return null;
+        
+        return (
+          <div
+            className="d-md-none position-fixed bottom-0 start-0 end-0 bg-white border-top shadow-lg"
+            style={{
+              transform: showActionsBottomSheet ? 'translateY(0)' : 'translateY(100%)',
+              transition: 'transform 0.3s ease-in-out',
+              zIndex: 1050,
+              maxHeight: '50vh',
+              borderTopLeftRadius: '1rem',
+              borderTopRightRadius: '1rem',
+              backgroundColor: '#ffffff'
             }}
           >
-            {/* Mensajes del chat */}
-            <div className="d-flex flex-column gap-2">
-              {/* Mensaje de bienvenida */}
-              <div className="text-center text-muted py-4">
-                <i className="fas fa-comments fa-2x mb-2"></i>
-                <p className="mb-0 small">
-                  {language === 'es' 
-                    ? `Inicia una conversación con ${providerName ? capitalizeWords(providerName) : 'el proveedor'}`
-                    : `Start a conversation with ${providerName ? capitalizeWords(providerName) : 'the provider'}`}
-                </p>
+            <div className="p-4 bg-white" style={{ maxHeight: '50vh', overflowY: 'auto', backgroundColor: '#ffffff' }}>
+              <div className="d-flex justify-content-between align-items-center mb-4">
+                <h5 className="mb-0 fw-bold">
+                  {language === 'es' ? 'Acciones' : 'Actions'}
+                </h5>
+                <button
+                  className="btn btn-link p-0"
+                  onClick={() => {
+                    setShowActionsBottomSheet(false);
+                    setOrderIdForActions(null);
+                  }}
+                  style={{ fontSize: '1.5rem', lineHeight: '1' }}
+                >
+                  <i className="fas fa-times"></i>
+                </button>
               </div>
-              
-              {/* Aquí se mostrarán los mensajes cuando se implemente */}
-            </div>
-          </div>
 
-          {/* Área de entrada de mensaje */}
-          <div className="border-top p-3 bg-white">
-            <div className="input-group">
-              <input
-                type="text"
-                className="form-control"
-                placeholder={language === 'es' ? 'Escribe un mensaje...' : 'Type a message...'}
-                disabled
-                style={{ backgroundColor: '#f8f9fa', cursor: 'not-allowed' }}
-              />
-              <button
-                className="btn btn-primary"
-                type="button"
-                disabled
-                style={{ cursor: 'not-allowed' }}
-              >
-                <i className="fas fa-paper-plane"></i>
-              </button>
+              <div className="d-grid gap-2">
+                {/* Botón Pagar para confirmar - siempre visible */}
+                <button
+                  className="btn btn-primary w-100"
+                  style={{ fontSize: '0.95rem', padding: '0.75rem' }}
+                  onClick={() => {
+                    if (currentOrder.orderStatus === 'CREATED' && !processingOrderId) {
+                      setShowActionsBottomSheet(false);
+                      setOrderIdForActions(null);
+                      handleConfirmReservation(currentOrder.id);
+                    }
+                  }}
+                  disabled={currentOrder.orderStatus !== 'CREATED' || processingOrderId === currentOrder.id}
+                >
+                  {processingOrderId === currentOrder.id ? (
+                    <>
+                      <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                      {language === 'es' ? 'Procesando...' : 'Processing...'}
+                    </>
+                  ) : (
+                    <>
+                      <i className="fas fa-dollar-sign me-2"></i>
+                      {language === 'es' ? 'Pagar para confirmar' : 'Pay to confirm'}
+                    </>
+                  )}
+                </button>
+                {/* Botón Solicitar cancelación - siempre visible */}
+                <button
+                  className="btn btn-outline-danger w-100"
+                  style={{ fontSize: '0.95rem', padding: '0.75rem' }}
+                  onClick={() => {
+                    if (currentOrder.orderStatus !== 'CANCELLED' && currentOrder.orderStatus !== 'COMPLETED' && !processingOrderId) {
+                      setShowActionsBottomSheet(false);
+                      setOrderIdForActions(null);
+                      handleRequestCancellation(currentOrder.id);
+                    }
+                  }}
+                  disabled={currentOrder.orderStatus === 'CANCELLED' || currentOrder.orderStatus === 'COMPLETED' || processingOrderId === currentOrder.id}
+                >
+                  {processingOrderId === currentOrder.id ? (
+                    <>
+                      <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                      {language === 'es' ? 'Procesando...' : 'Processing...'}
+                    </>
+                  ) : (
+                    <>
+                      <i className="fas fa-times-circle me-2"></i>
+                      {language === 'es' ? 'Solicitar cancelación' : 'Request cancellation'}
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
-            <small className="text-muted d-block mt-2 text-center">
-              {language === 'es' 
-                ? 'La funcionalidad de envío se implementará próximamente'
-                : 'Send functionality will be implemented soon'}
-            </small>
           </div>
-        </div>
-      </div>
-       </>
-     )}
+        );
+      })()}
+
+    </div>
     </>
   );
 };
 
 export default Bookings;
+

@@ -4,7 +4,7 @@ import { ordersItemApi } from '../api/ordersItem';
 import { useLanguage } from '../context/LanguageContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { getLanguageName } from '../utils/translations';
-import { convertLocalDateTimeToUTC } from '../utils/dateUtils';
+import { convertLocalDateTimeToUTC, convertUTCToLocalDateTime } from '../utils/dateUtils';
 import RatingStars from './RatingStars';
 
 export interface CheckoutSummaryItem {
@@ -116,8 +116,8 @@ const CheckoutCartItem: React.FC<CheckoutCartItemProps> = ({
   const [pendingPickupPointId, setPendingPickupPointId] = useState<string | undefined>(undefined);
   const [isSavingMeetingPointLocal, setIsSavingMeetingPointLocal] = useState(false);
   const [isEditingTravelersLocal, setIsEditingTravelersLocal] = useState(false);
-  const [pendingAdults, setPendingAdults] = useState(item.travelers.adults);
-  const [pendingChildren, setPendingChildren] = useState(item.travelers.children);
+  const [pendingAdults, setPendingAdults] = useState(Number(item.travelers.adults) || 1);
+  const [pendingChildren, setPendingChildren] = useState(Number(item.travelers.children) || 0);
   const [isSavingTravelersLocal, setIsSavingTravelersLocal] = useState(false);
   const [isDetailsExpanded, setIsDetailsExpanded] = useState(false);
   const [isEditingDateLocal, setIsEditingDateLocal] = useState(false);
@@ -329,11 +329,54 @@ const CheckoutCartItem: React.FC<CheckoutCartItemProps> = ({
   );
 
   useEffect(() => {
-    setPendingDate(item.date || '');
-    setDisplayDate(item.date || '');
-    setPendingTime(item.time || '');
-    setDisplayTime(item.time || '');
-  }, [item.date, item.time]);
+    // Cuando recibimos item.date y item.time del backend, están en UTC
+    // Debemos convertirlos a la zona horaria local para mostrarlos
+    if (item.date) {
+      const timeZone = activityTimeZone || 'America/Lima';
+      
+      // Si también hay hora, convertir fecha+hora juntas
+      if (item.time) {
+        const utcDateTime = `${item.date}T${item.time}`;
+        try {
+          const localDateTime = convertUTCToLocalDateTime(utcDateTime, timeZone);
+          const [localDate, localTime] = localDateTime.split('T');
+          setDisplayDate(localDate || item.date);
+          setDisplayTime(localTime || item.time);
+          setPendingDate(localDate || item.date);
+          setPendingTime(localTime || item.time);
+        } catch (error) {
+          console.error('Error converting UTC to local time:', error);
+          // Fallback: usar valores originales
+          setDisplayDate(item.date);
+          setDisplayTime(item.time || '');
+          setPendingDate(item.date);
+          setPendingTime(item.time || '');
+        }
+      } else {
+        // Solo fecha, convertir solo la fecha (usar mediodía como hora de referencia)
+        try {
+          const utcDateTime = `${item.date}T12:00:00`;
+          const localDateTime = convertUTCToLocalDateTime(utcDateTime, timeZone);
+          const [localDate] = localDateTime.split('T');
+          setDisplayDate(localDate || item.date);
+          setPendingDate(localDate || item.date);
+          setDisplayTime('');
+          setPendingTime('');
+        } catch (error) {
+          console.error('Error converting UTC to local date:', error);
+          setDisplayDate(item.date);
+          setPendingDate(item.date);
+          setDisplayTime('');
+          setPendingTime('');
+        }
+      }
+    } else {
+      setDisplayDate('');
+      setDisplayTime('');
+      setPendingDate('');
+      setPendingTime('');
+    }
+  }, [item.date, item.time, activityTimeZone]);
 
   useEffect(() => {
     setRating(item.rating ?? null);
@@ -642,23 +685,47 @@ const CheckoutCartItem: React.FC<CheckoutCartItemProps> = ({
     }
 
     try {
-      // Construir startDatetime
-      // Si se está actualizando fecha/hora, usar los valores nuevos
-      const dateToUse = updates.date !== undefined ? updates.date : (item.date ?? '');
-      const timeToUse = updates.time !== undefined ? updates.time : (item.time ?? '');
-      
-      // Normalizar el tiempo
-      const normalizedTime = normalizeTimeTo24Hour(timeToUse);
-      
-      // Construir startDatetime: si hay fecha, usar fecha + tiempo normalizado (o 00:00:00 si no hay tiempo)
+      // Construir startDatetime en UTC
+      // displayDate y displayTime siempre contienen valores en formato local (convertidos de UTC cuando se reciben del backend)
+      // Por lo tanto, siempre debemos convertirlos a UTC antes de enviar al backend
       let startDatetimeUTC = '';
-      if (dateToUse) {
-        const timeForDatetime = normalizedTime || '00:00:00';
-        startDatetimeUTC = `${dateToUse}T${timeForDatetime}`;
-      } else if (item.date) {
-        // Fallback a la fecha del item si no se proporciona nueva fecha
-        const fallbackTime = normalizeTimeTo24Hour(item.time) || '00:00:00';
-        startDatetimeUTC = `${item.date}T${fallbackTime}`;
+      
+      // Si se está actualizando fecha/hora explícitamente, los valores ya vienen en UTC desde handleSaveDate
+      if (updates.date !== undefined || updates.time !== undefined) {
+        const dateToUse = updates.date !== undefined ? updates.date : (displayDate || item.date || '');
+        const timeToUse = updates.time !== undefined ? updates.time : (displayTime || item.time || '');
+        
+        // Normalizar el tiempo
+        const normalizedTime = normalizeTimeTo24Hour(timeToUse);
+        
+        if (dateToUse) {
+          const timeForDatetime = normalizedTime || '00:00:00';
+          startDatetimeUTC = `${dateToUse}T${timeForDatetime}`;
+        }
+      } else {
+        // Si NO se está actualizando la fecha explícitamente, usar displayDate/displayTime (valores locales)
+        // y convertirlos a UTC antes de enviar
+        const localDateToUse = displayDate || item.date || '';
+        const localTimeToUse = displayTime || item.time || '';
+        
+        if (localDateToUse) {
+          // Normalizar el tiempo
+          const normalizedTime = normalizeTimeTo24Hour(localTimeToUse);
+          
+          // Obtener el timeZone del bookingOption
+          const bookingOption = fullActivity?.bookingOptions?.find((option: any) => option.id === item.bookingOptionId)
+            || fullActivity?.bookingOptions?.[0];
+          const timeZone = (bookingOption as any)?.timeZone || activityTimeZone || 'America/Lima';
+          
+          // Construir la fecha/hora local
+          const localDateTime = `${localDateToUse}T${normalizedTime || '00:00:00'}`;
+          
+          // Convertir de local a UTC usando el timeZone
+          const utcDateTime = convertLocalDateTimeToUTC(localDateTime, timeZone);
+          
+          // Extraer fecha y hora del resultado UTC (sin el +00:00)
+          startDatetimeUTC = utcDateTime.replace('+00:00', '');
+        }
       }
       
       // Obtener adultos y niños actualizados
@@ -708,10 +775,6 @@ const CheckoutCartItem: React.FC<CheckoutCartItemProps> = ({
         guideLanguage: updates.guideLanguage !== undefined ? (updates.guideLanguage || null) : (item.languageCode || null),
         status: 'PENDING' as const,
       };
-
-      console.log('🔄 Actualizando order item:', orderItemRequest);
-      console.log('📅 startDatetime construido:', startDatetimeUTC);
-      console.log('💰 Precio unitario por participante enviado:', pricePerParticipantToUse);
 
       const response = await ordersItemApi.addOrderItem(orderItemRequest);
 
@@ -996,8 +1059,8 @@ const CheckoutCartItem: React.FC<CheckoutCartItemProps> = ({
 
   useEffect(() => {
     if (!isEditingTravelersLocal) {
-      setPendingAdults(item.travelers.adults);
-      setPendingChildren(item.travelers.children);
+      setPendingAdults(Number(item.travelers.adults) || 1);
+      setPendingChildren(Number(item.travelers.children) || 0);
     }
   }, [item.travelers.adults, item.travelers.children, isEditingTravelersLocal]);
 
@@ -1023,8 +1086,8 @@ const CheckoutCartItem: React.FC<CheckoutCartItemProps> = ({
   };
 
   const handleCancelTravelers = () => {
-    setPendingAdults(item.travelers.adults);
-    setPendingChildren(item.travelers.children);
+    setPendingAdults(Number(item.travelers.adults) || 1);
+    setPendingChildren(Number(item.travelers.children) || 0);
     setIsEditingTravelersLocal(false);
   };
 
@@ -1414,7 +1477,7 @@ const CheckoutCartItem: React.FC<CheckoutCartItemProps> = ({
                   <div>
                     <label className="form-label mb-1 small">{language === 'es' ? 'Adultos' : 'Adults'}</label>
                     <div className="input-group input-group-sm">
-                      <button type="button" className="btn btn-outline-secondary" onClick={() => setPendingAdults((prev) => Math.max(1, prev - 1))} disabled={pendingAdults <= 1 || isSavingTravelersLocal}>
+                      <button type="button" className="btn btn-outline-secondary" onClick={() => setPendingAdults((prev) => Math.max(1, Number(prev) - 1))} disabled={Number(pendingAdults) <= 1 || isSavingTravelersLocal}>
                         <i className="fas fa-minus"></i>
                       </button>
                       <input
@@ -1425,7 +1488,7 @@ const CheckoutCartItem: React.FC<CheckoutCartItemProps> = ({
                         onChange={(event) => setPendingAdults(Math.max(1, Number(event.target.value) || 1))}
                         disabled={isSavingTravelersLocal}
                       />
-                      <button type="button" className="btn btn-outline-secondary" onClick={() => setPendingAdults((prev) => prev + 1)} disabled={isSavingTravelersLocal}>
+                      <button type="button" className="btn btn-outline-secondary" onClick={() => setPendingAdults((prev) => Number(prev) + 1)} disabled={isSavingTravelersLocal}>
                         <i className="fas fa-plus"></i>
                       </button>
                     </div>
@@ -1433,7 +1496,7 @@ const CheckoutCartItem: React.FC<CheckoutCartItemProps> = ({
                   <div>
                     <label className="form-label mb-1 small">{language === 'es' ? 'Niños' : 'Children'}</label>
                     <div className="input-group input-group-sm">
-                      <button type="button" className="btn btn-outline-secondary" onClick={() => setPendingChildren((prev) => Math.max(0, prev - 1))} disabled={pendingChildren <= 0 || isSavingTravelersLocal}>
+                      <button type="button" className="btn btn-outline-secondary" onClick={() => setPendingChildren((prev) => Math.max(0, Number(prev) - 1))} disabled={Number(pendingChildren) <= 0 || isSavingTravelersLocal}>
                         <i className="fas fa-minus"></i>
                       </button>
                       <input
@@ -1444,7 +1507,7 @@ const CheckoutCartItem: React.FC<CheckoutCartItemProps> = ({
                         onChange={(event) => setPendingChildren(Math.max(0, Number(event.target.value) || 0))}
                         disabled={isSavingTravelersLocal}
                       />
-                      <button type="button" className="btn btn-outline-secondary" onClick={() => setPendingChildren((prev) => prev + 1)} disabled={isSavingTravelersLocal}>
+                      <button type="button" className="btn btn-outline-secondary" onClick={() => setPendingChildren((prev) => Number(prev) + 1)} disabled={isSavingTravelersLocal}>
                         <i className="fas fa-plus"></i>
                       </button>
                     </div>

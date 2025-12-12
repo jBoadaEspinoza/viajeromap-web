@@ -576,6 +576,10 @@ export const translations: Translations = {
     es: 'Continuar con tu correo',
     en: 'Continue with your email'
   },
+  'checking.processing':{
+    es: 'Procesando tu solicitud...',
+    en: 'Processing your request...'
+  },
   'activity.processing': {
     es: 'Procesando...',
     en: 'Processing...'
