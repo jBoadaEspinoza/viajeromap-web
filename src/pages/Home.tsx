@@ -31,14 +31,33 @@ const Home: React.FC = () => {
 
   // Estados del formulario (lo que el usuario está escribiendo)
   const [destination, setDestination] = useState('');
-  const [dates, setDates] = useState('');
+  const [dates, setDates] = useState(() => {
+    // Si hay fecha en la URL, usarla; si no, usar fecha actual según timezone del sistema
+    const urlDate = searchParams.get('date');
+    if (urlDate) return urlDate;
+    // Obtener fecha actual en formato YYYY-MM-DD según timezone del sistema
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  });
   const [adults, setAdults] = useState(1);
   const [children, setChildren] = useState(0);
   const [isTravelersDropdownOpen, setIsTravelersDropdownOpen] = useState(false);
   
   // Estados de búsqueda activa (lo que se está filtrando actualmente)
   const [activeDestination, setActiveDestination] = useState(searchParams.get('destination') || '');
-  const [activeDates, setActiveDates] = useState(searchParams.get('date') || '');
+  const [activeDates, setActiveDates] = useState(() => {
+    const urlDate = searchParams.get('date');
+    if (urlDate) return urlDate;
+    // Si no hay fecha en URL, usar fecha actual según timezone del sistema
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  });
   const [activeAdults, setActiveAdults] = useState(parseInt(searchParams.get('adults') || '1'));
   const [activeChildren, setActiveChildren] = useState(parseInt(searchParams.get('children') || '0'));
   const travelersDropdownRef = useRef<HTMLDivElement>(null);
@@ -54,8 +73,10 @@ const Home: React.FC = () => {
   const carouselRef = useRef<HTMLDivElement>(null);
   const [isDown, setIsDown] = useState(false);
   const [startX, setStartX] = useState(0);
+  const [startY, setStartY] = useState(0);
   const [scrollLeft, setScrollLeft] = useState(0);
   const [hasMoved, setHasMoved] = useState(false);
+  const [isHorizontalDrag, setIsHorizontalDrag] = useState(false);
 
   // Establecer título de página dinámicamente
   usePageTitle('nav.home', language);
@@ -90,8 +111,10 @@ const Home: React.FC = () => {
     // Iniciar el arrastre: guardar posición inicial y estado del scroll
     setIsDown(true);
     setHasMoved(false);
+    setIsHorizontalDrag(false);
     const slider = carouselRef.current;
     setStartX(e.pageX - slider.offsetLeft);
+    setStartY(e.pageY);
     setScrollLeft(slider.scrollLeft);
   };
 
@@ -99,6 +122,7 @@ const Home: React.FC = () => {
   const handleMouseLeave = () => {
     setIsDown(false);
     setHasMoved(false);
+    setIsHorizontalDrag(false);
   };
 
   // Cuando se suelta el mouse, finalizar el arrastre
@@ -110,17 +134,97 @@ const Home: React.FC = () => {
       // Permitir que el click llegue al elemento
     }
     setHasMoved(false);
+    setIsHorizontalDrag(false);
   };
 
   // Mover el carrusel mientras se arrastra el mouse
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!isDown || !carouselRef.current) return;
-    e.preventDefault();
-    setHasMoved(true); // Marcar que hubo movimiento para distinguir de un click
+    
+    const deltaX = Math.abs(e.pageX - startX);
+    const deltaY = Math.abs(e.pageY - startY);
+    
+    // Si aún no se ha determinado la dirección, verificar si es horizontal o vertical
+    if (!hasMoved) {
+      // Si el movimiento es más horizontal que vertical, activar arrastre horizontal
+      if (deltaX > deltaY && deltaX > 5) {
+        setIsHorizontalDrag(true);
+        setHasMoved(true);
+      } else if (deltaY > deltaX && deltaY > 5) {
+        // Si es más vertical, cancelar el arrastre y permitir scroll vertical
+        setIsDown(false);
+        setIsHorizontalDrag(false);
+        return;
+      } else {
+        // Esperar más movimiento antes de decidir
+        return;
+      }
+    }
+    
+    // Solo prevenir el comportamiento por defecto si es un arrastre horizontal
+    if (isHorizontalDrag) {
+      e.preventDefault();
+      const slider = carouselRef.current;
+      const x = e.pageX - slider.offsetLeft;
+      const walk = (x - startX) * 2; // Calcular distancia a mover (multiplicado por 2 para velocidad)
+      slider.scrollLeft = scrollLeft - walk; // Aplicar el scroll
+    }
+  };
+
+  // Handlers para touch (móvil)
+  const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (!carouselRef.current) return;
+    // Solo iniciar arrastre si no es un click en un elemento interactivo (botón o enlace)
+    if ((e.target as HTMLElement).closest('button, a')) return;
+    
+    const touch = e.touches[0];
+    setIsDown(true);
+    setHasMoved(false);
+    setIsHorizontalDrag(false);
     const slider = carouselRef.current;
-    const x = e.pageX - slider.offsetLeft;
-    const walk = (x - startX) * 2; // Calcular distancia a mover (multiplicado por 2 para velocidad)
-    slider.scrollLeft = scrollLeft - walk; // Aplicar el scroll
+    setStartX(touch.pageX - slider.offsetLeft);
+    setStartY(touch.pageY);
+    setScrollLeft(slider.scrollLeft);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (!isDown || !carouselRef.current) return;
+    
+    const touch = e.touches[0];
+    const deltaX = Math.abs(touch.pageX - startX);
+    const deltaY = Math.abs(touch.pageY - startY);
+    
+    // Si aún no se ha determinado la dirección, verificar si es horizontal o vertical
+    if (!hasMoved) {
+      // Si el movimiento es más horizontal que vertical, activar arrastre horizontal
+      if (deltaX > deltaY && deltaX > 10) {
+        setIsHorizontalDrag(true);
+        setHasMoved(true);
+      } else if (deltaY > deltaX && deltaY > 10) {
+        // Si es más vertical, cancelar el arrastre y permitir scroll vertical
+        setIsDown(false);
+        setIsHorizontalDrag(false);
+        return;
+      } else {
+        // Esperar más movimiento antes de decidir
+        return;
+      }
+    }
+    
+    // Solo prevenir el comportamiento por defecto si es un arrastre horizontal
+    if (isHorizontalDrag) {
+      e.preventDefault();
+      const slider = carouselRef.current;
+      const x = touch.pageX - slider.offsetLeft;
+      const walk = (x - startX) * 2;
+      slider.scrollLeft = scrollLeft - walk;
+    }
+  };
+
+  const handleTouchEnd = () => {
+    setIsDown(false);
+    setHasMoved(false);
+    setIsHorizontalDrag(false);
   };
 
   // Efecto para crear un carrusel infinito de destinos
@@ -360,7 +464,17 @@ const Home: React.FC = () => {
     const urlChildren = searchParams.get('children');
     
     if (urlDestination) setDestination(urlDestination);
-    if (urlDate) setDates(urlDate);
+    // Si hay fecha en URL, usarla; si no, establecer fecha actual
+    if (urlDate) {
+      setDates(urlDate);
+    } else if (!dates) {
+      // Si no hay fecha en el estado y no hay en URL, establecer fecha actual
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const day = String(now.getDate()).padStart(2, '0');
+      setDates(`${year}-${month}-${day}`);
+    }
     if (urlAdults) setAdults(parseInt(urlAdults));
     if (urlChildren) setChildren(parseInt(urlChildren));
   }, []); // Solo al montar el componente
@@ -1007,7 +1121,19 @@ const Home: React.FC = () => {
             <div className="d-md-none">
               {getActivitiesToShow().map((activity, index) => (
                 <div key={activity.id || index} className="mb-4">
-                  <div className="card border-0 shadow-sm">
+                  <div className="card border-0 shadow-sm" style={{ cursor: 'pointer' }} onClick={() => {
+                  const params = new URLSearchParams();
+                  params.append('date', activeDates || (() => {
+                    const today = new Date();
+                    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+                  })());
+                  params.append('currency', currency.toUpperCase());
+                  params.append('lang', language);
+                  if (activeDestination) params.append('destination', activeDestination);
+                  if (activeAdults) params.append('adults', String(activeAdults));
+                  if (activeChildren) params.append('children', String(activeChildren));
+                  navigate(`/activity/${activity.id}?${params.toString()}`);
+                }}>
                     <div className="row g-0" style={{ minHeight: '180px' }}>
                       <div className="col-4">
                         <div className="position-relative h-100">
@@ -1227,7 +1353,7 @@ const Home: React.FC = () => {
                   scrollbar-width: none;
                   -ms-overflow-style: none;
                   -webkit-overflow-scrolling: touch;
-                  touch-action: pan-x !important;
+                  touch-action: pan-x pan-y !important;
                   cursor: grab;
                   user-select: none;
                 }
@@ -1279,16 +1405,19 @@ const Home: React.FC = () => {
               <div className="position-relative" style={{ width: '100%', overflowX: 'hidden' }}>
                 <div 
                   ref={carouselRef}
-                  className={`destination-carousel-container d-flex gap-3 px-3 ${isDown ? 'dragging' : ''}`}
+                  className={`destination-carousel-container d-flex gap-3 px-3 ${isDown && isHorizontalDrag ? 'dragging' : ''}`}
                   style={{ 
                     paddingBottom: '10px',
                     WebkitOverflowScrolling: 'touch',
-                    scrollBehavior: isDown ? 'auto' : 'smooth'
+                    scrollBehavior: isDown && isHorizontalDrag ? 'auto' : 'smooth'
                   }}
                   onMouseDown={handleMouseDown}
                   onMouseLeave={handleMouseLeave}
                   onMouseUp={handleMouseUp}
                   onMouseMove={handleMouseMove}
+                  onTouchStart={handleTouchStart}
+                  onTouchMove={handleTouchMove}
+                  onTouchEnd={handleTouchEnd}
                 >
                   {/* Duplicar destinos para efecto infinito */}
                   {[...destinations, ...destinations].map((destination, index) => (

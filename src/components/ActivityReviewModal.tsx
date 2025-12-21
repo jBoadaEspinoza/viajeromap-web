@@ -160,8 +160,7 @@ const ActivityReviewModal: React.FC<ActivityReviewModalProps> = ({
         activityId,
         orderItemId,
         rating,
-        comment: comment.trim() || undefined,
-        lang: language as 'es' | 'en'
+        comment: comment.trim() || undefined
       };
 
       const response = await activityReviewsApi.createActivityReview(request);

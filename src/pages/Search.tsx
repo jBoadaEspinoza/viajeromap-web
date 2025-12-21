@@ -763,7 +763,20 @@ const Search: React.FC = () => {
             <div className="d-md-none">
               {getActivitiesToShow().map((activity, index) => (
                 <div key={activity.id || index} className="mb-4">
-                  <div className="card border-0 shadow-sm">
+                  <div className="card border-0 shadow-sm" style={{ cursor: 'pointer' }} onClick={() => {
+                    const params = new URLSearchParams();
+                    params.append('date', dates || (() => {
+                      const today = new Date();
+                      return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+                    })());
+                    
+                    params.append('currency', currency.toUpperCase());
+                    params.append('lang', language);
+                    if (destination) params.append('destination', destination);
+                    if (adults) params.append('adults', String(adults));
+                    if (children) params.append('children', String(children));
+                    navigate(`/activity/${activity.id}?${params.toString()}`);
+                  }}>
                     <div className="row g-0" style={{ minHeight: '180px' }}>
                       <div className="col-4">
                         <div className="position-relative h-100">

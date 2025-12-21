@@ -2,6 +2,21 @@ import { apiClient } from './apiClient';
 import {auth} from '../config/firebase';
 import { getAuthToken } from '../utils/cookieHelper';
 
+export interface Provider {
+    id: number;
+    name: string;
+    logoUrl: string;
+}
+
+export interface Reply {
+    id: number;
+    replyText: string;
+    lang: string;
+    createdAt: string;
+    updatedAt: string;
+    provider: Provider;
+}
+
 export interface IssuedBy {
     id: number;
     nickname: string;
@@ -16,6 +31,7 @@ export interface ActivityReview {
     lang: string;
     createdAt: string;
     issuedBy: IssuedBy;
+    reply?: Reply;
 }
   
 export interface ActivityReviewRequest {
@@ -23,7 +39,6 @@ export interface ActivityReviewRequest {
     orderItemId: number;
     rating: number;
     comment?: string;
-    lang: "es" | "en";
 }
 
 export interface ApiResponse {

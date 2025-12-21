@@ -10,6 +10,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { activitiesApi } from '../api/activities';
 import { specialOfferApi } from '../api/specialOffer';
 import { ordersItemApi } from '../api/ordersItem';
+import { translationApi } from '../api/traslations';
 import type { Activity, BookingOption } from '../api/activities';
 import type { ActivityReview } from '../api/activityReviews';
 import RatingStars from '../components/RatingStars';
@@ -64,6 +65,12 @@ const ActivityDetail: React.FC = () => {
   const [visibleReviewsCount, setVisibleReviewsCount] = useState<number>(2); // Cantidad de reseñas visibles inicialmente
   const [expandedTranslations, setExpandedTranslations] = useState<Record<string, boolean>>({}); // Estado para traducciones de reseñas
   const [expandedReviews, setExpandedReviews] = useState<Record<string, boolean>>({}); // Estado para ver más/menos en reseñas largas
+  const [expandedReplyTranslations, setExpandedReplyTranslations] = useState<Record<string, boolean>>({}); // Estado para traducciones de respuestas del proveedor
+  const [expandedReplies, setExpandedReplies] = useState<Record<number, boolean>>({}); // Estado para ver más/menos en respuestas largas
+  const [reviewTranslations, setReviewTranslations] = useState<Record<string, string>>({}); // Almacenar traducciones de reseñas
+  const [replyTranslations, setReplyTranslations] = useState<Record<string, string>>({}); // Almacenar traducciones de respuestas
+  const [translatingReviews, setTranslatingReviews] = useState<Record<string, boolean>>({}); // Loading para traducción de reseñas
+  const [translatingReplies, setTranslatingReplies] = useState<Record<string, boolean>>({}); // Loading para traducción de respuestas
   
   // Obtener parámetros desde la URL
   const [searchParams] = useSearchParams();
@@ -190,6 +197,61 @@ const ActivityDetail: React.FC = () => {
     return <div className="d-flex align-items-center flex-wrap">{icons}</div>;
   };
 
+  // Función para traducir una reseña usando la API
+  const translateReview = async (reviewId: string, reviewText: string, reviewLang: string) => {
+    // Si ya tenemos la traducción, solo alternamos la visualización
+    if (reviewTranslations[reviewId]) {
+      setExpandedTranslations((prev) => ({
+        ...prev,
+        [reviewId]: !prev[reviewId]
+      }));
+      return;
+    }
+
+    // Si el idioma de la reseña es el mismo que el idioma actual, no traducir
+    if (reviewLang === language) {
+      return;
+    }
+
+    // Iniciar loading
+    setTranslatingReviews((prev) => ({
+      ...prev,
+      [reviewId]: true
+    }));
+
+    try {
+      const response = await translationApi.translate({
+        text: reviewText,
+        lang: language
+      });
+
+      if (response.success && response.data.translatedText) {
+        // Guardar la traducción
+        setReviewTranslations((prev) => ({
+          ...prev,
+          [reviewId]: response.data.translatedText
+        }));
+        // Mostrar la traducción
+        setExpandedTranslations((prev) => ({
+          ...prev,
+          [reviewId]: true
+        }));
+      }
+    } catch (error) {
+      console.error('Error al traducir reseña:', error);
+      alert(language === 'es' 
+        ? 'Error al traducir la reseña. Por favor, intenta nuevamente.' 
+        : 'Error translating review. Please try again.');
+    } finally {
+      // Finalizar loading
+      setTranslatingReviews((prev) => {
+        const updated = { ...prev };
+        delete updated[reviewId];
+        return updated;
+      });
+    }
+  };
+
   const toggleReviewTranslation = (reviewId: string) => {
     setExpandedTranslations((prev) => ({
       ...prev,
@@ -201,6 +263,75 @@ const ActivityDetail: React.FC = () => {
     setExpandedReviews((prev) => ({
       ...prev,
       [reviewId]: !prev[reviewId]
+    }));
+  };
+
+  const toggleReplyLength = (replyId: number) => {
+    setExpandedReplies((prev) => ({
+      ...prev,
+      [replyId]: !prev[replyId]
+    }));
+  };
+
+  // Función para traducir una respuesta del proveedor usando la API
+  const translateReply = async (replyId: number, replyText: string, replyLang: string) => {
+    // Si ya tenemos la traducción, solo alternamos la visualización
+    if (replyTranslations[replyId]) {
+      setExpandedReplyTranslations((prev) => ({
+        ...prev,
+        [replyId]: !prev[replyId]
+      }));
+      return;
+    }
+
+    // Si el idioma de la respuesta es el mismo que el idioma actual, no traducir
+    if (replyLang === language) {
+      return;
+    }
+
+    // Iniciar loading
+    setTranslatingReplies((prev) => ({
+      ...prev,
+      [replyId]: true
+    }));
+
+    try {
+      const response = await translationApi.translate({
+        text: replyText,
+        lang: language
+      });
+
+      if (response.success && response.data.translatedText) {
+        // Guardar la traducción
+        setReplyTranslations((prev) => ({
+          ...prev,
+          [replyId]: response.data.translatedText
+        }));
+        // Mostrar la traducción
+        setExpandedReplyTranslations((prev) => ({
+          ...prev,
+          [replyId]: true
+        }));
+      }
+    } catch (error) {
+      console.error('Error al traducir respuesta:', error);
+      alert(language === 'es' 
+        ? 'Error al traducir la respuesta. Por favor, intenta nuevamente.' 
+        : 'Error translating reply. Please try again.');
+    } finally {
+      // Finalizar loading
+      setTranslatingReplies((prev) => {
+        const updated = { ...prev };
+        delete updated[replyId];
+        return updated;
+      });
+    }
+  };
+
+  const toggleReplyTranslation = (replyId: number) => {
+    setExpandedReplyTranslations((prev) => ({
+      ...prev,
+      [replyId]: !prev[replyId]
     }));
   };
 
@@ -1018,7 +1149,13 @@ const ActivityDetail: React.FC = () => {
     setVisibleReviewsCount(2);
     setExpandedTranslations({});
     setExpandedReviews({});
-  }, [reviewsSortBy, activity?.id]);
+    setExpandedReplyTranslations({});
+    setExpandedReplies({});
+    setReviewTranslations({});
+    setReplyTranslations({});
+    setTranslatingReviews({});
+    setTranslatingReplies({});
+  }, [reviewsSortBy, activity?.id, language]);
 
   // useEffect para ejecutar acción pendiente cuando el usuario se autentica
   useEffect(() => {
@@ -1135,7 +1272,16 @@ const ActivityDetail: React.FC = () => {
                    color: '#1a365d',
                    fontWeight: 800
                  }}>{activity.title}</h1>
-                <div className="mb-2">
+                <div 
+                  className="mb-2"
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => {
+                    const reviewsSection = document.getElementById('reviews-section');
+                    if (reviewsSection) {
+                      reviewsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                  }}
+                >
                   <RatingStars
                     rating={activity.rating}
                     commentsCount={activity.commentsCount}
@@ -1556,27 +1702,23 @@ const ActivityDetail: React.FC = () => {
                                     : language === 'es'
                                       ? 'Idioma no especificado'
                                       : 'Language not provided';
-                                  const translations = (review as any)?.translations as Record<string, string> | undefined;
                                   const isTranslated = Boolean(expandedTranslations[review.id]);
-                                  const hasTranslation =
-                                    review.lang &&
-                                    review.lang !== language &&
-                                    translations &&
-                                    translations[language];
+                                  const hasApiTranslation = Boolean(reviewTranslations[review.id]);
+                                  const isTranslating = Boolean(translatingReviews[review.id]);
                                   const reviewText =
-                                    (isTranslated && hasTranslation
-                                      ? translations?.[language] || review.comment
+                                    (isTranslated && hasApiTranslation
+                                      ? reviewTranslations[review.id]
                                       : review.comment ||
                                         (language === 'es'
                                           ? 'El viajero no dejó comentarios.'
                                           : 'The traveler did not leave any comments.')) || '';
-                                  const showTranslationButton = review.lang && review.lang !== language;
+                                  const showTranslationButton = review.lang && review.lang !== language && review.comment;
                                   const isLast = index === displayedReviews.length - 1;
                                   const normalizedReviewText = reviewText || '';
                                   const isReviewExpanded = Boolean(expandedReviews[review.id]);
-                                  const shouldTruncateReview = normalizedReviewText.length > 350;
+                                  const shouldTruncateReview = normalizedReviewText.length > 300;
                                   const displayedReviewText = shouldTruncateReview && !isReviewExpanded
-                                    ? `${normalizedReviewText.substring(0, 350)}...`
+                                    ? `${normalizedReviewText.substring(0, 300)}...`
                                     : normalizedReviewText;
 
                                   return (
@@ -1690,8 +1832,8 @@ const ActivityDetail: React.FC = () => {
                                               onClick={() => toggleReviewLength(review.id)}
                                             >
                                               {isReviewExpanded
-                                                ? (language === 'es' ? 'Ver menos' : 'Show less')
-                                                : (language === 'es' ? 'Ver más' : 'Show more')}
+                                                ? (language === 'es' ? 'Mostrar menos' : 'Show less')
+                                                : (language === 'es' ? 'Mostrar más' : 'Show more')}
                                             </button>
                                           )}
 
@@ -1700,29 +1842,57 @@ const ActivityDetail: React.FC = () => {
                                               <button
                                                 type="button"
                                                 className="btn btn-link p-0 fw-semibold text-start text-md-center d-md-none"
-                                                onClick={() => toggleReviewTranslation(review.id)}
+                                                onClick={() => {
+                                                  if (hasApiTranslation) {
+                                                    toggleReviewTranslation(review.id);
+                                                  } else {
+                                                    translateReview(review.id, review.comment || '', review.lang || '');
+                                                  }
+                                                }}
+                                                disabled={isTranslating}
                                                 style={{ fontSize: '0.75rem' }}
                                               >
-                                                {isTranslated
-                                                  ? language === 'es'
+                                                {isTranslating ? (
+                                                  <>
+                                                    <span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                                                    {language === 'es' ? 'Traduciendo...' : 'Translating...'}
+                                                  </>
+                                                ) : isTranslated ? (
+                                                  language === 'es'
                                                     ? 'Ver original'
                                                     : 'Show original'
-                                                  : language === 'es'
+                                                ) : (
+                                                  language === 'es'
                                                     ? 'Traducir'
-                                                    : 'Translate'}
+                                                    : 'Translate'
+                                                )}
                                               </button>
                                               <button
                                                 type="button"
                                                 className="btn btn-link p-0 fw-semibold d-none d-md-block"
-                                                onClick={() => toggleReviewTranslation(review.id)}
+                                                onClick={() => {
+                                                  if (hasApiTranslation) {
+                                                    toggleReviewTranslation(review.id);
+                                                  } else {
+                                                    translateReview(review.id, review.comment || '', review.lang || '');
+                                                  }
+                                                }}
+                                                disabled={isTranslating}
                                               >
-                                                {isTranslated
-                                                  ? language === 'es'
+                                                {isTranslating ? (
+                                                  <>
+                                                    <span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                                                    {language === 'es' ? 'Traduciendo...' : 'Translating...'}
+                                                  </>
+                                                ) : isTranslated ? (
+                                                  language === 'es'
                                                     ? 'Ver original'
                                                     : 'Show original'
-                                                  : language === 'es'
+                                                ) : (
+                                                  language === 'es'
                                                     ? 'Traducir'
-                                                    : 'Translate'}
+                                                    : 'Translate'
+                                                )}
                                               </button>
                                               <small className="text-muted d-md-none" style={{ fontSize: '0.7rem' }}>
                                                 {isTranslated
@@ -1745,19 +1915,234 @@ const ActivityDetail: React.FC = () => {
                                             </div>
                                           )}
 
-                                          {isTranslated && !hasTranslation && (
-                                            <small className="text-muted d-block mt-2 d-md-none" style={{ fontSize: '0.7rem' }}>
-                                              {language === 'es'
-                                                ? 'Aún no hay traducción disponible. Mostramos el texto original.'
-                                                : 'Translation is not available yet. Showing the original text.'}
-                                            </small>
-                                          )}
-                                          {isTranslated && !hasTranslation && (
-                                            <small className="text-muted d-none d-md-block mt-2">
-                                              {language === 'es'
-                                                ? 'Aún no hay traducción disponible. Mostramos el texto original.'
-                                                : 'Translation is not available yet. Showing the original text.'}
-                                            </small>
+                                          {/* Respuesta del proveedor */}
+                                          {review.reply && (
+                                            <div className="mt-3 mt-md-4 pt-3 pt-md-4 border-top">
+                                              <div className="d-flex align-items-start">
+                                                <div className="me-2 me-md-3 flex-shrink-0">
+                                                  {review.reply.provider?.logoUrl ? (
+                                                    <>
+                                                      <img
+                                                        src={review.reply.provider.logoUrl}
+                                                        alt={review.reply.provider.name || (language === 'es' ? 'Proveedor' : 'Provider')}
+                                                        className="rounded d-md-none"
+                                                        style={{
+                                                          width: '32px',
+                                                          height: '32px',
+                                                          objectFit: 'cover'
+                                                        }}
+                                                      />
+                                                      <img
+                                                        src={review.reply.provider.logoUrl}
+                                                        alt={review.reply.provider.name || (language === 'es' ? 'Proveedor' : 'Provider')}
+                                                        className="rounded d-none d-md-block"
+                                                        style={{
+                                                          width: '40px',
+                                                          height: '40px',
+                                                          objectFit: 'cover'
+                                                        }}
+                                                      />
+                                                    </>
+                                                  ) : (
+                                                    <>
+                                                      <div
+                                                        className="rounded d-flex align-items-center justify-content-center text-white fw-bold d-md-none"
+                                                        style={{
+                                                          width: '32px',
+                                                          height: '32px',
+                                                          fontSize: '0.75rem',
+                                                          backgroundColor: '#007bff'
+                                                        }}
+                                                      >
+                                                        <i className="fas fa-building"></i>
+                                                      </div>
+                                                      <div
+                                                        className="rounded d-flex align-items-center justify-content-center text-white fw-bold d-none d-md-block"
+                                                        style={{
+                                                          width: '40px',
+                                                          height: '40px',
+                                                          backgroundColor: '#007bff'
+                                                        }}
+                                                      >
+                                                        <i className="fas fa-building"></i>
+                                                      </div>
+                                                    </>
+                                                  )}
+                                                </div>
+                                                <div className="flex-grow-1 min-w-0">
+                                                  <div className="d-flex flex-column flex-md-row align-items-md-center flex-wrap gap-1 gap-md-2 mb-2">
+                                                    <span className="fw-semibold text-primary d-md-none" style={{ fontSize: '0.875rem' }}>
+                                                      {review.reply.provider?.name || (language === 'es' ? 'Proveedor' : 'Provider')}
+                                                    </span>
+                                                    <span className="fw-semibold text-primary d-none d-md-inline">
+                                                      {review.reply.provider?.name || (language === 'es' ? 'Proveedor' : 'Provider')}
+                                                    </span>
+                                                    <span
+                                                      className="badge fw-semibold d-inline-flex align-items-center d-md-none"
+                                                      style={{
+                                                        backgroundColor: '#28a745',
+                                                        color: '#fff',
+                                                        lineHeight: 1.2,
+                                                        padding: '0.2rem 0.35rem',
+                                                        fontSize: '0.65rem',
+                                                        whiteSpace: 'nowrap'
+                                                      }}
+                                                    >
+                                                      <i className="fas fa-check-circle me-1"></i>
+                                                      {language === 'es' ? 'Respuesta del proveedor' : 'Provider response'}
+                                                    </span>
+                                                    <span
+                                                      className="badge fw-semibold d-none d-md-inline-flex align-items-center"
+                                                      style={{
+                                                        backgroundColor: '#28a745',
+                                                        color: '#fff',
+                                                        lineHeight: 1,
+                                                        padding: '0.25rem 0.4rem'
+                                                      }}
+                                                    >
+                                                      <i className="fas fa-check-circle me-1"></i>
+                                                      {language === 'es' ? 'Respuesta del proveedor' : 'Provider response'}
+                                                    </span>
+                                                    <small className="text-muted d-md-none" style={{ fontSize: '0.75rem' }}>
+                                                      {formatReviewDate(review.reply.createdAt)}
+                                                    </small>
+                                                    <small className="text-muted d-none d-md-inline">
+                                                      {formatReviewDate(review.reply.createdAt)}
+                                                    </small>
+                                                  </div>
+                                                  
+                                                  {/* Texto de la respuesta */}
+                                                  {(() => {
+                                                    if (!review.reply) return null;
+                                                    
+                                                    const reply = review.reply;
+                                                    const isReplyTranslated = Boolean(expandedReplyTranslations[reply.id]);
+                                                    const hasApiReplyTranslation = Boolean(replyTranslations[reply.id]);
+                                                    const isTranslatingReply = Boolean(translatingReplies[reply.id]);
+                                                    const replyText =
+                                                      (isReplyTranslated && hasApiReplyTranslation
+                                                        ? replyTranslations[reply.id]
+                                                        : reply.replyText) || '';
+                                                    const showReplyTranslationButton = reply.lang && reply.lang !== language && reply.replyText;
+                                                    const replyLanguage = reply.lang
+                                                      ? getLanguageName(reply.lang, language)
+                                                      : language === 'es'
+                                                        ? 'Idioma no especificado'
+                                                        : 'Language not provided';
+                                                    
+                                                    // Lógica para truncar respuestas
+                                                    const normalizedReplyText = replyText || '';
+                                                    const isReplyExpanded = Boolean(expandedReplies[reply.id]);
+                                                    const shouldTruncateReply = normalizedReplyText.length > 300;
+                                                    const displayedReplyText = shouldTruncateReply && !isReplyExpanded
+                                                      ? `${normalizedReplyText.substring(0, 300)}...`
+                                                      : normalizedReplyText;
+
+                                                    return (
+                                                      <>
+                                                        <p className="mb-2 text-dark d-md-none" style={{ whiteSpace: 'pre-line', fontSize: '0.875rem' }}>
+                                                          {displayedReplyText}
+                                                        </p>
+                                                        <p className="mb-2 text-dark d-none d-md-block" style={{ whiteSpace: 'pre-line' }}>
+                                                          {displayedReplyText}
+                                                        </p>
+
+                                                        {shouldTruncateReply && (
+                                                          <button
+                                                            type="button"
+                                                            className="btn btn-link p-0 fw-semibold"
+                                                            style={{ fontSize: '0.8rem' }}
+                                                            onClick={() => toggleReplyLength(reply.id)}
+                                                          >
+                                                            {isReplyExpanded
+                                                              ? (language === 'es' ? 'Mostrar menos' : 'Show less')
+                                                              : (language === 'es' ? 'Mostrar más' : 'Show more')}
+                                                          </button>
+                                                        )}
+
+                                                        {showReplyTranslationButton && (
+                                                          <div className="d-flex flex-column flex-md-row align-items-md-center gap-1 gap-md-3 mt-2">
+                                                            <button
+                                                              type="button"
+                                                              className="btn btn-link p-0 fw-semibold text-start text-md-center d-md-none"
+                                                              onClick={() => {
+                                                                if (hasApiReplyTranslation) {
+                                                                  toggleReplyTranslation(reply.id);
+                                                                } else {
+                                                                  translateReply(reply.id, reply.replyText, reply.lang || '');
+                                                                }
+                                                              }}
+                                                              disabled={isTranslatingReply}
+                                                              style={{ fontSize: '0.75rem' }}
+                                                            >
+                                                              {isTranslatingReply ? (
+                                                                <>
+                                                                  <span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                                                                  {language === 'es' ? 'Traduciendo...' : 'Translating...'}
+                                                                </>
+                                                              ) : isReplyTranslated ? (
+                                                                language === 'es'
+                                                                  ? 'Ver original'
+                                                                  : 'Show original'
+                                                              ) : (
+                                                                language === 'es'
+                                                                  ? 'Traducir'
+                                                                  : 'Translate'
+                                                              )}
+                                                            </button>
+                                                            <button
+                                                              type="button"
+                                                              className="btn btn-link p-0 fw-semibold d-none d-md-block"
+                                                              onClick={() => {
+                                                                if (hasApiReplyTranslation) {
+                                                                  toggleReplyTranslation(reply.id);
+                                                                } else {
+                                                                  translateReply(reply.id, reply.replyText, reply.lang || '');
+                                                                }
+                                                              }}
+                                                              disabled={isTranslatingReply}
+                                                            >
+                                                              {isTranslatingReply ? (
+                                                                <>
+                                                                  <span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                                                                  {language === 'es' ? 'Traduciendo...' : 'Translating...'}
+                                                                </>
+                                                              ) : isReplyTranslated ? (
+                                                                language === 'es'
+                                                                  ? 'Ver original'
+                                                                  : 'Show original'
+                                                              ) : (
+                                                                language === 'es'
+                                                                  ? 'Traducir'
+                                                                  : 'Translate'
+                                                              )}
+                                                            </button>
+                                                            <small className="text-muted d-md-none" style={{ fontSize: '0.7rem' }}>
+                                                              {isReplyTranslated
+                                                                ? language === 'es'
+                                                                  ? 'Traducción automática'
+                                                                  : 'Automatic translation'
+                                                                : language === 'es'
+                                                                  ? `Escrito en ${replyLanguage}`
+                                                                  : `Written in ${replyLanguage}`}
+                                                            </small>
+                                                            <small className="text-muted d-none d-md-inline">
+                                                              {isReplyTranslated
+                                                                ? language === 'es'
+                                                                  ? 'Traducción automática'
+                                                                  : 'Automatic translation'
+                                                                : language === 'es'
+                                                                  ? `Escrito en ${replyLanguage}`
+                                                                  : `Written in ${replyLanguage}`}
+                                                            </small>
+                                                          </div>
+                                                        )}
+                                                      </>
+                                                    );
+                                                  })()}
+                                                </div>
+                                              </div>
+                                            </div>
                                           )}
                                         </div>
                                       </div>

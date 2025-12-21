@@ -580,6 +580,10 @@ export const translations: Translations = {
     es: 'Procesando tu solicitud...',
     en: 'Processing your request...'
   },
+  'checkout.errorProcessingPayment':{
+    es: 'Error al procesar el pago. Por favor, intenta de nuevo.',
+    en: 'Error processing payment. Please try again.'
+  },
   'activity.processing': {
     es: 'Procesando...',
     en: 'Processing...'
@@ -1067,8 +1071,8 @@ export const translations: Translations = {
     en: 'View on website'
   },
   'activities.viewDetails': {
-    es: 'Ver detalles',
-    en: 'View details'
+    es: 'Ver detalle',
+    en: 'View detail'
   },
   'activities.finishProcess': {
     es: 'Terminar proceso',
@@ -1637,7 +1641,7 @@ export const translations: Translations = {
   },
   'common.viewDetails': {
     es: 'Ver Detalle',
-    en: 'View Details'
+    en: 'View Detail'
   },
   'common.clearFilters': {
     es: 'Limpiar filtros',
