@@ -79,13 +79,19 @@ const ActivityDetail: React.FC = () => {
   const [numberOfChildren, setNumberOfChildren] = useState<number>(0); // Cantidad de niños
   
   // Fecha de salida (usar fecha actual si no se proporciona)
-  const selectedDate = searchParams.get('date') || (() => {
+  const [selectedDate, setSelectedDate] = useState<string>(() => {
+    const urlDate = searchParams.get('date');
+    if (urlDate) return urlDate;
     const today = new Date();
     const year = today.getFullYear();
     const month = String(today.getMonth() + 1).padStart(2, '0');
     const day = String(today.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
-  })();
+  });
+  
+  // Estado para el bottom sheet de fecha y participantes
+  const [showDateParticipantsBottomSheet, setShowDateParticipantsBottomSheet] = useState(false);
+  const [bottomSheetMode, setBottomSheetMode] = useState<'date' | 'participants' | 'both'>('both');
   
   // Currency y Lang desde URL (ya están disponibles desde context, pero registramos los de URL)
   const urlCurrency = searchParams.get('currency');
@@ -333,6 +339,197 @@ const ActivityDetail: React.FC = () => {
       ...prev,
       [replyId]: !prev[replyId]
     }));
+  };
+
+  // Función para actualizar la URL con los nuevos parámetros
+  const updateSearchParams = (newDate?: string, newAdults?: number, newChildren?: number) => {
+    const params = new URLSearchParams(searchParams.toString());
+    
+    if (newDate) {
+      params.set('date', newDate);
+    }
+    if (newAdults !== undefined) {
+      if (newAdults > 1) {
+        params.set('adults', newAdults.toString());
+      } else {
+        params.delete('adults');
+      }
+    }
+    if (newChildren !== undefined) {
+      if (newChildren > 0) {
+        params.set('children', newChildren.toString());
+      } else {
+        params.delete('children');
+      }
+    }
+    
+    // Mantener currency y lang si existen
+    if (urlCurrency) params.set('currency', urlCurrency);
+    if (urlLang) params.set('lang', urlLang);
+    
+    navigate(`/activity/${id}?${params.toString()}`, { replace: true });
+  };
+
+  // Función para manejar cambio de fecha
+  const handleDateChange = (newDate: string) => {
+    // Actualizar la fecha - esto disparará el useEffect que recargará la actividad
+    setSelectedDate(newDate);
+    updateSearchParams(newDate, undefined, undefined);
+    // Resetear horario seleccionado mientras se carga la nueva fecha
+    setSelectedTimeSlot(null);
+  };
+
+  // Función para manejar cambio de adultos
+  const handleAdultsChange = (increment: boolean) => {
+    const newAdults = increment ? numberOfAdults + 1 : Math.max(1, numberOfAdults - 1);
+    setNumberOfAdults(newAdults);
+    setNumberOfPeople(newAdults + numberOfChildren);
+    updateSearchParams(undefined, newAdults, undefined);
+  };
+
+  // Función para manejar cambio de niños
+  const handleChildrenChange = (increment: boolean) => {
+    const newChildren = increment ? numberOfChildren + 1 : Math.max(0, numberOfChildren - 1);
+    setNumberOfChildren(newChildren);
+    setNumberOfPeople(numberOfAdults + newChildren);
+    updateSearchParams(undefined, undefined, newChildren);
+  };
+
+  // Función para formatear fecha para mostrar
+  const formatDateForDisplay = (dateString: string): string => {
+    if (!dateString) return '';
+    const date = parseLocalDate(dateString);
+    return date.toLocaleDateString(language === 'es' ? 'es-PE' : 'en-US', {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short'
+    });
+  };
+
+  // Función para verificar si una fecha tiene oferta especial
+  const hasSpecialOffer = (dateString: string): boolean => {
+    if (!specialOffers.length || !selectedBookingOption) return false;
+    
+    const date = parseLocalDate(dateString);
+    const dayOfWeek = convertToCustomDayOfWeek(date.getDay());
+    
+    return specialOffers.some(offer => {
+      if (!offer.isActive) return false;
+      
+      const fromDate = new Date(offer.fromDate);
+      fromDate.setHours(0, 0, 0, 0);
+      const toDate = new Date(offer.toDate);
+      toDate.setHours(23, 59, 59, 999);
+      
+      if (date < fromDate || date > toDate) return false;
+      
+      if (offer.applyToAllSlots) return true;
+      
+      if (offer.specialOfferDays && offer.specialOfferDays.length > 0) {
+        return offer.specialOfferDays.some((day: any) => day.dayIndex === dayOfWeek);
+      }
+      
+      return false;
+    });
+  };
+
+  // Función para verificar si una fecha está disponible (tiene horarios)
+  const isDateAvailable = (dateString: string): boolean => {
+    if (!selectedBookingOption) return true; // Si no hay booking option, permitir selección
+    
+    const date = parseLocalDate(dateString);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    // No permitir fechas pasadas
+    if (date < today) return false;
+    
+    const dayOfWeek = convertToCustomDayOfWeek(date.getDay());
+    
+    // Verificar por día de la semana usando schedules
+    if (selectedBookingOption.schedules && selectedBookingOption.schedules.length > 0) {
+      const hasSchedule = selectedBookingOption.schedules.some((schedule: any) => schedule.dayIndex === dayOfWeek);
+      if (hasSchedule) return true;
+    }
+    
+    // Si hay schedulesTimes para la fecha seleccionada actual, está disponible
+    if (dateString === selectedDate && selectedBookingOption.schedulesTimes && selectedBookingOption.schedulesTimes.length > 0) {
+      return true;
+    }
+    
+    // Por defecto, asumir que las fechas futuras están disponibles
+    // Esto permite que el usuario pueda seleccionar cualquier fecha futura
+    // La validación real se hará cuando se intente cargar los horarios
+    return true;
+  };
+
+  // Función para generar el calendario de un mes
+  const generateMonthCalendar = (year: number, month: number) => {
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const daysInMonth = lastDay.getDate();
+    const startingDayOfWeek = convertToCustomDayOfWeek(firstDay.getDay());
+    
+    const days = [];
+    
+    // Agregar días vacíos al inicio
+    for (let i = 0; i < startingDayOfWeek; i++) {
+      days.push(null);
+    }
+    
+    // Agregar días del mes
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dateString = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      const date = parseLocalDate(dateString);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      days.push({
+        dateString,
+        day,
+        date,
+        isPast: date < today,
+        hasOffer: hasSpecialOffer(dateString),
+        isAvailable: isDateAvailable(dateString)
+      });
+    }
+    
+    return days;
+  };
+
+  // Función para generar los próximos días para el selector de fechas, empezando desde la fecha seleccionada
+  const getNextDays = (count: number = 5) => {
+    const days = [];
+    // Usar la fecha seleccionada como punto de inicio, o la fecha actual si no hay selección
+    const startDate = selectedDate ? parseLocalDate(selectedDate) : new Date();
+    
+    for (let i = 0; i < count; i++) {
+      const date = new Date(startDate);
+      date.setDate(startDate.getDate() + i);
+      
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      const dateString = `${year}-${month}-${day}`;
+      
+      const weekday = date.toLocaleDateString(language === 'es' ? 'es-PE' : 'en-US', {
+        weekday: 'short'
+      });
+      const dayNumber = date.getDate();
+      const monthShort = date.toLocaleDateString(language === 'es' ? 'es-PE' : 'en-US', {
+        month: 'short'
+      });
+      
+      days.push({
+        dateString,
+        weekday,
+        dayNumber,
+        monthShort,
+        date
+      });
+    }
+    
+    return days;
   };
 
   // Función para hacer scroll a la sección de reserva
@@ -1034,8 +1231,8 @@ const ActivityDetail: React.FC = () => {
       try {
         await withLoading(async () => {
           setError(null);
-          // Obtener fecha de salida desde la URL (si existe)
-          const departureDate = searchParams.get('date') || undefined;
+          // Obtener fecha de salida desde selectedDate (prioridad) o desde la URL
+          const departureDate = selectedDate || searchParams.get('date') || undefined;
           // Obtener datos de la actividad desde la API
           const activityData = await activitiesApi.getById(id, language, currency, departureDate);
           
@@ -1052,20 +1249,60 @@ const ActivityDetail: React.FC = () => {
           // Inicializar automáticamente las opciones de reserva
           if (activityData?.bookingOptions && activityData.bookingOptions.length > 0) {
             setShowBookingSection(true);
-            const firstOption = activityData.bookingOptions[0];
-            setSelectedBookingOption(firstOption);
             
-            // Seleccionar automáticamente el primer idioma disponible
-            if (firstOption.languages && firstOption.languages.length > 0) {
-              setSelectedLanguage(firstOption.languages[0]);
-            }
-            
-            // Seleccionar automáticamente el primer horario disponible usando schedulesTimes
-            const availableTimes = (firstOption.schedulesTimes || []) as string[];
-            
-            if (availableTimes.length > 0) {
-              // Usar el primer horario disponible
-              setSelectedTimeSlot(availableTimes[0]);
+            // Si ya hay una opción seleccionada, intentar mantenerla y actualizar sus horarios
+            if (selectedBookingOption) {
+              const updatedOption = activityData.bookingOptions.find(
+                (option: any) => option.id === selectedBookingOption.id
+              );
+              
+              if (updatedOption) {
+                // Actualizar la opción seleccionada con los nuevos datos (incluyendo horarios)
+                setSelectedBookingOption(updatedOption);
+                
+                // Actualizar horario si hay disponibles
+                const availableTimes = (updatedOption.schedulesTimes || []) as string[];
+                if (availableTimes.length > 0) {
+                  // Si el horario actual no está en la lista, seleccionar el primero
+                  if (!selectedTimeSlot || !availableTimes.includes(selectedTimeSlot)) {
+                    setSelectedTimeSlot(availableTimes[0]);
+                  }
+                } else {
+                  setSelectedTimeSlot(null);
+                }
+              } else {
+                // Si no se encuentra la opción, usar la primera
+                const firstOption = activityData.bookingOptions[0];
+                setSelectedBookingOption(firstOption);
+                
+                if (firstOption.languages && firstOption.languages.length > 0) {
+                  setSelectedLanguage(firstOption.languages[0]);
+                }
+                
+                const availableTimes = (firstOption.schedulesTimes || []) as string[];
+                if (availableTimes.length > 0) {
+                  setSelectedTimeSlot(availableTimes[0]);
+                } else {
+                  setSelectedTimeSlot(null);
+                }
+              }
+            } else {
+              // Si no hay opción seleccionada, usar la primera
+              const firstOption = activityData.bookingOptions[0];
+              setSelectedBookingOption(firstOption);
+              
+              // Seleccionar automáticamente el primer idioma disponible
+              if (firstOption.languages && firstOption.languages.length > 0) {
+                setSelectedLanguage(firstOption.languages[0]);
+              }
+              
+              // Seleccionar automáticamente el primer horario disponible usando schedulesTimes
+              const availableTimes = (firstOption.schedulesTimes || []) as string[];
+              
+              if (availableTimes.length > 0) {
+                // Usar el primer horario disponible
+                setSelectedTimeSlot(availableTimes[0]);
+              }
             }
           }
         }, 'activity-detail');
@@ -1131,10 +1368,11 @@ const ActivityDetail: React.FC = () => {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // useEffect para inicializar número de adultos y niños desde URL
+  // useEffect para inicializar número de adultos, niños y fecha desde URL
   useEffect(() => {
     const adults = searchParams.get('adults');
     const children = searchParams.get('children');
+    const date = searchParams.get('date');
     
     const adultCount = adults ? parseInt(adults) : 1;
     const childrenCount = children ? parseInt(children) : 0;
@@ -1142,6 +1380,11 @@ const ActivityDetail: React.FC = () => {
     setNumberOfAdults(adultCount);
     setNumberOfChildren(childrenCount);
     setNumberOfPeople(adultCount + childrenCount); // Actualizar numberOfPeople con la suma
+    
+    // Actualizar fecha si viene en la URL
+    if (date) {
+      setSelectedDate(date);
+    }
   }, [searchParams]);
 
   // Reiniciar la cantidad visible de reseñas cuando cambia el orden o la actividad
@@ -1261,8 +1504,59 @@ const ActivityDetail: React.FC = () => {
             padding-bottom: 100px !important;
           }
         }
+        @keyframes fadeIn {
+          from {
+            opacity: 0;
+          }
+          to {
+            opacity: 1;
+          }
+        }
+        @keyframes slideUp {
+          from {
+            transform: translateY(100%);
+          }
+          to {
+            transform: translateY(0);
+          }
+        }
       `}</style>
       <div className="container py-5 activity-detail-content">
+        {/* Botón Volver - Desktop y Móvil */}
+        <div className="mb-4">
+          <button 
+            className="btn btn-link text-decoration-none text-dark p-0 d-flex align-items-center"
+            onClick={() => {
+              // Intentar navegar hacia atrás
+              const destination = searchParams.get('destination');
+              const date = searchParams.get('date');
+              const adults = searchParams.get('adults');
+              const children = searchParams.get('children');
+              
+              // Si hay parámetros de búsqueda, navegar a /search con esos parámetros
+              if (destination || date) {
+                const params = new URLSearchParams();
+                if (destination) params.set('destination', destination);
+                if (date) params.set('date', date);
+                if (adults) params.set('adults', adults);
+                if (children) params.set('children', children);
+                if (urlLang) params.set('lang', urlLang);
+                if (urlCurrency) params.set('currency', urlCurrency);
+                navigate(`/search?${params.toString()}`);
+              } else {
+                // Si no hay parámetros, intentar navegar hacia atrás o ir a home
+                navigate(-1);
+              }
+            }}
+            style={{ fontSize: '1rem' }}
+          >
+            <svg className="me-2" width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" clipRule="evenodd" />
+            </svg>
+            {getTranslation('common.back', language) || (language === 'es' ? 'Volver' : 'Back')}
+          </button>
+        </div>
+        
         {/* Title and Rating Section */}
         <div className="row mb-4">
           <div className="col-lg-12">
@@ -2189,6 +2483,252 @@ const ActivityDetail: React.FC = () => {
             </div>
           </div>
 
+          {/* Sección móvil para cambiar fecha y participantes - Similar a la imagen */}
+          <div id="edit-availability-section-mobile" className="d-block d-md-none mb-5">
+            <div className="card border-0 shadow-sm">
+              <div className="card-body p-4">
+                {/* Título */}
+                <h5 className="fw-bold mb-4" style={{ fontSize: '1.1rem', color: '#1a365d' }}>
+                  {getTranslation('common.editAvailability', language) || 'Editar disponibilidad'}
+                </h5>
+                
+                {/* Selector de Adultos */}
+                <div 
+                  className="mb-3 p-3 border rounded"
+                  style={{ 
+                    cursor: 'pointer', 
+                    backgroundColor: '#f8f9fa',
+                    borderColor: '#dee2e6'
+                  }}
+                  onClick={() => {
+                    setBottomSheetMode('participants');
+                    setShowDateParticipantsBottomSheet(true);
+                  }}
+                >
+                  <div className="d-flex align-items-center justify-content-between">
+                    <div className="d-flex align-items-center">
+                      <svg className="me-3" width="20" height="20" fill="currentColor" viewBox="0 0 20 20" style={{ color: '#6c757d' }}>
+                        <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3z" />
+                      </svg>
+                      <span className="fw-medium" style={{ fontSize: '0.9rem', color: '#212529' }}>
+                        {numberOfAdults === 1 
+                          ? `${getTranslation('home.search.adults', language) || 'Adulto'} x ${numberOfAdults}`
+                          : `${getTranslation('home.search.adults', language) || 'Adultos'} x ${numberOfAdults}`}
+                        {numberOfChildren > 0 && `, ${numberOfChildren} ${numberOfChildren === 1 
+                          ? getTranslation('home.search.children', language) || 'Niño'
+                          : getTranslation('home.search.children', language) || 'Niños'}`}
+                      </span>
+                    </div>
+                    <i className="fas fa-chevron-down text-muted" style={{ fontSize: '0.75rem' }}></i>
+                  </div>
+                </div>
+
+                {/* Selector de Fechas Horizontal */}
+                <div className="d-flex align-items-center gap-2" style={{ paddingBottom: '8px', width: '100%' }}>
+                  {getNextDays(3).map((day, index) => {
+                    const isSelected = day.dateString === selectedDate;
+                    return (
+                      <button
+                        key={index}
+                        type="button"
+                        className="btn rounded"
+                        onClick={() => handleDateChange(day.dateString)}
+                        style={{
+                          backgroundColor: '#ffffff',
+                          border: '1px solid #dee2e6',
+                          padding: '0.75rem 0.5rem',
+                          flex: 1,
+                          minHeight: '70px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '4px',
+                          minWidth: 0
+                        }}
+                      >
+                        {/* Día de la semana arriba */}
+                        <span style={{ 
+                          fontSize: '0.7rem', 
+                          color: isSelected ? '#1a365d' : '#6c757d',
+                          fontWeight: '500',
+                          lineHeight: '1'
+                        }}>
+                          {day.weekday}
+                        </span>
+                        {/* Número del día en el medio */}
+                        <span style={{ 
+                          fontSize: '1.1rem', 
+                          color: isSelected ? '#1a365d' : '#6c757d',
+                          fontWeight: '700',
+                          lineHeight: '1'
+                        }}>
+                          {day.dayNumber}
+                        </span>
+                        {/* Mes abajo */}
+                        <span style={{ 
+                          fontSize: '0.7rem', 
+                          color: isSelected ? '#1a365d' : '#6c757d',
+                          fontWeight: '500',
+                          lineHeight: '1'
+                        }}>
+                          {day.monthShort}
+                        </span>
+                      </button>
+                    );
+                  })}
+                  {/* Botón de calendario */}
+                  <button
+                    type="button"
+                    className="btn rounded"
+                    onClick={() => {
+                      setBottomSheetMode('date');
+                      setShowDateParticipantsBottomSheet(true);
+                    }}
+                    style={{
+                      backgroundColor: '#ffffff',
+                      border: '1px solid #dee2e6',
+                      color: '#1a365d',
+                      flex: 1,
+                      padding: '0.75rem 0.5rem',
+                      minHeight: '70px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      minWidth: 0
+                    }}
+                  >
+                    <i className="far fa-calendar-alt" style={{ fontSize: '1.5rem' }}></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Sección desktop para cambiar fecha y participantes - Similar a móvil */}
+          {showBookingSection && activity?.bookingOptions && activity.bookingOptions.length > 0 && (
+            <div id="edit-availability-section-desktop" className="d-none d-md-block mb-4">
+              <div className="card border-0 shadow-sm">
+                <div className="card-body p-4">
+                  {/* Título */}
+                  <h5 className="fw-bold mb-4" style={{ fontSize: '1.1rem', color: '#1a365d' }}>
+                    {getTranslation('common.editAvailability', language) || 'Editar disponibilidad'}
+                  </h5>
+                  
+                  {/* Selector de Adultos */}
+                  <div 
+                    className="mb-3 p-3 border rounded"
+                    style={{ 
+                      cursor: 'pointer', 
+                      backgroundColor: '#f8f9fa',
+                      borderColor: '#dee2e6'
+                    }}
+                    onClick={() => {
+                      setBottomSheetMode('participants');
+                      setShowDateParticipantsBottomSheet(true);
+                    }}
+                  >
+                    <div className="d-flex align-items-center justify-content-between">
+                      <div className="d-flex align-items-center">
+                        <svg className="me-3" width="20" height="20" fill="currentColor" viewBox="0 0 20 20" style={{ color: '#6c757d' }}>
+                          <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3z" />
+                        </svg>
+                        <span className="fw-medium" style={{ fontSize: '0.9rem', color: '#212529' }}>
+                          {numberOfAdults === 1 
+                            ? `${getTranslation('home.search.adults', language) || 'Adulto'} x ${numberOfAdults}`
+                            : `${getTranslation('home.search.adults', language) || 'Adultos'} x ${numberOfAdults}`}
+                          {numberOfChildren > 0 && `, ${numberOfChildren} ${numberOfChildren === 1 
+                            ? getTranslation('home.search.children', language) || 'Niño'
+                            : getTranslation('home.search.children', language) || 'Niños'}`}
+                        </span>
+                      </div>
+                      <i className="fas fa-chevron-down text-muted" style={{ fontSize: '0.75rem' }}></i>
+                    </div>
+                  </div>
+
+                  {/* Selector de Fechas Horizontal */}
+                  <div className="d-flex align-items-center gap-2" style={{ paddingBottom: '8px', width: '100%' }}>
+                    {getNextDays(7).map((day, index) => {
+                      const isSelected = day.dateString === selectedDate;
+                      return (
+                        <button
+                          key={index}
+                          type="button"
+                          className="btn rounded"
+                          onClick={() => handleDateChange(day.dateString)}
+                          style={{
+                            backgroundColor: '#ffffff',
+                            border: '1px solid #dee2e6',
+                            padding: '0.75rem 0.5rem',
+                            flex: 1,
+                            minHeight: '70px',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '4px',
+                            minWidth: 0
+                          }}
+                        >
+                          {/* Día de la semana arriba */}
+                          <span style={{ 
+                            fontSize: '0.7rem', 
+                            color: isSelected ? '#1a365d' : '#6c757d',
+                            fontWeight: '500',
+                            lineHeight: '1'
+                          }}>
+                            {day.weekday}
+                          </span>
+                          {/* Número del día en el medio */}
+                          <span style={{ 
+                            fontSize: '1.1rem', 
+                            color: isSelected ? '#1a365d' : '#6c757d',
+                            fontWeight: '700',
+                            lineHeight: '1'
+                          }}>
+                            {day.dayNumber}
+                          </span>
+                          {/* Mes abajo */}
+                          <span style={{ 
+                            fontSize: '0.7rem', 
+                            color: isSelected ? '#1a365d' : '#6c757d',
+                            fontWeight: '500',
+                            lineHeight: '1'
+                          }}>
+                            {day.monthShort}
+                          </span>
+                        </button>
+                      );
+                    })}
+                    {/* Botón de calendario */}
+                    <button
+                      type="button"
+                      className="btn rounded"
+                      onClick={() => {
+                        setBottomSheetMode('date');
+                        setShowDateParticipantsBottomSheet(true);
+                      }}
+                      style={{
+                        backgroundColor: '#ffffff',
+                        border: '1px solid #dee2e6',
+                        color: '#1a365d',
+                        flex: 1,
+                        padding: '0.75rem 0.5rem',
+                        minHeight: '70px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        minWidth: 0
+                      }}
+                    >
+                      <i className="far fa-calendar-alt" style={{ fontSize: '1.5rem' }}></i>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Sección de Reserva - Al final del contenido */}
           {showBookingSection && activity?.bookingOptions && activity.bookingOptions.length > 0 && (
             <div id="booking-section" className="row mb-5">
@@ -2415,11 +2955,34 @@ const ActivityDetail: React.FC = () => {
                       {/* Mensaje si no hay horarios para el día seleccionado */}
                       {selectedDate && getSchedulesForSelectedDate().length === 0 && (
                         <div className="alert alert-warning" style={{ fontSize: '0.875rem', padding: '0.5rem 0.75rem', margin: 0 }}>
-                          <i className="fas fa-exclamation-triangle me-2"></i>
-                          {getTranslationWithParams('detail.booking.noSchedulesForDay', language, {
-                            day: getDayName(getCustomDayOfWeekFromDate(selectedDate)),
-                            date: selectedDate
-                          })}
+                          <div className="d-flex align-items-center justify-content-between flex-wrap gap-2">
+                            <div className="d-flex align-items-center">
+                              <i className="fas fa-exclamation-triangle me-2"></i>
+                              <span>
+                                {getTranslationWithParams('detail.booking.noSchedulesForDay', language, {
+                                  day: getDayName(getCustomDayOfWeekFromDate(selectedDate)),
+                                  date: selectedDate
+                                })}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              className="btn btn-link p-0 text-decoration-underline fw-semibold"
+                              style={{ fontSize: '0.875rem', color: '#007bff' }}
+                              onClick={() => {
+                                // Buscar la sección de editar disponibilidad según el tamaño de pantalla
+                                const isMobile = window.innerWidth < 768;
+                                const sectionId = isMobile ? 'edit-availability-section-mobile' : 'edit-availability-section-desktop';
+                                const targetSection = document.getElementById(sectionId);
+                                
+                                if (targetSection) {
+                                  targetSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                }
+                              }}
+                            >
+                              {getTranslation('common.editDepartureDate', language) || (language === 'es' ? 'Editar Fecha de salida' : 'Edit Departure Date')}
+                            </button>
+                          </div>
                         </div>
                       )}
                       
@@ -2427,15 +2990,8 @@ const ActivityDetail: React.FC = () => {
                         const availableTimes = getSchedulesForSelectedDate();
                         
                         if (availableTimes.length === 0) {
-                          // No mostrar nada si no hay horarios disponibles
-                          return (
-                            <div className="text-muted" style={{ fontSize: '0.875rem' }}>
-                              {language === 'es' 
-                                ? 'No hay horarios disponibles para esta fecha.'
-                                : 'No schedules available for this date.'
-                              }
-                            </div>
-                          );
+                          // No mostrar nada si no hay horarios disponibles (el alert ya muestra el botón)
+                          return null;
                         } else if (availableTimes.length === 1) {
                           // Mostrar como texto en negrita cuando hay solo un horario
                           return (
@@ -2527,6 +3083,18 @@ const ActivityDetail: React.FC = () => {
                               return (Math.ceil(unitPrice)).toFixed(2);
                             })()}
                           </p>
+                          <button
+                            type="button"
+                            className="btn btn-link p-0 text-decoration-underline fw-semibold align-self-start"
+                            style={{ fontSize: '0.75rem', color: '#007bff', marginTop: '-4px', marginBottom: '4px' }}
+                            onClick={() => {
+                              // Abrir el bottom sheet en modo 'participants'
+                              setBottomSheetMode('participants');
+                              setShowDateParticipantsBottomSheet(true);
+                            }}
+                          >
+                            {getTranslation('common.edit', language) || (language === 'es' ? 'Editar' : 'Edit')}
+                          </button>
                           <p className="text-muted small" style={{ fontSize: '0.75rem' }}>
                             {getTranslation('detail.booking.allTaxesIncluded', language)}
                           </p>
@@ -2932,6 +3500,655 @@ const ActivityDetail: React.FC = () => {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bottom Sheet para cambiar fecha y participantes - Móvil y Desktop */}
+      {showDateParticipantsBottomSheet && (
+        <div 
+          className="position-fixed top-0 start-0 w-100 h-100"
+          style={{ 
+            zIndex: 10004,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            animation: 'fadeIn 0.3s ease-in-out'
+          }}
+          onClick={() => setShowDateParticipantsBottomSheet(false)}
+        >
+          {/* Bottom Sheet para Móvil */}
+          <div 
+            className="position-fixed bottom-0 start-0 w-100 bg-white rounded-top d-md-none"
+            style={{ 
+              height: '100vh',
+              zIndex: 10005,
+              animation: 'slideUp 0.3s ease-in-out',
+              overflowY: 'auto',
+              display: 'flex',
+              flexDirection: 'column'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="bg-white border-bottom p-3 d-flex justify-content-between align-items-center sticky-top">
+              {bottomSheetMode === 'date' ? (
+                <>
+                  <button 
+                    className="btn btn-link p-0"
+                    onClick={() => setShowDateParticipantsBottomSheet(false)}
+                    style={{ fontSize: '1.2rem', color: '#212529' }}
+                  >
+                    <i className="fas fa-times"></i>
+                  </button>
+                  <h5 className="mb-0 fw-bold flex-grow-1 text-center">
+                    {getTranslation('common.selectDate', language) || 'Seleccionar fecha'}
+                  </h5>
+                  <div style={{ width: '24px' }}></div> {/* Spacer para centrar */}
+                </>
+              ) : (
+                <>
+                  <h5 className="mb-0 fw-bold">
+                    {bottomSheetMode === 'participants' 
+                      ? (getTranslation('home.search.travelers', language) || 'Viajeros')
+                      : (getTranslation('detail.booking.viewAvailability', language) || 'Ver disponibilidad')}
+                  </h5>
+                  <button 
+                    className="btn btn-link p-0"
+                    onClick={() => setShowDateParticipantsBottomSheet(false)}
+                    style={{ fontSize: '1.2rem' }}
+                  >
+                    <i className="fas fa-times"></i>
+                  </button>
+                </>
+              )}
+            </div>
+
+            {/* Content */}
+            <div className="p-3" style={{ flex: 1, overflowY: 'auto' }}>
+              {/* Calendario - Solo mostrar si el modo es 'date' o 'both' */}
+              {(bottomSheetMode === 'date' || bottomSheetMode === 'both') && (() => {
+                // Determinar el mes inicial: usar el mes de la fecha seleccionada, o el mes actual si no hay selección
+                let startMonth: number;
+                let startYear: number;
+                
+                if (selectedDate) {
+                  const selectedDateObj = parseLocalDate(selectedDate);
+                  startMonth = selectedDateObj.getMonth();
+                  startYear = selectedDateObj.getFullYear();
+                } else {
+                  const today = new Date();
+                  startMonth = today.getMonth();
+                  startYear = today.getFullYear();
+                }
+                
+                // Generar calendarios para el mes de la fecha seleccionada y el siguiente
+                const months = [
+                  { year: startYear, month: startMonth, days: generateMonthCalendar(startYear, startMonth) },
+                  { year: startMonth === 11 ? startYear + 1 : startYear, month: startMonth === 11 ? 0 : startMonth + 1, days: generateMonthCalendar(startMonth === 11 ? startYear + 1 : startYear, startMonth === 11 ? 0 : startMonth + 1) }
+                ];
+                
+                const weekDays = language === 'es' 
+                  ? ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']
+                  : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+                
+                const monthNames = language === 'es'
+                  ? ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+                  : ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+                
+                return (
+                  <div>
+                    {months.map((monthData, monthIndex) => (
+                      <div key={monthIndex} className={monthIndex > 0 ? 'mt-5' : ''}>
+                        {/* Título del mes */}
+                        <h6 className="fw-bold mb-3" style={{ fontSize: '1rem' }}>
+                          {monthNames[monthData.month]} de {monthData.year}
+                        </h6>
+                        
+                        {/* Días de la semana */}
+                        <div className="d-flex mb-2">
+                          {weekDays.map((day, index) => (
+                            <div 
+                              key={index}
+                              className="text-center"
+                              style={{ 
+                                width: 'calc(100% / 7)',
+                                fontSize: '0.75rem',
+                                color: '#6c757d',
+                                fontWeight: '500',
+                                padding: '0.25rem',
+                                boxSizing: 'border-box'
+                              }}
+                            >
+                              {day}
+                            </div>
+                          ))}
+                        </div>
+                        
+                        {/* Calendario */}
+                        <div className="d-flex flex-wrap">
+                          {monthData.days.map((day, index) => {
+                            if (day === null) {
+                              return (
+                                <div 
+                                  key={`empty-${index}`}
+                                  className="text-center"
+                                  style={{ 
+                                    width: 'calc(100% / 7)',
+                                    aspectRatio: '1',
+                                    padding: '0.25rem',
+                                    boxSizing: 'border-box'
+                                  }}
+                                ></div>
+                              );
+                            }
+                            
+                            const isSelected = day.dateString === selectedDate;
+                            const isToday = day.dateString === (() => {
+                              const today = new Date();
+                              const year = today.getFullYear();
+                              const month = String(today.getMonth() + 1).padStart(2, '0');
+                              const dayNum = String(today.getDate()).padStart(2, '0');
+                              return `${year}-${month}-${dayNum}`;
+                            })();
+                            
+                            return (
+                              <div 
+                                key={day.dateString}
+                                className="text-center"
+                                style={{ 
+                                  width: 'calc(100% / 7)',
+                                  aspectRatio: '1',
+                                  padding: '0.25rem',
+                                  boxSizing: 'border-box'
+                                }}
+                              >
+                                <button
+                                  type="button"
+                                  className="btn w-100 h-100 rounded"
+                                  onClick={() => {
+                                    if (!day.isPast) {
+                                      handleDateChange(day.dateString);
+                                      setShowDateParticipantsBottomSheet(false);
+                                    }
+                                  }}
+                                  disabled={day.isPast}
+                                  style={{
+                                    backgroundColor: isSelected ? '#1a365d' : 'transparent',
+                                    color: day.isPast 
+                                      ? '#dee2e6' 
+                                      : isSelected 
+                                        ? '#ffffff' 
+                                        : '#212529',
+                                    border: 'none',
+                                    fontSize: '0.875rem',
+                                    fontWeight: isSelected ? '600' : '400',
+                                    position: 'relative',
+                                    cursor: day.isPast ? 'not-allowed' : 'pointer',
+                                    opacity: day.isPast ? 0.5 : 1,
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    alignItems: 'center',
+                                    justifyContent: 'center'
+                                  }}
+                                >
+                                  <span>{day.day}</span>
+                                  {day.hasOffer && !day.isPast && (
+                                    <span 
+                                      style={{ 
+                                        position: 'absolute',
+                                        top: '4px',
+                                        right: '6px',
+                                        fontSize: '0.65rem',
+                                        color: isSelected ? '#ffffff' : '#dc3545',
+                                        fontWeight: '700',
+                                        lineHeight: '1'
+                                      }}
+                                    >
+                                      %
+                                    </span>
+                                  )}
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                    
+                    
+                  </div>
+                );
+              })()}
+
+              {/* Idioma del guía (si hay múltiples idiomas) - Solo mostrar si el modo es 'both', no en modo 'date' */}
+              {bottomSheetMode === 'both' && selectedBookingOption?.languages && selectedBookingOption.languages.length > 1 && (
+                <div className="mb-4">
+                  <label className="form-label fw-bold mb-3">
+                    {getTranslation('detail.booking.guideLanguage', language) || 'Idioma del guía'}
+                  </label>
+                  <div className="d-flex flex-wrap gap-2">
+                    {selectedBookingOption.languages.map((lang: string, index: number) => (
+                      <button 
+                        key={index}
+                        type="button"
+                        className={`btn ${selectedLanguage === lang ? 'btn-primary' : 'btn-outline-primary'}`}
+                        onClick={() => handleLanguageSelection(lang)}
+                        style={{ 
+                          fontSize: '0.875rem',
+                          padding: '0.5rem 1rem',
+                          borderRadius: '4px'
+                        }}
+                      >
+                        {getLanguageName(lang, language)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Participantes - Solo mostrar si el modo es 'participants' o 'both' */}
+              {(bottomSheetMode === 'participants' || bottomSheetMode === 'both') && (
+              <div>
+                <label className="form-label fw-bold mb-3">
+                  {getTranslation('home.search.travelers', language) || 'Viajeros'}
+                </label>
+                
+                {/* Adultos */}
+                <div className="mb-3">
+                  <div className="d-flex justify-content-between align-items-center mb-2">
+                    <div>
+                      <span className="fw-medium">
+                        {getTranslation('home.search.adults', language) || 'Adultos'}
+                      </span>
+                      <small className="text-muted d-block" style={{ fontSize: '0.75rem' }}>
+                        18+ años
+                      </small>
+                    </div>
+                    <div className="d-flex align-items-center">
+                      <button
+                        type="button"
+                        className="btn btn-outline-secondary btn-sm"
+                        onClick={() => handleAdultsChange(false)}
+                        disabled={numberOfAdults <= 1}
+                        style={{ width: '40px', height: '40px' }}
+                      >
+                        <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                          <path d="M4 8a.5.5 0 0 1 .5-.5h7a.5.5 0 0 1 0 1h-7A.5.5 0 0 1 4 8z"/>
+                        </svg>
+                      </button>
+                      <span className="mx-3 fw-bold" style={{ minWidth: '30px', textAlign: 'center' }}>
+                        {numberOfAdults}
+                      </span>
+                      <button
+                        type="button"
+                        className="btn btn-outline-secondary btn-sm"
+                        onClick={() => handleAdultsChange(true)}
+                        style={{ width: '40px', height: '40px' }}
+                      >
+                        <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                          <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Niños */}
+                <div>
+                  <div className="d-flex justify-content-between align-items-center mb-2">
+                    <div>
+                      <span className="fw-medium">
+                        {getTranslation('home.search.children', language) || 'Niños'}
+                      </span>
+                      <small className="text-muted d-block" style={{ fontSize: '0.75rem' }}>
+                        0-17 años
+                      </small>
+                    </div>
+                    <div className="d-flex align-items-center">
+                      <button
+                        type="button"
+                        className="btn btn-outline-secondary btn-sm"
+                        onClick={() => handleChildrenChange(false)}
+                        disabled={numberOfChildren <= 0}
+                        style={{ width: '40px', height: '40px' }}
+                      >
+                        <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                          <path d="M4 8a.5.5 0 0 1 .5-.5h7a.5.5 0 0 1 0 1h-7A.5.5 0 0 1 4 8z"/>
+                        </svg>
+                      </button>
+                      <span className="mx-3 fw-bold" style={{ minWidth: '30px', textAlign: 'center' }}>
+                        {numberOfChildren}
+                      </span>
+                      <button
+                        type="button"
+                        className="btn btn-outline-secondary btn-sm"
+                        onClick={() => handleChildrenChange(true)}
+                        style={{ width: '40px', height: '40px' }}
+                      >
+                        <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                          <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              )}
+            </div>
+
+            {/* Footer - Solo mostrar si no es modo 'date' */}
+            {bottomSheetMode !== 'date' && (
+              <div className="position-sticky bottom-0 bg-white border-top p-3">
+                <button
+                  type="button"
+                  className="btn btn-primary w-100"
+                  onClick={() => setShowDateParticipantsBottomSheet(false)}
+                >
+                  {getTranslation('common.confirm', language) || 'Confirmar'}
+                </button>
+              </div>
+            )}
+          </div>
+          
+          {/* Modal para Desktop */}
+          <div 
+            className="position-fixed top-50 start-50 translate-middle bg-white rounded d-none d-md-block"
+            style={{ 
+              width: '90%',
+              maxWidth: '600px',
+              maxHeight: '90vh',
+              zIndex: 10005,
+              animation: 'fadeIn 0.3s ease-in-out',
+              overflowY: 'auto',
+              display: 'flex',
+              flexDirection: 'column',
+              boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="bg-white border-bottom p-3 d-flex justify-content-between align-items-center sticky-top">
+              {bottomSheetMode === 'date' ? (
+                <>
+                  <button 
+                    className="btn btn-link p-0"
+                    onClick={() => setShowDateParticipantsBottomSheet(false)}
+                    style={{ fontSize: '1.2rem', color: '#212529' }}
+                  >
+                    <i className="fas fa-times"></i>
+                  </button>
+                  <h5 className="mb-0 fw-bold flex-grow-1 text-center">
+                    {getTranslation('common.selectDate', language) || 'Seleccionar fecha'}
+                  </h5>
+                  <div style={{ width: '24px' }}></div> {/* Spacer para centrar */}
+                </>
+              ) : (
+                <>
+                  <h5 className="mb-0 fw-bold">
+                    {bottomSheetMode === 'participants' 
+                      ? (getTranslation('home.search.travelers', language) || 'Viajeros')
+                      : (getTranslation('detail.booking.viewAvailability', language) || 'Ver disponibilidad')}
+                  </h5>
+                  <button 
+                    className="btn btn-link p-0"
+                    onClick={() => setShowDateParticipantsBottomSheet(false)}
+                    style={{ fontSize: '1.2rem' }}
+                  >
+                    <i className="fas fa-times"></i>
+                  </button>
+                </>
+              )}
+            </div>
+
+            {/* Content - Reutilizar el mismo contenido del bottom sheet móvil */}
+            <div className="p-3" style={{ flex: 1, overflowY: 'auto' }}>
+              {/* Calendario - Solo mostrar si el modo es 'date' o 'both' */}
+              {(bottomSheetMode === 'date' || bottomSheetMode === 'both') && (() => {
+                // Determinar el mes inicial: usar el mes de la fecha seleccionada, o el mes actual si no hay selección
+                let startMonth: number;
+                let startYear: number;
+                
+                if (selectedDate) {
+                  const selectedDateObj = parseLocalDate(selectedDate);
+                  startMonth = selectedDateObj.getMonth();
+                  startYear = selectedDateObj.getFullYear();
+                } else {
+                  const today = new Date();
+                  startMonth = today.getMonth();
+                  startYear = today.getFullYear();
+                }
+                
+                // Generar calendarios para el mes de la fecha seleccionada y el siguiente
+                const months = [
+                  { year: startYear, month: startMonth, days: generateMonthCalendar(startYear, startMonth) },
+                  { year: startMonth === 11 ? startYear + 1 : startYear, month: startMonth === 11 ? 0 : startMonth + 1, days: generateMonthCalendar(startMonth === 11 ? startYear + 1 : startYear, startMonth === 11 ? 0 : startMonth + 1) }
+                ];
+                
+                const weekDays = language === 'es' 
+                  ? ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']
+                  : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+                
+                const monthNames = language === 'es'
+                  ? ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+                  : ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+                
+                return (
+                  <div>
+                    {months.map((monthData, monthIndex) => (
+                      <div key={monthIndex} className={monthIndex > 0 ? 'mt-5' : ''}>
+                        {/* Título del mes */}
+                        <h6 className="fw-bold mb-3" style={{ fontSize: '1rem' }}>
+                          {monthNames[monthData.month]} de {monthData.year}
+                        </h6>
+                        
+                        {/* Días de la semana */}
+                        <div className="d-flex mb-2">
+                          {weekDays.map((day, index) => (
+                            <div 
+                              key={index}
+                              className="text-center"
+                              style={{ 
+                                width: 'calc(100% / 7)',
+                                fontSize: '0.75rem',
+                                color: '#6c757d',
+                                fontWeight: '500',
+                                padding: '0.25rem',
+                                boxSizing: 'border-box'
+                              }}
+                            >
+                              {day}
+                            </div>
+                          ))}
+                        </div>
+                        
+                        {/* Calendario */}
+                        <div className="d-flex flex-wrap">
+                          {monthData.days.map((day, index) => {
+                            if (day === null) {
+                              return (
+                                <div 
+                                  key={`empty-${index}`}
+                                  className="text-center"
+                                  style={{ 
+                                    width: 'calc(100% / 7)',
+                                    aspectRatio: '1',
+                                    padding: '0.25rem',
+                                    boxSizing: 'border-box'
+                                  }}
+                                ></div>
+                              );
+                            }
+                            
+                            const isSelected = day.dateString === selectedDate;
+                            
+                            return (
+                              <div 
+                                key={day.dateString}
+                                className="text-center"
+                                style={{ 
+                                  width: 'calc(100% / 7)',
+                                  aspectRatio: '1',
+                                  padding: '0.25rem',
+                                  boxSizing: 'border-box'
+                                }}
+                              >
+                                <button
+                                  type="button"
+                                  className="btn w-100 h-100 rounded"
+                                  onClick={() => {
+                                    if (!day.isPast) {
+                                      handleDateChange(day.dateString);
+                                      setShowDateParticipantsBottomSheet(false);
+                                    }
+                                  }}
+                                  disabled={day.isPast}
+                                  style={{
+                                    backgroundColor: isSelected ? '#1a365d' : 'transparent',
+                                    color: day.isPast 
+                                      ? '#dee2e6' 
+                                      : isSelected 
+                                        ? '#ffffff' 
+                                        : '#212529',
+                                    border: 'none',
+                                    fontSize: '0.875rem',
+                                    fontWeight: isSelected ? '600' : '400',
+                                    position: 'relative',
+                                    cursor: day.isPast ? 'not-allowed' : 'pointer',
+                                    opacity: day.isPast ? 0.5 : 1,
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    alignItems: 'center',
+                                    justifyContent: 'center'
+                                  }}
+                                >
+                                  <span>{day.day}</span>
+                                  {day.hasOffer && !day.isPast && (
+                                    <span 
+                                      style={{ 
+                                        position: 'absolute',
+                                        top: '4px',
+                                        right: '6px',
+                                        fontSize: '0.65rem',
+                                        color: isSelected ? '#ffffff' : '#dc3545',
+                                        fontWeight: '700',
+                                        lineHeight: '1'
+                                      }}
+                                    >
+                                      %
+                                    </span>
+                                  )}
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+
+              {/* Participantes - Solo mostrar si el modo es 'participants' o 'both' */}
+              {(bottomSheetMode === 'participants' || bottomSheetMode === 'both') && (
+                <div>
+                  <label className="form-label fw-bold mb-3">
+                    {getTranslation('home.search.travelers', language) || 'Viajeros'}
+                  </label>
+                  
+                  {/* Adultos */}
+                  <div className="mb-3">
+                    <div className="d-flex justify-content-between align-items-center mb-2">
+                      <div>
+                        <span className="fw-medium">
+                          {getTranslation('home.search.adults', language) || 'Adultos'}
+                        </span>
+                        <small className="text-muted d-block" style={{ fontSize: '0.75rem' }}>
+                          18+ años
+                        </small>
+                      </div>
+                      <div className="d-flex align-items-center">
+                        <button
+                          type="button"
+                          className="btn btn-outline-secondary btn-sm"
+                          onClick={() => handleAdultsChange(false)}
+                          disabled={numberOfAdults <= 1}
+                          style={{ width: '40px', height: '40px' }}
+                        >
+                          <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                            <path d="M4 8a.5.5 0 0 1 .5-.5h7a.5.5 0 0 1 0 1h-7A.5.5 0 0 1 4 8z"/>
+                          </svg>
+                        </button>
+                        <span className="mx-3 fw-bold" style={{ minWidth: '30px', textAlign: 'center' }}>
+                          {numberOfAdults}
+                        </span>
+                        <button
+                          type="button"
+                          className="btn btn-outline-secondary btn-sm"
+                          onClick={() => handleAdultsChange(true)}
+                          style={{ width: '40px', height: '40px' }}
+                        >
+                          <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                            <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Niños */}
+                  <div>
+                    <div className="d-flex justify-content-between align-items-center mb-2">
+                      <div>
+                        <span className="fw-medium">
+                          {getTranslation('home.search.children', language) || 'Niños'}
+                        </span>
+                        <small className="text-muted d-block" style={{ fontSize: '0.75rem' }}>
+                          0-17 años
+                        </small>
+                      </div>
+                      <div className="d-flex align-items-center">
+                        <button
+                          type="button"
+                          className="btn btn-outline-secondary btn-sm"
+                          onClick={() => handleChildrenChange(false)}
+                          disabled={numberOfChildren <= 0}
+                          style={{ width: '40px', height: '40px' }}
+                        >
+                          <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                            <path d="M4 8a.5.5 0 0 1 .5-.5h7a.5.5 0 0 1 0 1h-7A.5.5 0 0 1 4 8z"/>
+                          </svg>
+                        </button>
+                        <span className="mx-3 fw-bold" style={{ minWidth: '30px', textAlign: 'center' }}>
+                          {numberOfChildren}
+                        </span>
+                        <button
+                          type="button"
+                          className="btn btn-outline-secondary btn-sm"
+                          onClick={() => handleChildrenChange(true)}
+                          style={{ width: '40px', height: '40px' }}
+                        >
+                          <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                            <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Footer - Solo mostrar si no es modo 'date' */}
+            {bottomSheetMode !== 'date' && (
+              <div className="position-sticky bottom-0 bg-white border-top p-3">
+                <button
+                  type="button"
+                  className="btn btn-primary w-100"
+                  onClick={() => setShowDateParticipantsBottomSheet(false)}
+                >
+                  {getTranslation('common.confirm', language) || 'Confirmar'}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

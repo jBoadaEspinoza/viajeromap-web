@@ -1495,6 +1495,27 @@ export const translations: Translations = {
     es: 'Peru Trips & Adventures',
     en: 'Peru Trips & Adventures'
   },
+
+  'footer.workWithUs': {
+    es: 'Trabaja con nosotros',
+    en: 'Work with us'
+  },
+  'footer.comoProveedorDeActividades': {
+    es: 'Como proveedor de actividades',
+    en: 'As a provider of activities'
+  },
+  'footer.comoCreadorDeContenido': { 
+    es: 'Como creador de contenido',
+    en: 'As a content creator'
+  },
+  'footer.socialMedia': {
+    es: 'Encuentranos en nuestras redes sociales',
+    en: 'Find us on our social media'
+  },
+  'footer.comoAfiliado': {
+    es: 'Como afiliado',
+    en: 'As an affiliate'
+  },
   'footer.description': {
     es: 'Tu compañía de confianza para explorar los mejores destinos de Perú.',
     en: 'Your trusted company to explore the best destinations in Peru.'
@@ -1504,8 +1525,8 @@ export const translations: Translations = {
     en: 'Quick Links'
   },
   'footer.destinations': {
-    es: 'Destinos',
-    en: 'Destinations'
+    es: 'Principales destinos',
+    en: 'Main destinations'
   },
   'footer.contactInfo': {
     es: 'Información de Contacto',
@@ -1524,8 +1545,8 @@ export const translations: Translations = {
     en: 'Email'
   },
   'footer.copyright': {
-    es: '© 2024 Peru Trips & Adventures. Todos los derechos reservados.',
-    en: '© 2024 Peru Trips & Adventures. All rights reserved.'
+    es: '© 2025-2026 ViajeroMap. Creado en Paracas, Ica, Perú.',
+    en: '© 2025-2026 ViajeroMap. Created in Paracas, Ica, Peru.'
   },
 
   // Destinations
@@ -1563,6 +1584,10 @@ export const translations: Translations = {
   },
 
   // Common
+  'common.editDepartureDate': {
+    es: 'Editar fecha de salida',
+    en: 'Edit departure date'
+  },
   'common.backToCart': {
     es: 'Volver al carrito',
     en: 'Back to cart'
@@ -1643,6 +1668,18 @@ export const translations: Translations = {
     es: 'Ver Detalle',
     en: 'View Detail'
   },
+  'common.editAvailability': {
+    es: 'Editar disponibilidad',
+    en: 'Edit availability'
+  },
+  'common.confirm': {
+    es: 'Confirmar',
+    en: 'Confirm'
+  },
+  'common.selectDate': {
+    es: 'Seleccionar fecha',
+    en: 'Select date'
+  },
   'common.clearFilters': {
     es: 'Limpiar filtros',
     en: 'Clear filters'
@@ -1692,6 +1729,18 @@ export const translations: Translations = {
   'cookies.moreInfoText': {
     es: 'Las cookies son pequeños archivos de texto que se almacenan en tu dispositivo. Utilizamos cookies esenciales para el funcionamiento del sitio y cookies analíticas para mejorar nuestro servicio. Puedes gestionar tus preferencias en cualquier momento.',
     en: 'Cookies are small text files stored on your device. We use essential cookies for site functionality and analytics cookies to improve our service. You can manage your preferences at any time.'
+  },
+  'favorites.empty.title': {
+    es: 'No tienes favoritos',
+    en: 'You don\'t have favorites'
+  },
+  'favorites.empty.message': {
+    es: 'Aún no tienes actividades en favoritos. Guarda tus experiencias preferidas para compararlas, revisar precios y horarios, y planificar mejor tu viaje.',
+    en: 'You don’t have any favorite activities yet. Save your preferred experiences to compare them, check prices and schedules, and plan your trip better.'
+  },
+  'favorites.exploreActivities': {
+    es: 'Explorar Actividades',
+    en: 'Explore Activities'
   },
   'cart.editDetails': {
     es: 'Editar detalles',

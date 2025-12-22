@@ -408,14 +408,17 @@ const Navbar: React.FC = () => {
 
           {/* Action Icons - Mobile Only */}
           <div className="d-flex align-items-center gap-3 d-lg-none">
-            {/* Heart Icon */}
-            <button 
-              className="btn btn-link p-2"
-              style={{ border: 'none', backgroundColor: 'transparent' }}
-              aria-label="Favorites"
-            >
-              <i className="fas fa-heart text-muted" style={{ fontSize: '1.2rem' }}></i>
-            </button>
+            {/* Heart Icon - Solo mostrar si el usuario está logueado */}
+            {isAuthenticated && firebaseUser && (
+              <button 
+                className="btn btn-link p-2"
+                style={{ border: 'none', backgroundColor: 'transparent' }}
+                aria-label="Favorites"
+                onClick={() => navigate('/favorites')}
+              >
+                <i className="fas fa-heart text-muted" style={{ fontSize: '1.2rem' }}></i>
+              </button>
+            )}
 
             {/* Shopping Cart Icon */}
             <div className="position-relative">

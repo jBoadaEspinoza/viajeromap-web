@@ -10,6 +10,7 @@ import CancelPayment from '../pages/CancelPayment';
 import PaymentCompleted from '../pages/PaymentCompleted';
 import Bookings from '../pages/Bookings';
 import PayToConfirm from '../pages/PayToConfirm';
+import Favorites from '../pages/Favorites';
 
 const AppRoutes: React.FC = () => {
   return (
@@ -24,6 +25,7 @@ const AppRoutes: React.FC = () => {
       <Route path="/payment-completed" element={<PaymentCompleted />} />
       <Route path="/bookings" element={<Bookings />} />
       <Route path="/pay-to-confirm" element={<PayToConfirm />} />
+      <Route path="/favorites" element={<Favorites />} />
     </Routes>
   );
 };

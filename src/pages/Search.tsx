@@ -42,6 +42,28 @@ const Search: React.FC = () => {
   // Establecer título de página dinámicamente
   usePageTitle('nav.search', language);
 
+  // Sincronizar estados con los parámetros de la URL cuando cambian
+  useEffect(() => {
+    const urlDestination = searchParams.get('destination') || '';
+    const urlDate = searchParams.get('date') || '';
+    const urlAdults = parseInt(searchParams.get('adults') || '1');
+    const urlChildren = parseInt(searchParams.get('children') || '0');
+
+    // Actualizar estados solo si han cambiado
+    if (urlDestination !== destination) {
+      setDestination(urlDestination);
+    }
+    if (urlDate !== dates) {
+      setDates(urlDate);
+    }
+    if (urlAdults !== adults) {
+      setAdults(urlAdults);
+    }
+    if (urlChildren !== children) {
+      setChildren(urlChildren);
+    }
+  }, [searchParams]);
+
   // Función auxiliar para parsear fecha en timezone local (America/Lima)
   const parseLocalDate = (dateString: string): Date => {
     // dateString formato: "YYYY-MM-DD"
@@ -640,6 +662,22 @@ const Search: React.FC = () => {
                           <i className="fas fa-clock me-1"></i>{activity.duration}
                         </span>
                       </div>
+                      {activity.supplierVerified && (
+                        <div className="position-absolute bottom-0 start-0 m-2">
+                          <span className="verified-badge">
+                            <span 
+                              className="badge fw-semibold"
+                              style={{ fontSize: '0.6rem', backgroundColor: '#191970', color: '#fff', lineHeight: 1, padding: '0.25rem 0.4rem', display: 'inline-flex', alignItems: 'center' }}
+                              aria-label={getTranslation('home.activities.verifiedProvider', language)}
+                            >
+                              <i className="fas fa-check-circle me-1"></i>{getTranslation('detail.booking.verified', language)}
+                            </span>
+                            <span className="verified-tooltip">
+                              {getTranslation('home.activities.verifiedProviderTooltip', language)}
+                            </span>
+                          </span>
+                        </div>
+                      )}
                     </div>
                     <div className="card-body d-flex flex-column">
                       <div className="mb-2">
@@ -658,24 +696,8 @@ const Search: React.FC = () => {
                         />
                       </div>
                       {activity.supplierName && (
-                        <p className="small text-muted mb-2 fw-bold d-flex align-items-center gap-2" style={{ fontSize: '0.8rem', padding: '0px', margin: '0px' }}>
-                          <span>
-                            {getTranslation('home.activities.provider', language)} {activity.supplierName.length > 30 ? `${activity.supplierName.substring(0, 30)}...` : activity.supplierName}
-                          </span>
-                          {activity.supplierVerified && (
-                            <span className="verified-badge">
-                              <span 
-                                className="badge fw-semibold"
-                                style={{ fontSize: '0.6rem', backgroundColor: '#191970', color: '#fff', lineHeight: 1, padding: '0.25rem 0.4rem', display: 'inline-flex', alignItems: 'center' }}
-                                aria-label={getTranslation('home.activities.verifiedProvider', language)}
-                              >
-                                <i className="fas fa-check-circle me-1"></i>{getTranslation('detail.booking.verified', language)}
-                              </span>
-                              <span className="verified-tooltip">
-                                {getTranslation('home.activities.verifiedProviderTooltip', language)}
-                              </span>
-                            </span>
-                          )}
+                        <p className="small text-muted mb-2 fw-bold" style={{ fontSize: '0.8rem', padding: '0px', margin: '0px' }}>
+                          {getTranslation('home.activities.provider', language)} {activity.supplierName.length > 30 ? `${activity.supplierName.substring(0, 30)}...` : activity.supplierName}
                         </p>
                       )}
                       {activity.presentation && (
@@ -818,10 +840,10 @@ const Search: React.FC = () => {
                             />
                           </div>
                           {activity.supplierName && (
-                            <p className="small text-muted mb-1 fw-bold d-flex align-items-center gap-2" style={{ fontSize: '0.7rem' }}>
-                              <span>
+                            <div className="mb-1">
+                              <p className="small text-muted mb-1 fw-bold" style={{ fontSize: '0.7rem' }}>
                                 {getTranslation('home.activities.provider', language)} {activity.supplierName.length > 30 ? `${activity.supplierName.substring(0, 30)}...` : activity.supplierName}
-                              </span>
+                              </p>
                               {activity.supplierVerified && (
                                 <span className="verified-badge">
                                   <span 
@@ -836,31 +858,6 @@ const Search: React.FC = () => {
                                   </span>
                                 </span>
                               )}
-                            </p>
-                          )}
-                          <p className="card-text text-muted small mb-2" style={{ fontSize: '0.9rem', lineHeight: '1.3' }}>
-                            {activity.presentation && activity.presentation.length > 100 ? `${activity.presentation?.substring(0, 100)}...` : activity.presentation}
-                          </p>
-                          
-                          {activity.includes && activity.includes.length > 0 && (
-                            <div className="mb-2">
-                              <div className="fw-bold text-success mb-1" style={{ fontSize: '0.75rem' }}>
-                                <i className="fas fa-check-circle me-1" style={{ fontSize: '0.7rem' }}></i>
-                                {getTranslation('home.activities.includes', language)}:
-                              </div>
-                              <div className="small text-muted" style={{ fontSize: '0.7rem', lineHeight: '1.2' }}>
-                                {activity.includes.slice(0, 1).map((item, idx) => (
-                                  <div key={idx} className="mb-1">
-                                    <i className="fas fa-check text-success me-1" style={{ fontSize: '0.6rem' }}></i>
-                                    {item}
-                                  </div>
-                                ))}
-                                {activity.includes.length > 1 && (
-                                  <div className="text-primary fw-medium">
-                                    +{activity.includes.length - 1} {getTranslation('home.activities.more', language)}...
-                                  </div>
-                                )}
-                              </div>
                             </div>
                           )}
                           

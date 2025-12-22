@@ -30,7 +30,7 @@ export interface DestinationCardProps {
   variant?: 'default' | 'compact';
   showDetailsButton?: boolean;
   detailsButtonText?: string;
-  onDetailsClick?: (id: number) => void;
+  onDetailsClick?: (id: number, cityName: string) => void;
   className?: string;
 }
 
@@ -51,6 +51,11 @@ const DestinationCard: React.FC<DestinationCardProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isFetchingRef = useRef(false);
+  
+  // Estados para manejar click vs arrastre
+  const [isPointerDown, setIsPointerDown] = useState(false);
+  const [pointerStartPos, setPointerStartPos] = useState({ x: 0, y: 0 });
+  const [hasMoved, setHasMoved] = useState(false);
 
   // Función para obtener información de IA del destino
   const fetchPlaceInfo = useCallback(async () => {
@@ -93,25 +98,67 @@ const DestinationCard: React.FC<DestinationCardProps> = ({
 
   const handleDetailsClick = () => {
     if (onDetailsClick) {
-      onDetailsClick(destination.id);
+      onDetailsClick(destination.id, destination.cityName);
     } else {
-      // Navegar a Home con el destino seleccionado
-      navigate(`/?destination=${destination.cityName}#activities`);
-      
-      // Hacer scroll a actividades después de un breve delay
-      setTimeout(() => {
-        const activitiesSection = document.getElementById('activities');
-        if (activitiesSection) {
-          activitiesSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
-      }, 100);
+      // Navegar a la página de búsqueda con el destino seleccionado
+      navigate(`/search?destination=${destination.cityName}`);
     }
+  };
+
+  // Handlers para distinguir entre click y arrastre
+  const handlePointerDown = (e: React.MouseEvent | React.TouchEvent) => {
+    // No iniciar si es un click en un botón
+    if ((e.target as HTMLElement).closest('button')) return;
+    
+    setIsPointerDown(true);
+    setHasMoved(false);
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+    setPointerStartPos({ x: clientX, y: clientY });
+  };
+
+  const handlePointerMove = (e: React.MouseEvent | React.TouchEvent) => {
+    if (!isPointerDown) return;
+    
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+    const deltaX = Math.abs(clientX - pointerStartPos.x);
+    const deltaY = Math.abs(clientY - pointerStartPos.y);
+    
+    // Si hay movimiento significativo (más de 10px), es un arrastre
+    if (deltaX > 10 || deltaY > 10) {
+      setHasMoved(true);
+    }
+  };
+
+  const handlePointerUp = (e: React.MouseEvent | React.TouchEvent) => {
+    if (isPointerDown && !hasMoved) {
+      // Solo ejecutar si no fue un click en el botón
+      if (!(e.target as HTMLElement).closest('button')) {
+        handleDetailsClick();
+      }
+    }
+    setIsPointerDown(false);
+    setHasMoved(false);
   };
 
   const renderDefaultCard = () => (
     <>
       <style>{cardStyles}</style>
-      <div className={`card destination-card-hover shadow-lg border-0 rounded-3 overflow-hidden position-relative ${className}`} style={{ height: '660px' }}>
+      <div 
+        className={`card destination-card-hover shadow-lg border-0 rounded-3 overflow-hidden position-relative ${className}`} 
+        style={{ height: '660px', cursor: 'pointer' }}
+        onMouseDown={handlePointerDown}
+        onMouseMove={handlePointerMove}
+        onMouseUp={handlePointerUp}
+        onMouseLeave={() => {
+          setIsPointerDown(false);
+          setHasMoved(false);
+        }}
+        onTouchStart={handlePointerDown}
+        onTouchMove={handlePointerMove}
+        onTouchEnd={handlePointerUp}
+      >
         <div className="position-relative">
           <img
             src={destination.imageUrl || `https://images.unsplash.com/photo-1578662996442-48f60103fc96?w=400&h=300&fit=crop`}
@@ -197,7 +244,7 @@ const DestinationCard: React.FC<DestinationCardProps> = ({
         <div className="mt-auto pt-3">
           {showDetailsButton && (
             <button 
-              className="btn btn-primary fw-bold px-4 py-2 rounded-pill w-100"
+              className="btn btn-primary fw-bold px-4 py-2 rounded-pill w-100 d-none d-md-block"
               onClick={handleDetailsClick}
             >
               {detailsButtonText || getTranslation('common.viewDetails', language)}
@@ -212,7 +259,20 @@ const DestinationCard: React.FC<DestinationCardProps> = ({
   const renderCompactCard = () => (
     <>
       <style>{cardStyles}</style>
-      <div className={`card destination-card-hover shadow-sm border-0 rounded-3 overflow-hidden ${className}`} style={{ height: '320px' }}>
+      <div 
+        className={`card destination-card-hover shadow-sm border-0 rounded-3 overflow-hidden ${className}`} 
+        style={{ height: '320px', cursor: 'pointer' }}
+        onMouseDown={handlePointerDown}
+        onMouseMove={handlePointerMove}
+        onMouseUp={handlePointerUp}
+        onMouseLeave={() => {
+          setIsPointerDown(false);
+          setHasMoved(false);
+        }}
+        onTouchStart={handlePointerDown}
+        onTouchMove={handlePointerMove}
+        onTouchEnd={handlePointerUp}
+      >
         <div className="position-relative">
           <img
             src={destination.imageUrl || `https://images.unsplash.com/photo-1578662996442-48f60103fc96?w=400&h=300&fit=crop`}
@@ -235,7 +295,7 @@ const DestinationCard: React.FC<DestinationCardProps> = ({
           </div>
           {showDetailsButton && (
             <button 
-              className="btn btn-primary btn-sm w-100 mt-auto"
+              className="btn btn-primary btn-sm w-100 mt-auto d-none d-md-block"
               onClick={handleDetailsClick}
             >
               {detailsButtonText || getTranslation('common.viewDetails', language)}

@@ -126,15 +126,16 @@ const Home: React.FC = () => {
   };
 
   // Cuando se suelta el mouse, finalizar el arrastre
-  const handleMouseUp = () => {
+  const handleMouseUp = (e: React.MouseEvent<HTMLDivElement>) => {
+    const wasClick = !hasMoved && !isHorizontalDrag;
     setIsDown(false);
-    // Si no hubo movimiento durante el arrastre, es un click normal
-    // Permitir que el click llegue al elemento debajo
-    if (!hasMoved) {
-      // Permitir que el click llegue al elemento
-    }
     setHasMoved(false);
     setIsHorizontalDrag(false);
+    
+    // Si fue un click (no arrastre), permitir que el evento llegue al card
+    if (wasClick) {
+      // El click se manejará en el DestinationCard
+    }
   };
 
   // Mover el carrusel mientras se arrastra el mouse
@@ -221,10 +222,16 @@ const Home: React.FC = () => {
     }
   };
 
-  const handleTouchEnd = () => {
+  const handleTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
+    const wasClick = !hasMoved && !isHorizontalDrag;
     setIsDown(false);
     setHasMoved(false);
     setIsHorizontalDrag(false);
+    
+    // Si fue un click (no arrastre), permitir que el evento llegue al card
+    if (wasClick) {
+      // El click se manejará en el DestinationCard
+    }
   };
 
   // Efecto para crear un carrusel infinito de destinos
@@ -994,6 +1001,22 @@ const Home: React.FC = () => {
                           <i className="fas fa-clock me-1"></i>{activity.duration}
                         </span>
                       </div>
+                      {activity.supplierVerified && (
+                        <div className="position-absolute bottom-0 start-0 m-2">
+                          <span className="verified-badge">
+                            <span 
+                              className="badge fw-semibold"
+                              style={{ fontSize: '0.6rem', backgroundColor: '#191970', color: '#fff', lineHeight: 1, padding: '0.25rem 0.4rem', display: 'inline-flex', alignItems: 'center' }}
+                              aria-label={getTranslation('home.activities.verifiedProvider', language)}
+                            >
+                              <i className="fas fa-check-circle me-1"></i>{getTranslation('detail.booking.verified', language)}
+                            </span>
+                            <span className="verified-tooltip">
+                              {getTranslation('home.activities.verifiedProviderTooltip', language)}
+                            </span>
+                          </span>
+                        </div>
+                      )}
                     </div>
                     <div className="card-body d-flex flex-column">
                       <div className="mb-2">
@@ -1012,24 +1035,8 @@ const Home: React.FC = () => {
                         />
                       </div>
                       {activity.supplierName && (
-                        <p className="small text-muted mb-2 fw-bold d-flex align-items-center gap-2" style={{ fontSize: '0.8rem', padding: '0px', margin: '0px' }}>
-                          <span>
-                            {getTranslation('home.activities.provider', language)} {activity.supplierName.length > 30 ? `${activity.supplierName.substring(0, 30)}...` : activity.supplierName}
-                          </span>
-                          {activity.supplierVerified && (
-                            <span className="verified-badge">
-                              <span 
-                                className="badge fw-semibold"
-                                style={{ fontSize: '0.6rem', backgroundColor: '#191970', color: '#fff', lineHeight: 1, padding: '0.25rem 0.4rem', display: 'inline-flex', alignItems: 'center' }}
-                                aria-label={getTranslation('home.activities.verifiedProvider', language)}
-                              >
-                                <i className="fas fa-check-circle me-1"></i>{getTranslation('detail.booking.verified', language)}
-                              </span>
-                              <span className="verified-tooltip">
-                                {getTranslation('home.activities.verifiedProviderTooltip', language)}
-                              </span>
-                            </span>
-                          )}
+                        <p className="small text-muted mb-2 fw-bold" style={{ fontSize: '0.8rem', padding: '0px', margin: '0px' }}>
+                          {getTranslation('home.activities.provider', language)} {activity.supplierName.length > 30 ? `${activity.supplierName.substring(0, 30)}...` : activity.supplierName}
                         </p>
                       )}
                       {activity.presentation && (
@@ -1175,10 +1182,10 @@ const Home: React.FC = () => {
                             />
                           </div>
                             {activity.supplierName && (
-                              <p className="small text-muted mb-1 fw-bold d-flex align-items-center gap-2" style={{ fontSize: '0.7rem' }}>
-                                <span>
+                              <div className="mb-1">
+                                <p className="small text-muted mb-1 fw-bold" style={{ fontSize: '0.7rem' }}>
                                   {getTranslation('home.activities.provider', language)} {activity.supplierName.length > 30 ? `${activity.supplierName.substring(0, 30)}...` : activity.supplierName}
-                                </span>
+                                </p>
                                 {activity.supplierVerified && (
                                   <span className="verified-badge">
                                     <span 
@@ -1193,34 +1200,8 @@ const Home: React.FC = () => {
                                     </span>
                                   </span>
                                 )}
-                              </p>
+                              </div>
                             )}
-                          <p className="card-text text-muted small mb-2" style={{ fontSize: '0.9rem', lineHeight: '1.3' }}>
-                            {activity.presentation && activity.presentation.length > 100 ? `${activity.presentation?.substring(0, 100)}...` : activity.presentation}
-                          </p>
-                          
-                          {/* Información de "Que incluye" para móvil */}
-                          {activity.includes && activity.includes.length > 0 && (
-                            <div className="mb-2">
-                              <div className="fw-bold text-success mb-1" style={{ fontSize: '0.75rem' }}>
-                                <i className="fas fa-check-circle me-1" style={{ fontSize: '0.7rem' }}></i>
-                                {getTranslation('home.activities.includes', language)}:
-                              </div>
-                              <div className="small text-muted" style={{ fontSize: '0.7rem', lineHeight: '1.2' }}>
-                                {activity.includes.slice(0, 1).map((item, idx) => (
-                                  <div key={idx} className="mb-1">
-                                    <i className="fas fa-check text-success me-1" style={{ fontSize: '0.6rem' }}></i>
-                                    {item}
-                                  </div>
-                                ))}
-                                {activity.includes.length > 1 && (
-                                  <div className="text-primary fw-medium">
-                                    +{activity.includes.length - 1} {getTranslation('home.activities.more', language)}...
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          )}
                           
                           <div className="d-flex justify-content-between align-items-end">
                             <div>
@@ -1441,6 +1422,21 @@ const Home: React.FC = () => {
               showDetailsButton={true}
                         detailsButtonText={getTranslation('destination.exploreDestination', language)}
                         className="mb-0"
+                        onDetailsClick={(id, cityName) => {
+                          // Construir URL con todos los parámetros
+                          const params = new URLSearchParams();
+                          params.set('destination', cityName);
+                          // Usar la fecha del formulario si está disponible, sino usar la fecha activa
+                          const dateToUse = dates || activeDates;
+                          if (dateToUse) {
+                            params.set('date', dateToUse);
+                          }
+                          params.set('lang', language);
+                          params.set('currency', currency.toUpperCase());
+                          if (adults > 1) params.set('adults', adults.toString());
+                          if (children > 0) params.set('children', children.toString());
+                          navigate(`/search?${params.toString()}`);
+                        }}
                       />
                     </div>
                   ))}

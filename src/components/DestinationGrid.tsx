@@ -7,7 +7,7 @@ export interface DestinationGridProps {
   variant?: 'default' | 'compact';
   showDetailsButton?: boolean;
   detailsButtonText?: string;
-  onDetailsClick?: (id: number) => void;
+  onDetailsClick?: (id: number, cityName: string) => void;
   emptyMessage?: string;
   loading?: boolean;
   className?: string;
